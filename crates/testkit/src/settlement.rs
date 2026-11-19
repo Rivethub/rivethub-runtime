@@ -1,7 +1,10 @@
 use jiff::SignedDuration;
 use jiff::Timestamp;
+use kernel::memory::MessagesQuery;
 use kernel::memory::settlement::SettleStatus;
-use kernel::memory::{CaptureBatchRequest, CaptureMessage, MemoryStore, SummaryStore};
+use kernel::memory::{
+    CaptureBatchRequest, CaptureMessage, MemoryStore, SessionCatalog, SummaryStore,
+};
 use kernel::owner::Owner;
 use serde_json::json;
 use uuid::Uuid;
@@ -199,10 +202,14 @@ async fn assert_unknown_session_stays_absent(
     Ok(())
 }
 
-pub async fn position_fills<S: MemoryStore + SummaryStore>(store: &S, owner: &Owner) -> TestResult {
-    const KEY: &str = "cli:settlement-order";
+pub async fn position_fills<S: MemoryStore + SummaryStore + SessionCatalog>(
+    store: &S,
+    owner: &Owner,
+) -> TestResult {
+    const KEY: &str = "claude-code:settlement-order";
     let mut first = message("a", "2026-01-03T01:00:00Z")?;
     let mut second = message("b", "2026-01-03T01:01:00Z")?;
+    second.metadata = Some(obj(json!({"uuid": null}))?);
     let original = batch(KEY, vec![first.clone(), second.clone()]);
     let id: Uuid = store
         .capture(original, owner, None)
@@ -214,7 +221,7 @@ pub async fn position_fills<S: MemoryStore + SummaryStore>(store: &S, owner: &Ow
         .await?
         .ok_or("mark")?;
 
-    first.metadata = Some(obj(json!({"session_jsonl_line": 2}))?);
+    first.metadata = Some(obj(json!({"session_jsonl_line": 2, "ordinal": 1}))?);
     store.capture(batch(KEY, vec![first]), owner, None).await?;
     assert!(store.summary_eligible(id, 1).await?);
 
@@ -225,8 +232,155 @@ pub async fn position_fills<S: MemoryStore + SummaryStore>(store: &S, owner: &Ow
     let changed = store.summary_state(id).await?.ok_or("reordered")?;
     assert_eq!(changed.input_revision, 2);
     assert!(changed.settled_at.is_none());
-    store.capture(batch(KEY, vec![second]), owner, None).await?;
+    let opening = store.opening_title(id).await?.ok_or("opening")?;
+    assert_eq!(opening.content, second.content);
+    assert_position_preserved(store, owner, second).await?;
+
     assert_eq!(store.summary_state(id).await?, Some(changed));
+    Ok(())
+}
+
+async fn assert_position_preserved(
+    store: &(impl MemoryStore + SummaryStore + SessionCatalog),
+    owner: &Owner,
+    mut second: CaptureMessage,
+) -> TestResult {
+    second.metadata = Some(obj(
+        json!({"session_jsonl_line": 9, "assistant_uuid": "invented", "uuid": "invented"}),
+    )?);
+    store
+        .capture(
+            batch("claude-code:settlement-order", vec![second]),
+            owner,
+            None,
+        )
+        .await?;
+    let page = store
+        .messages(
+            &"claude-code:settlement-order".parse()?,
+            &MessagesQuery::new(None, None),
+        )
+        .await?;
+    let metadata = page
+        .items
+        .first()
+        .ok_or("first message")?
+        .metadata
+        .as_ref()
+        .ok_or("position")?;
+    assert_eq!(metadata.get("session_jsonl_line"), Some(&json!(1)));
+    assert_eq!(metadata.get_str("assistant_uuid"), Some("invented"));
+    assert_eq!(metadata.get("uuid"), Some(&json!(null)));
+    Ok(())
+}
+
+pub async fn readers_agree(
+    store: &(impl MemoryStore + SummaryStore + SessionCatalog),
+    owner: &Owner,
+    mut tie_timestamps: impl AsyncFnMut(Uuid) -> TestResult,
+) -> TestResult {
+    for mode in ["time", "line", "mixed"] {
+        let key = format!("claude-code:tie-{mode}");
+        let messages = tie_messages(mode)?;
+        let id = store
+            .capture(batch(&key, messages), owner, None)
+            .await?
+            .conversation_id
+            .parse()?;
+        tie_timestamps(id).await?;
+        let mut tail = message("tail", "2026-01-03T01:00:03Z")?;
+        tail.role = Role::Assistant;
+        store.capture(batch(&key, vec![tail]), owner, None).await?;
+        assert_reader_order(store, &key, id).await?;
+    }
+    Ok(())
+}
+
+fn tie_messages(mode: &str) -> Result<Vec<CaptureMessage>, Box<dyn std::error::Error>> {
+    let mut messages = ["alpha", "beta", "gamma"]
+        .map(|label| message(label, "2026-01-03T01:00:00Z"))
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+    if mode != "time" {
+        for row in messages.iter_mut().take(if mode == "line" { 3 } else { 2 }) {
+            row.metadata = Some(obj(
+                json!({"session_jsonl_line": 3, "session_jsonl_path": "/invented/session.jsonl"}),
+            )?);
+        }
+    }
+    Ok(messages)
+}
+
+async fn assert_reader_order(
+    store: &(impl MemoryStore + SummaryStore + SessionCatalog),
+    key: &str,
+    id: Uuid,
+) -> TestResult {
+    let page = store
+        .messages(&key.parse()?, &MessagesQuery::new(None, None))
+        .await?;
+    let input = store.live_input(id).await?.ok_or("summarizer input")?;
+    let window = store.conversation(id).await?.ok_or("window")?;
+    let opening = store.opening_title(id).await?.ok_or("opening")?;
+    let expected: Vec<_> = page.items.iter().map(|row| row.content.as_str()).collect();
+    assert_eq!(expected.len(), 4);
+    assert_eq!(
+        input
+            .messages
+            .iter()
+            .map(|row| row.content.as_str())
+            .collect::<Vec<_>>(),
+        expected,
+        "{key}"
+    );
+    assert_eq!(
+        window
+            .messages
+            .iter()
+            .map(|row| row.content.as_str())
+            .collect::<Vec<_>>(),
+        expected,
+        "{key}"
+    );
+    assert_eq!(
+        opening.content,
+        *expected.first().ok_or("initial message")?,
+        "{key}"
+    );
+    Ok(())
+}
+
+pub async fn child_resume_signals(
+    store: &(impl MemoryStore + SummaryStore),
+    owner: &Owner,
+) -> TestResult {
+    for (event, settled) in [
+        ("session.idle", false),
+        ("session.execution.interrupted", false),
+        ("session.execution.succeeded", true),
+        ("session.execution.failed", true),
+    ] {
+        let key = format!("opencode:invented-child-{event}");
+        let id = store
+            .capture(
+                batch(&key, vec![message("invented", "2026-01-01T00:00:00Z")?]),
+                owner,
+                None,
+            )
+            .await?
+            .conversation_id
+            .parse()?;
+        let mut capture = batch(&key, vec![]);
+        capture.finalize = Some(true);
+        capture.settings = Some(obj(json!({
+            "source": "opencode-hook",
+            "parent_session_id": "invented-parent",
+            "last_event": event,
+            "last_ingest_at": "2026-01-01T00:00:01Z",
+        }))?);
+        store.capture(capture, owner, None).await?;
+        assert_eq!(store.summary_eligible(id, 1).await?, settled, "{event}");
+    }
     Ok(())
 }
 
@@ -285,40 +439,6 @@ pub async fn expiry_boundary(store: &impl SummaryStore, id: Uuid) -> TestResult 
             .settled_at,
         Some(now)
     );
-    Ok(())
-}
-
-pub async fn child_resume_signals(
-    store: &(impl MemoryStore + SummaryStore),
-    owner: &Owner,
-) -> TestResult {
-    for (event, settled) in [
-        ("session.idle", false),
-        ("session.execution.interrupted", false),
-        ("session.execution.succeeded", true),
-        ("session.execution.failed", true),
-    ] {
-        let key = format!("opencode:invented-child-{event}");
-        let id = store
-            .capture(
-                batch(&key, vec![message("invented", "2026-01-01T00:00:00Z")?]),
-                owner,
-                None,
-            )
-            .await?
-            .conversation_id
-            .parse()?;
-        let mut capture = batch(&key, vec![]);
-        capture.finalize = Some(true);
-        capture.settings = Some(obj(json!({
-            "source": "opencode-hook",
-            "parent_session_id": "invented-parent",
-            "last_event": event,
-            "last_ingest_at": "2026-01-01T00:00:01Z",
-        }))?);
-        store.capture(capture, owner, None).await?;
-        assert_eq!(store.summary_eligible(id, 1).await?, settled, "{event}");
-    }
     Ok(())
 }
 
@@ -399,4 +519,38 @@ pub async fn replay_pending(
     assert_eq!(metadata.get_str("tool_use_id"), Some("invented"));
     assert_eq!(metadata.get_str("assistant_uuid"), Some("invented"));
     Ok(())
+}
+
+pub async fn precise_pages(store: &impl SessionCatalog, key: &str) -> TestResult {
+    let key = key.parse()?;
+    let mut after = None;
+    for label in ["second", "earlier", "later", "offset"] {
+        let page = store
+            .messages(&key, &MessagesQuery::new(after, Some(1)))
+            .await?;
+        assert_eq!(page.total, 4);
+        assert_eq!(page.items.len(), 1, "{label}");
+        assert_eq!(
+            page.items.first().ok_or("page message")?.content,
+            format!("Inspect the invented sample {label}.")
+        );
+        after = page
+            .next
+            .map(|cursor| kernel::memory::MessageCursor::decode(&cursor.encode()))
+            .transpose()?;
+    }
+    assert!(after.is_none());
+    Ok(())
+}
+
+pub fn precision_messages() -> Result<Vec<CaptureMessage>, jiff::Error> {
+    [
+        ("later", "2026-01-01T00:00:01.123900Z"),
+        ("second", "2026-01-01T00:00:01Z"),
+        ("offset", "2026-01-01T01:00:01.130+01:00"),
+        ("earlier", "2026-01-01T00:00:01.123100Z"),
+    ]
+    .into_iter()
+    .map(|(label, at)| message(label, at))
+    .collect()
 }

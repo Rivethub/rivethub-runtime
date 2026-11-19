@@ -90,11 +90,31 @@ fn step(conn: &mut Connection, to: SchemaVersion, now: Timestamp) -> Result<(), 
         SchemaVersion::V38 => in_transaction(conn, to, |tx| {
             tx.execute_batch(include_str!("schema/summary_index_v38.sql"))
         }),
+        SchemaVersion::V39 => in_transaction(conn, to, add_transcript_time),
         SchemaVersion::V37 => in_transaction(conn, to, add_opening_work),
         SchemaVersion::V35 => in_transaction(conn, to, |tx| {
             tx.execute_batch(include_str!("schema/model_calls_v35.sql"))
         }),
     }
+}
+
+pub(crate) fn add_transcript_time(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    let suffix = "ltrim(substr(created_at, 20), '.0123456789')";
+    let key = format!(
+        include_str!("schema/transcript_time_v39.sql"),
+        suffix = suffix,
+        seconds = "unixepoch(replace(substr(created_at, 1, 19), 't', 'T'))",
+        zone = format_args!("replace(replace({suffix}, '−', '-'), ':', '')"),
+        fraction = format_args!(
+            "substr(created_at, 21, max(0, length(created_at) - length({suffix}) - 20))"
+        ),
+    );
+    tx.execute_batch(&format!(
+        "CREATE VIEW IF NOT EXISTS rh_transcript_times AS
+             SELECT id, conversation_id, created_at, {key} AS seek_time FROM ros_messages;
+         CREATE INDEX IF NOT EXISTS rh_transcript_seek ON ros_messages (conversation_id, ({key}), id);
+         CREATE INDEX IF NOT EXISTS rh_transcript_recent ON ros_messages (({key}), conversation_id);"
+    ))
 }
 
 pub(crate) fn add_opening_work(tx: &Transaction<'_>) -> rusqlite::Result<()> {

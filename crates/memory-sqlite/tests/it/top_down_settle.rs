@@ -202,3 +202,32 @@ async fn settlement_reads_legacy_text_with_its_original_precision() -> TestResul
     assert!(local.summary_state(id).await.is_err());
     Ok(())
 }
+
+#[tokio::test]
+async fn unpositioned_keyset_preserves_legacy_timestamp_precision() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let local = store(&home.path().join("memory.sqlite"))?;
+    let key = "claude-code:precise";
+    let messages = testkit::settlement::precision_messages()?;
+    local
+        .capture(
+            batch(key, messages),
+            &testkit::owner()?,
+            None,
+            Timestamp::now(),
+        )
+        .await?;
+    crate::common::execute(
+        &local,
+        "
+        UPDATE ros_messages SET created_at = CASE json_extract(metadata, '$.event_id')
+            WHEN 'second' THEN '2026-01-01T00:00:01Z'
+            WHEN 'earlier' THEN '2026-01-01T00:00:01.123100001Z'
+            WHEN 'later' THEN '2026-01-01T00:00:01.123100002Z'
+            WHEN 'offset' THEN '2026-01-01 01:00:01.130+01'
+        END
+    ",
+    )
+    .await?;
+    testkit::settlement::precise_pages(&local, key).await
+}

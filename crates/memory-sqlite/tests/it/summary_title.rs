@@ -177,14 +177,26 @@ async fn capture_keeps_one_opening_and_reorders_it_when_the_start_arrives() -> T
     );
 
     let earlier = batch(2, "Fix the queue receipt")?;
+    let mut unpositioned = earlier.clone();
+    unpositioned
+        .messages
+        .first_mut()
+        .ok_or("early message")?
+        .metadata = None;
     store
         .capture(
-            earlier,
+            unpositioned,
             &owner,
             None,
             now + jiff::SignedDuration::from_secs(1),
         )
         .await?;
+    assert_eq!(
+        store.opening_title(id).await?.expect("opening").content,
+        before.content
+    );
+    let filled = store.capture(earlier, &owner, None, now).await?;
+    assert_eq!(filled.inserted, 0);
     let duplicate = store.capture(later, &owner, None, now).await?;
     assert_eq!(duplicate.inserted, 0);
     assert!(

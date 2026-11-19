@@ -40,6 +40,7 @@ pub enum SchemaVersion {
     V36 = 36,
     V37 = 37,
     V38 = 38,
+    V39 = 39,
 }
 
 impl SchemaVersion {
@@ -88,7 +89,8 @@ impl SchemaVersion {
             Self::V35 => Some(Self::V36),
             Self::V36 => Some(Self::V37),
             Self::V37 => Some(Self::V38),
-            Self::V38 => None,
+            Self::V38 => Some(Self::V39),
+            Self::V39 => None,
         }
     }
 }
@@ -136,6 +138,7 @@ impl TryFrom<i64> for SchemaVersion {
             36 => Ok(Self::V36),
             37 => Ok(Self::V37),
             38 => Ok(Self::V38),
+            39 => Ok(Self::V39),
             other => Err(Error::Unsupported { found: other }),
         }
     }

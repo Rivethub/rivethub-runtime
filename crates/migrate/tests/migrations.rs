@@ -372,7 +372,10 @@ fn top_down_upgrade_from_sqlite_35_preserves_legacy_kinds_and_matches_fresh() ->
     conn.execute("VACUUM INTO ?1", [upgraded.to_string_lossy().as_ref()])?;
     let old = Connection::open(&upgraded)?;
     old.execute_batch(
-        "DROP TABLE rh_summary_checkpoints; DROP TABLE rh_summary_runs;
+        "DROP VIEW rh_transcript_times;
+         DROP INDEX rh_transcript_seek; DROP INDEX rh_transcript_recent;
+         DROP TABLE IF EXISTS rh_summary_capture_clock;
+         DROP TABLE rh_summary_checkpoints; DROP TABLE rh_summary_runs;
          DROP TABLE rh_summary_state; DROP TABLE rh_summary_openings;
          ALTER TABLE ros_conversations DROP COLUMN title_from_capture;
          DROP TABLE rh_summary_conversion; DROP TABLE rh_summary_conversion_items;
@@ -399,12 +402,12 @@ fn top_down_upgrade_from_sqlite_35_preserves_legacy_kinds_and_matches_fresh() ->
     let pending = migrate::sqlite_status(&upgraded)?;
     assert_eq!(
         (pending.current, pending.required, pending.pending),
-        (35, 38, 3)
+        (35, 39, 4)
     );
     let status = migrate::sqlite(&upgraded)?;
     assert_eq!(
         (status.current, status.required, status.pending),
-        (38, 38, 0)
+        (39, 39, 0)
     );
     let up = Connection::open(&upgraded)?;
     let row: (String, i32, Option<i32>, bool) = up.query_row(

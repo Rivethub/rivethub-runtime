@@ -97,7 +97,7 @@ impl SharedClock {
     }
 }
 
-pub const SCHEMA_VERSION: i64 = 38;
+pub const SCHEMA_VERSION: i64 = 39;
 
 const FILE_PRAGMAS: &str = "PRAGMA journal_mode = wal;\nPRAGMA foreign_keys = ON;";
 
@@ -143,6 +143,7 @@ impl SqliteStore {
             .map_err(SqliteError::Pragma)?;
         search::functions::register(&conn)?;
         session_catalog::register(&conn)?;
+        time::register(&conn)?;
         Ok(from_conn(conn, SharedClock::new(Timestamp::now)))
     }
 

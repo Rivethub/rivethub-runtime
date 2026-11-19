@@ -5,7 +5,7 @@ use kernel::memory::settlement::{
 use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
 use uuid::Uuid;
 use wire::capture::SessionObservation;
-use wire::time::TimestampFormat as _;
+use wire::time::TimestampFormat;
 
 use crate::summary_port::parse_id;
 use crate::{SqliteError, SqliteStore, time};
@@ -20,7 +20,7 @@ fn seed(conn: &Connection, id: &str, fresh: Option<Timestamp>) -> Result<(), Sql
     } else {
         let at: String = conn.query_row(
                 "SELECT coalesce((SELECT m.created_at FROM ros_messages m WHERE m.conversation_id = c.id
-                                  ORDER BY julianday(m.created_at) DESC LIMIT 1), c.created_at)
+                                  ORDER BY rh_instant(m.created_at) DESC LIMIT 1), c.created_at)
                    FROM ros_conversations c WHERE c.id = ?1",
                 [id], |row| row.get(0),
             ).map_err(failure)?;
@@ -30,7 +30,7 @@ fn seed(conn: &Connection, id: &str, fresh: Option<Timestamp>) -> Result<(), Sql
         "INSERT INTO rh_summary_state
             (conversation_id, input_revision, last_input_at, unsettled_since, historical_only)
          VALUES (?1, 0, ?2, ?2, true) ON CONFLICT DO NOTHING",
-        params![id, time::stamp(last)],
+        params![id, last.rfc3339_nanos()],
     )
     .map_err(failure)?;
     Ok(())
@@ -90,9 +90,9 @@ fn save(conn: &Connection, state: &SummaryState) -> Result<(), SqliteError> {
         params![
             state.conversation_id.to_string(),
             state.input_revision,
-            time::stamp(state.last_input_at),
-            state.unsettled_since.map(time::stamp),
-            state.settled_at.map(time::stamp),
+            state.last_input_at.rfc3339_z(),
+            state.unsettled_since.map(TimestampFormat::rfc3339_z),
+            state.settled_at.map(TimestampFormat::rfc3339_z),
             state.failed_revision,
             state.historical_only,
             state.last_observed_event_at.map(observation_stamp),
@@ -143,6 +143,7 @@ pub(crate) fn record_capture(
     imported: bool,
     (observation, prior): (Option<&SessionObservation>, Option<&SessionObservation>),
 ) -> Result<(), SqliteError> {
+    let now = now.truncate_subseconds(3);
     let mut current = state(conn, id)?;
     if current.is_none() {
         seed(conn, id, changed.then_some(now))?;
@@ -287,14 +288,24 @@ fn seed_recent(conn: &Connection, cutoff: Timestamp, limit: u32) -> Result<(), S
     let mut query = conn
         .prepare(&format!(
             "SELECT c.id FROM ros_conversations c
-          WHERE c.id IN (SELECT m.conversation_id FROM ros_messages m
-                           WHERE m.created_at > ?1 ORDER BY m.created_at DESC LIMIT ?2)
+          WHERE c.id IN (
+            WITH recent AS (
+                SELECT conversation_id, seek_time FROM rh_transcript_times
+                WHERE seek_time > ?1 ORDER BY seek_time DESC LIMIT ?2
+            )
+            SELECT conversation_id FROM (
+                SELECT conversation_id, seek_time FROM recent
+                UNION ALL
+                SELECT conversation_id, rh_instant(created_at) FROM rh_transcript_times
+                 WHERE seek_time IS NULL AND rh_instant(created_at) > ?1
+            ) ORDER BY seek_time DESC LIMIT ?2
+          )
             AND {INCLUDED}
             AND NOT EXISTS (SELECT 1 FROM rh_summary_state s WHERE s.conversation_id = c.id)"
         ))
         .map_err(failure)?;
     let ids = query
-        .query_map(params![time::stamp(cutoff), limit], |row| {
+        .query_map(params![time::seek_key(cutoff), limit], |row| {
             row.get::<_, String>(0)
         })
         .map_err(failure)?
@@ -339,7 +350,7 @@ pub(crate) fn rendered_inputs(
         .prepare(
             "SELECT id, role, metadata, created_at, content <> '' OR coalesce(tool_name <> '', 0),
                 CASE WHEN tool_name <> '' THEN nullif(tool_result, '') END
-           FROM ros_messages WHERE conversation_id = ?1 ORDER BY created_at, rowid",
+           FROM ros_messages WHERE conversation_id = ?1 ORDER BY rh_instant(created_at), id",
         )
         .map_err(failure)?;
     let inputs = statement

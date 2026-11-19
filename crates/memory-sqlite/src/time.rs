@@ -1,9 +1,50 @@
 use crate::error::SqliteError;
 use jiff::Timestamp;
-use wire::time::TimestampFormat as _;
+use wire::time::TimestampFormat;
 
 pub(crate) fn stamp(at: Timestamp) -> String {
     at.rfc3339_millis()
+}
+
+pub(crate) fn seek_key(at: Timestamp) -> String {
+    let seconds = 400_000_000_000 + at.epoch_seconds();
+    let nanos = at.nanosecond_of_second();
+    format!("{seconds:012}{nanos:09}")
+}
+
+pub(crate) fn register(conn: &rusqlite::Connection) -> Result<(), SqliteError> {
+    use rusqlite::functions::FunctionFlags;
+
+    let flags = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
+    conn.create_scalar_function("rh_instant", 1, flags, |ctx| {
+        ctx.get::<Option<String>>(0)?
+            .map(|value| {
+                parse_sqlite_timestamp(&value)
+                    .map(seek_key)
+                    .map_err(|error| rusqlite::Error::UserFunctionError(Box::new(error)))
+            })
+            .transpose()
+    })
+    .map_err(SqliteError::query("register timestamp ordering"))?;
+    conn.create_scalar_function("rh_timestamp", 1, flags, |ctx| {
+        ctx.get::<Option<String>>(0)?
+            .map(|key| {
+                from_seek_key(&key)
+                    .map(TimestampFormat::rfc3339_z)
+                    .map_err(rusqlite::Error::UserFunctionError)
+            })
+            .transpose()
+    })
+    .map_err(SqliteError::query("register timestamp projection"))
+}
+
+fn from_seek_key(key: &str) -> Result<Timestamp, kernel::BoxError> {
+    let (seconds, fraction) = key
+        .split_at_checked(12)
+        .ok_or_else(|| std::io::Error::other("invalid timestamp key"))?;
+    let seconds = i128::from(seconds.parse::<i64>()?) - 400_000_000_000;
+    let nanos = i128::from(fraction.parse::<u32>()?);
+    Ok(Timestamp::from_nanosecond(seconds * 1_000_000_000 + nanos)?)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

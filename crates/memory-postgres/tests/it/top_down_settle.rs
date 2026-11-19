@@ -310,3 +310,23 @@ async fn cowork_hook_and_transcript_keep_distinct_event_ids(pool: PgPool) -> Tes
     );
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn unpositioned_keyset_preserves_timestamp_precision(pool: PgPool) -> TestResult {
+    let store = PostgresMemory::new(pool.clone());
+    let key = "claude-code:precise";
+    let messages = testkit::settlement::precision_messages()?;
+    store
+        .capture(batch(key, messages), &testkit::owner()?, None)
+        .await?;
+    sqlx::query(
+        "UPDATE rh_messages SET created_at = CASE metadata->>'event_id'
+        WHEN 'second' THEN '2026-01-01T00:00:01Z'
+        WHEN 'earlier' THEN '2026-01-01T00:00:01.123100Z'
+        WHEN 'later' THEN '2026-01-01T00:00:01.123900Z'
+        WHEN 'offset' THEN '2026-01-01T01:00:01.130+01:00' END::timestamptz",
+    )
+    .execute(&pool)
+    .await?;
+    testkit::settlement::precise_pages(&store, key).await
+}

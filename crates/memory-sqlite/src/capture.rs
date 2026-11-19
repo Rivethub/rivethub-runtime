@@ -66,6 +66,7 @@ struct Target<'a> {
 enum Outcome {
     Inserted(String),
     Filled(String),
+    Positioned,
     Skipped,
 }
 
@@ -221,6 +222,10 @@ impl PreparedBatch {
                     changed = true;
                     skipped += 1;
                     queue_if_absent(tx, message, &id, embed, now)?;
+                }
+                Outcome::Positioned => {
+                    changed = true;
+                    skipped += 1;
                 }
                 Outcome::Skipped => skipped += 1,
             }
@@ -423,9 +428,11 @@ impl PreparedMessage {
                 *before = Some(crate::settlement::rendered_inputs(tx, conversation_id)?);
             }
             let completed = self.fill_pending(tx, &stored)?;
-            self.fill_position(tx, &stored)?;
+            let positioned = self.fill_position(tx, &stored)?;
             return Ok(if completed {
                 Outcome::Filled(stored)
+            } else if positioned {
+                Outcome::Positioned
             } else {
                 Outcome::Skipped
             });
@@ -440,8 +447,11 @@ impl PreparedMessage {
                 params![hook_row, self.event_id],
             )
             .map_err(SqliteError::query("cowork claim"))?;
-            self.fill_position(tx, &hook_row)?;
-            return Ok(Outcome::Skipped);
+            return Ok(if self.fill_position(tx, &hook_row)? {
+                Outcome::Positioned
+            } else {
+                Outcome::Skipped
+            });
         }
         let id = NewMessage {
             conversation_id,

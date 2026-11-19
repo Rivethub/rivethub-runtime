@@ -324,6 +324,50 @@ async fn assert_owner_only(
 }
 
 #[tokio::test]
+async fn transcript_readers_agree_on_sqlite() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("memory.sqlite");
+    migrate::sqlite(&path)?;
+    let store = memory_sqlite::SqliteStore::open(path)?;
+    testkit::settlement::readers_agree(&store, &testkit::owner()?, async |id: Uuid| {
+        store
+            .with_conn(move |conn| {
+                conn.execute(
+                    "UPDATE ros_messages SET id = substr(conversation_id, 1, 35) ||
+                    CASE json_extract(metadata, '$.event_id')
+                    WHEN 'alpha' THEN '3' WHEN 'beta' THEN '2' ELSE '1' END
+                 WHERE conversation_id = ?1",
+                    [id.to_string()],
+                )
+                .map_err(|source| memory_sqlite::SqliteError::Query {
+                    operation: "test order ties",
+                    source,
+                })?;
+                Ok(())
+            })
+            .await?;
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn transcript_readers_agree_on_postgres() -> TestResult {
+    let db = crate::pgdb::TestDb::migrated().await?;
+    let store = memory_postgres::PostgresMemory::new(db.pool());
+    testkit::settlement::readers_agree(&store, &testkit::owner()?, async |id| {
+        sqlx::query(
+            "UPDATE rh_messages SET created_at = '2026-01-03T01:00:00Z' WHERE conversation_id = $1",
+        )
+        .bind(id)
+        .execute(&*db)
+        .await?;
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
 async fn opencode_resume_signals_do_not_settle_sqlite() -> TestResult {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("memory.sqlite");
