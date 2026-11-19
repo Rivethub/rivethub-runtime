@@ -556,6 +556,109 @@ async fn manual_settle_waits_for_merge_and_settles_replacement(pool: PgPool) -> 
     merge_settle_order(pool, false).await
 }
 
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn merge_keeps_a_late_capture_live_after_manual_settle(pool: PgPool) -> TestResult {
+    use kernel::memory::{MemoryStore as _, SummaryStore as _, settlement::SettleStatus};
+    use std::time::Duration;
+
+    const LATE_IMPORT: &str = r#"import:["fixture-node","late-session"]"#;
+
+    let source = PostgresMemory::new(source_database(&pool).await?);
+    let family = PostgresMemory::new(pool.clone());
+    let owner = Owner::new("alice".to_owned())?;
+    let options = CaptureOptions::owned_by(&owner);
+    let session = wire::capture::owned_import_key(owner.as_str(), LATE_IMPORT)?
+        .ok_or("owned import session key")?;
+    let replacement: Uuid = source
+        .capture_batch(&batch(LATE_IMPORT, 4), &options)
+        .await?
+        .conversation_id
+        .parse()?;
+    capture(&source, "alice", &[(BOTH_LARGER, 1)]).await?;
+    capture(&family, "alice", &[(BOTH_LARGER, 1)]).await?;
+    sqlx::raw_sql(
+        "CREATE FUNCTION pause_late_capture_merge() RETURNS event_trigger LANGUAGE plpgsql AS $$
+         BEGIN
+             IF TG_TAG = 'CREATE TABLE' AND to_regclass('pg_temp.merge_slug_map') IS NOT NULL
+                 AND to_regclass('pg_temp.merge_dupes') IS NULL
+                 AND current_query() NOT LIKE '%ORDER BY t.id FOR UPDATE OF t%' THEN
+                 PERFORM pg_advisory_xact_lock(176, 4);
+             ELSIF TG_TAG = 'CREATE TABLE AS' AND to_regclass('pg_temp.merge_dupes') IS NOT NULL
+                 AND to_regclass('pg_temp.merge_drop_family') IS NULL THEN
+                 PERFORM pg_advisory_xact_lock(176, 5);
+             END IF;
+         END; $$;
+         CREATE EVENT TRIGGER pause_late_capture_merge ON ddl_command_end
+         WHEN TAG IN ('CREATE TABLE', 'CREATE TABLE AS') EXECUTE FUNCTION pause_late_capture_merge();",
+    )
+    .execute(&pool)
+    .await?;
+    let mut before_sample = pool.begin().await?;
+    let capture_blocker: i32 =
+        sqlx::query_scalar("SELECT pg_backend_pid() FROM pg_advisory_xact_lock(176, 4)")
+            .fetch_one(&mut *before_sample)
+            .await?;
+    sqlx::query("SELECT id FROM rh_conversations WHERE session_key = $1 FOR UPDATE")
+        .bind(BOTH_LARGER)
+        .execute(&mut *before_sample)
+        .await?;
+    let mut after_sample = pool.begin().await?;
+    let settle_blocker: i32 =
+        sqlx::query_scalar("SELECT pg_backend_pid() FROM pg_advisory_xact_lock(176, 5)")
+            .fetch_one(&mut *after_sample)
+            .await?;
+    let request = MergeRequest {
+        owner: owner.clone(),
+        moves: BTreeMap::new(),
+        dry_run: false,
+    };
+    let cancel = CancellationToken::new();
+    let (merged, original) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::try_join!(
+            async {
+                Ok::<_, Box<dyn std::error::Error>>(
+                    family.merge_store(&source, &request, &cancel).await?,
+                )
+            },
+            async {
+                merge_settle_waiter(&pool, capture_blocker).await?;
+                let original: Uuid = family
+                    .capture_batch(&batch(LATE_IMPORT, 1), &options)
+                    .await?
+                    .conversation_id
+                    .parse()?;
+                let state = family
+                    .summary_state(original)
+                    .await?
+                    .ok_or("late capture")?;
+                assert!(state.historical_only);
+                before_sample.commit().await?;
+
+                merge_settle_waiter(&pool, settle_blocker).await?;
+                let settled = family
+                    .mark_summary_settled(&session, &owner)
+                    .await?
+                    .ok_or("manual settle lost the late capture")?;
+                assert_eq!(settled.status, SettleStatus::Settled);
+                assert_eq!(settled.conversation_id, original);
+                after_sample.commit().await?;
+                Ok(original)
+            },
+        )
+    })
+    .await
+    .map_err(|_| "late capture, manual settle and merge did not finish in order")??;
+
+    assert_eq!(merged.replaced, [session]);
+    assert_ne!(replacement, original);
+    let state = family.summary_state(replacement).await?;
+    assert!(
+        state.is_some_and(|state| !state.historical_only),
+        "replacement lost live state from the late capture"
+    );
+    Ok(())
+}
+
 async fn merge_settle_order(pool: PgPool, settle_first: bool) -> TestResult {
     use std::time::Duration;
 

@@ -13,14 +13,10 @@ CREATE TEMP TABLE merge_moves (conversation uuid PRIMARY KEY, owner text NOT NUL
 CREATE TEMP TABLE merge_drop (id uuid PRIMARY KEY) ON COMMIT DROP;
 CREATE TEMP TABLE merge_topic_map (source_id uuid PRIMARY KEY, target_id uuid NOT NULL) ON COMMIT DROP;
 CREATE TEMP TABLE merge_slug_map (old text PRIMARY KEY, new text NOT NULL) ON COMMIT DROP;
-SELECT t.id FROM rh_conversations t
-  JOIN merge_rh_conversations s USING (session_key, agent)
- WHERE t.id <> s.id ORDER BY t.id FOR UPDATE OF t;
 CREATE TEMP TABLE merge_dupes ON COMMIT DROP AS
   SELECT pairs.*, source_messages > target_messages AND NOT needs_repair AND NOT has_visible_tree AS source_wins FROM (
   SELECT s.id AS source_id, t.id AS target_id, s.session_key, s.agent, t.owner_user_id AS target_owner,
-         EXISTS (SELECT 1 FROM rh_summary_state state WHERE state.conversation_id = t.id
-                 AND NOT state.historical_only) AS target_live,
+         false AS target_live,
          (SELECT count(*) FROM merge_rh_messages m WHERE m.conversation_id = s.id) AS source_messages,
          (SELECT count(*) FROM rh_messages m WHERE m.conversation_id = t.id) AS target_messages,
          (EXISTS (SELECT 1 FROM merge_rh_summaries a WHERE a.conversation_id = s.id AND a.index_needs_repair)
@@ -55,6 +51,11 @@ DELETE FROM merge_rh_conversations WHERE id IN (SELECT id FROM merge_drop);
 ";
 
 const REPLACE_FAMILY: &str = "
+SELECT t.id FROM rh_conversations t JOIN merge_drop_family d ON d.target_id = t.id
+ ORDER BY t.id FOR UPDATE OF t;
+UPDATE merge_dupes d SET target_live = true
+ WHERE d.source_wins AND EXISTS (
+   SELECT 1 FROM rh_summary_state state WHERE state.conversation_id = d.target_id AND NOT state.historical_only);
 DELETE FROM rh_tags WHERE entity_id IN (
   SELECT target_id FROM merge_drop_family
   UNION SELECT m.id FROM rh_messages m JOIN merge_drop_family d ON d.target_id = m.conversation_id
