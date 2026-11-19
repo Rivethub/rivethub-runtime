@@ -320,7 +320,11 @@ async fn resume_or_freeze(
         Ok((run.id, frozen))
     } else {
         let frozen = freeze(
-            env, request, revision, input, blocks, sources, limits, profile,
+            env,
+            (id, revision),
+            input,
+            (blocks, sources),
+            (limits, profile),
         )
         .await?;
         ensure_eligible(env, id, revision).await?;

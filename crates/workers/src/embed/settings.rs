@@ -41,7 +41,7 @@ impl EmbedSettings {
                 return Err(WorkerError::Width);
             }
             let expected = kernel::memory::summary_backend::SUMMARY_EMBEDDING_WIDTH;
-            if usize::try_from(width).ok() != Some(expected) {
+            if !matches!(usize::try_from(width), Ok(got) if got == expected) {
                 return Err(WorkerError::EmbedWidth {
                     got: width,
                     expected,

@@ -30,7 +30,6 @@ uuid = { workspace = true }
 wire = { workspace = true }
 
 [dev-dependencies]
-providers = { workspace = true }
 testkit = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "test-util", "time"] }
 

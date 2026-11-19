@@ -1,4 +1,7 @@
+mod compose;
+
 use super::*;
+use compose::{compose_input, rebase};
 
 pub(super) struct Run<'a> {
     pub(super) env: &'a Publisher<'a>,
@@ -63,38 +66,29 @@ pub(super) async fn populate(
         );
         run.call(prompt, &frozen.sources).await?
     } else {
-        summarize_parts(
-            run,
-            root,
-            &mut parts,
-            frozen.chunks,
-            frozen.issued_after,
-            warnings,
-        )
-        .await?;
         let current: BTreeMap<_, _> = frozen
             .sources
             .iter()
             .map(|source| (source.id, source))
             .collect();
+        let prompt_positions = part_prompt_positions(&parts, &frozen.chunks, &current);
+        summarize_parts(
+            run,
+            root,
+            &mut parts,
+            frozen.chunks.into_iter().zip(prompt_positions),
+            frozen.issued_after,
+            warnings,
+        )
+        .await?;
         for part in &mut parts {
             part.parent = Some(root);
         }
-        parts.sort_by_key(|part| {
-            let positions = part
-                .sources
-                .iter()
-                .filter_map(|entry| current.get(&entry.message).map(|source| source.ordinal));
-            (
-                positions.clone().max(),
-                positions.min(),
-                part.issued_part_ordinal,
-            )
-        });
+        parts.sort_by_key(|part| (part_position(part, &current), part.issued_part_ordinal));
         tree.part_order = parts.iter().map(|part| part.id).collect();
         let rebased = parts
             .iter()
-            .map(|part| rebase(part, &current))
+            .map(|part| rebase(part, &current, tree.retained_parts.contains(&part.id)))
             .collect::<Result<Vec<_>, _>>()?;
         root_flags |= if parts.iter().any(|part| part.quality_flags != 0) {
             INPUT_WARNING
@@ -119,48 +113,98 @@ pub(super) async fn populate(
     index_records(run, tree, indexes, key, parts, &frozen.sources).await
 }
 
+fn part_position(
+    part: &PreparedSummaryRecord,
+    current: &BTreeMap<Uuid, &Source>,
+) -> (Option<usize>, Option<usize>) {
+    let positions = part
+        .sources
+        .iter()
+        .filter_map(|entry| current.get(&entry.message).map(|source| source.ordinal));
+    (positions.clone().max(), positions.min())
+}
+
+fn part_prompt_positions(
+    kept: &[PreparedSummaryRecord],
+    chunks: &[Chunk],
+    current: &BTreeMap<Uuid, &Source>,
+) -> Vec<(usize, bool)> {
+    if kept.is_empty() {
+        return (1..=chunks.len())
+            .map(|number| (number, number == chunks.len()))
+            .collect();
+    }
+    let mut positions: Vec<_> = kept
+        .iter()
+        .map(|part| (part_position(part, current), None))
+        .collect();
+    positions.extend(chunks.iter().enumerate().map(|(index, chunk)| {
+        let positions = chunk
+            .fragments
+            .iter()
+            .map(|fragment| fragment.source.ordinal);
+        ((positions.clone().max(), positions.min()), Some(index))
+    }));
+    positions.sort_unstable();
+    let total = positions.len();
+    let mut prompts: Vec<_> = positions
+        .into_iter()
+        .enumerate()
+        .filter_map(|(position, (_, index))| {
+            index.map(|index| (index, (position + 1, position + 1 == total)))
+        })
+        .collect();
+    prompts.sort_unstable_by_key(|(index, _)| *index);
+    prompts.into_iter().map(|(_, position)| position).collect()
+}
+
 async fn summarize_parts(
     run: &Run<'_>,
     root: Uuid,
     parts: &mut Vec<PreparedSummaryRecord>,
-    chunks: Vec<Chunk>,
+    chunks: impl Iterator<Item = (Chunk, (usize, bool))>,
     issued_after: i32,
     warnings: &BTreeSet<Uuid>,
 ) -> Result<(), WorkerError> {
     let issued_after = usize::try_from(issued_after).map_err(|_| WorkerError::Count)?;
-    let count = chunks.len();
-    let mut jobs = stream::iter(chunks.into_iter().enumerate().map(|(position, chunk)| {
-        let issued = issued_after + position + 1;
-        async move {
-            let sources = chunk_sources(&chunk);
-            let prompt = prompt::build(
-                Mode::Part {
-                    issued,
-                    last: position + 1 == count,
-                },
-                chunk.text,
-                run.limits,
-            );
-            let (key, mut reply) = run.call(prompt, &sources).await?;
-            if sources.iter().any(|source| warnings.contains(&source.id)) {
-                reply.quality_flags |= INPUT_WARNING;
-            }
-            let mut part = record(
-                Uuid::new_v4(),
-                SummaryKind::Part,
-                key,
-                &reply,
-                &sources,
-                &run.env.summary.settings.model,
-            )?;
-            part.parent = Some(root);
-            part.ordinal = integer(issued)?;
-            part.issued_part_ordinal = Some(part.ordinal);
-            part.input_tokens =
-                Some(u64::try_from(chunk.input_token_estimate).map_err(|_| WorkerError::Count)?);
-            Ok::<_, WorkerError>(part)
-        }
-    }))
+    let mut jobs = stream::iter(
+        chunks
+            .enumerate()
+            .map(|(position, (chunk, (number, last)))| {
+                let issued = issued_after + position + 1;
+                async move {
+                    let sources = chunk_sources(&chunk);
+                    let prompt = prompt::build(
+                        Mode::Part {
+                            issued: number,
+                            last,
+                        },
+                        chunk.text,
+                        run.limits,
+                    );
+                    let (key, mut reply) = run.call(prompt, &sources).await?;
+                    if sources.iter().any(|source| warnings.contains(&source.id)) {
+                        reply.quality_flags |= INPUT_WARNING;
+                    }
+                    let mut part = record(
+                        Uuid::new_v4(),
+                        SummaryKind::Part,
+                        key,
+                        &reply,
+                        &sources,
+                        &run.env.summary.settings.model,
+                    )?;
+                    part.parent = Some(root);
+                    part.ordinal = integer(issued)?;
+                    part.issued_part_ordinal = Some(part.ordinal);
+                    part.input_tokens = Some(
+                        u64::try_from(chunk.input_token_estimate)
+                            .map_err(|_| WorkerError::Count)?,
+                    );
+                    Ok::<_, WorkerError>(part)
+                }
+            }),
+    )
     .buffer_unordered(if run.env.conversion.is_some() {
         1
     } else {
@@ -218,9 +262,6 @@ async fn index_records(
     }
     Ok(())
 }
-
-type ComposeFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<([u8; 32], Reply), WorkerError>> + Send + 'a>>;
 
 impl Run<'_> {
     async fn call(
@@ -346,84 +387,6 @@ impl Run<'_> {
                 .unwrap_or_else(|| self.meter.estimate(text)),
         )
     }
-
-    fn compose<'a>(
-        &'a self,
-        plan: ComposePlan,
-        current: &'a [Source],
-        parts: &'a [&'a PreparedSummaryRecord],
-    ) -> ComposeFuture<'a> {
-        Box::pin(async move {
-            let members: BTreeSet<_> = parts
-                .iter()
-                .flat_map(|part| part.sources.iter().map(|entry| entry.message))
-                .collect();
-            let sources: Vec<_> = current
-                .iter()
-                .filter(|source| members.contains(&source.id))
-                .cloned()
-                .collect();
-            match plan {
-                ComposePlan::Call(prompt) => self.call(prompt, &sources).await,
-                ComposePlan::Reduce { groups, parent } => {
-                    let [left, right] = *groups;
-                    let (before, after) = parts.split_at(parts.len() / 2);
-                    let (_, left) = self.compose(left, current, before).await?;
-                    let (_, right) = self.compose(right, current, after).await?;
-                    let (key, mut reply) = self
-                        .call(
-                            plan::after_reduction(parent, [&left.text, &right.text]),
-                            &sources,
-                        )
-                        .await?;
-                    if left.quality_flags != 0 || right.quality_flags != 0 {
-                        reply.quality_flags |= INPUT_WARNING;
-                    }
-                    Ok((key, reply))
-                }
-            }
-        })
-    }
-}
-
-fn compose_input<'a>(
-    records: &[String],
-    parts: &'a [PreparedSummaryRecord],
-    total_tokens: usize,
-    meter: Meter,
-    limits: Limits,
-) -> Result<(ComposePlan, Vec<&'a PreparedSummaryRecord>), WorkerError> {
-    match plan::compose(records, total_tokens, meter, limits) {
-        Ok(plan) => return Ok((plan, parts.iter().collect())),
-        Err(PlanError::ComposeContext) => {}
-        Err(error) => return Err(settings_error(error)),
-    }
-    let budget = limits
-        .context_tokens()
-        .saturating_sub(2 * settings::CARRY_CEILING as usize + 2_032);
-    let mut split = Vec::new();
-    let mut owners = Vec::new();
-    for (text, part) in records.iter().zip(parts) {
-        let mut remaining = vec![text.as_str()];
-        while let Some(piece) = remaining.pop() {
-            if meter.estimate(piece) < budget {
-                split.push(piece);
-                owners.push(part);
-                continue;
-            }
-            let middle = piece
-                .char_indices()
-                .nth(piece.chars().count() / 2)
-                .map(|(byte, _)| byte)
-                .filter(|&byte| byte > 0)
-                .ok_or_else(|| settings_error(PlanError::ComposeContext))?;
-            let (left, right) = piece.split_at(middle);
-            remaining.push(right);
-            remaining.push(left);
-        }
-    }
-    let plan = plan::compose(&split, total_tokens, meter, limits).map_err(settings_error)?;
-    Ok((plan, owners))
 }
 
 fn chunk_sources(chunk: &Chunk) -> Vec<Source> {
@@ -451,64 +414,6 @@ fn owner_sources(
             })
         })
         .collect()
-}
-
-fn rebase(
-    part: &PreparedSummaryRecord,
-    current: &BTreeMap<Uuid, &Source>,
-) -> Result<String, WorkerError> {
-    let times = current
-        .iter()
-        .map(|(&id, source)| (id, source.created_at))
-        .collect();
-    let sources = owner_sources(part, &times)?;
-    let sections = llm::sections(&part.content, &sources);
-    let mut result = String::new();
-    for section in sections {
-        use std::fmt::Write as _;
-        let text: String = part
-            .content
-            .chars()
-            .skip(section.chars.start)
-            .take(section.chars.len())
-            .collect();
-        let Some((heading, body)) = text
-            .split_once('\n')
-            .or_else(|| text.starts_with("## ").then_some((text.as_str(), "")))
-        else {
-            result.push_str(&text);
-            continue;
-        };
-        if !heading.starts_with("## ") {
-            result.push_str(&text);
-            continue;
-        }
-        let title = heading
-            .rsplit_once(" [m")
-            .map_or(heading, |(title, _)| title);
-        result.push_str(title);
-        if section.range_verified {
-            let mapped = |ordinal| {
-                sources
-                    .iter()
-                    .find(|source| source.ordinal == ordinal)
-                    .and_then(|source| current.get(&source.id))
-                    .map(|source| source.ordinal)
-            };
-            if let (Some(first), Some(last)) =
-                (mapped(section.source_first), mapped(section.source_last))
-                && first <= last
-            {
-                write!(result, " [{}-{}]", plan::tag(first), plan::tag(last))
-                    .map_err(settings_error)?;
-            }
-        }
-        if text.contains('\n') {
-            result.push('\n');
-            result.push_str(body);
-        }
-    }
-    Ok(result)
 }
 
 fn record(
@@ -580,4 +485,67 @@ fn add_sections(
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod regressions {
+    use super::*;
+    use crate::summarize::live::packing::retained_coverage;
+
+    fn source(ordinal: usize) -> Source {
+        Source {
+            id: Uuid::from_u128(u128::from(u64::try_from(ordinal).expect("ordinal"))),
+            ordinal,
+            created_at: Timestamp::UNIX_EPOCH,
+            render_key: [1; 32],
+        }
+    }
+
+    fn stored_part(id: u128, text: &str, sources: &[Source]) -> PreparedSummaryRecord {
+        let reply = Reply {
+            text: text.into(),
+            sections: Vec::new(),
+            quality_flags: 0,
+        };
+        record(
+            Uuid::from_u128(id),
+            SummaryKind::Part,
+            [0; 32],
+            &reply,
+            sources,
+            "fixture",
+        )
+        .expect("stored part")
+    }
+
+    #[test]
+    fn reopened_parts_invalidate_all_owners_of_split_messages() {
+        let sources = [1, 2, 3, 4].map(source);
+        let parts = [
+            stored_part(11, "one", &sources[..2]),
+            stored_part(12, "two", &sources[1..3]),
+            stored_part(13, "three", &sources[2..3]),
+            stored_part(14, "independent", &sources[3..]),
+        ];
+        let mut current = sources;
+        current[0].render_key = [2; 32];
+        let retained = retained_coverage(current.iter(), &parts);
+        assert_eq!(retained.parts, BTreeSet::from([parts[3].id]));
+        assert_eq!(retained.messages, BTreeSet::from([current[3].id]));
+    }
+
+    #[test]
+    fn rebased_headings_preserve_range_like_title_text() {
+        let mut current = source(1);
+        let part = stored_part(
+            2,
+            "## Replace [marker]\nDetails\n## Verify [marker] [m00001-m00001]\nMore",
+            std::slice::from_ref(&current),
+        );
+        current.ordinal = 5;
+        assert_eq!(
+            rebase(&part, &BTreeMap::from([(current.id, &current)]), true).expect("rebase"),
+            "## Replace [marker]\nDetails\n## Verify [marker] [m00005-m00005]\nMore"
+        );
+    }
 }

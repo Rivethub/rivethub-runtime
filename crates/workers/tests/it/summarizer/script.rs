@@ -15,6 +15,7 @@ const TITLE_ANSWER: &str = r#"{"title": "Plan blue-green AcmeKit deploys"}"#;
 pub(super) struct Captured {
     pub(super) kind: String,
     pub(super) user: String,
+    pub(super) system: String,
 }
 
 #[derive(Default)]
@@ -25,6 +26,11 @@ pub(super) struct Scripted {
     pub(super) fail_part_once: std::sync::atomic::AtomicBool,
     pub(super) empty: std::sync::atomic::AtomicBool,
     pub(super) truncated: std::sync::atomic::AtomicBool,
+    pub(super) embed_width: Option<usize>,
+    pub(super) embed_pause: Option<Arc<tokio::sync::Barrier>>,
+    pub(super) part_reply: Option<String>,
+    pub(super) tokenizations: Mutex<Vec<usize>>,
+    pub(super) tokenizer: Option<fn(usize, usize) -> Option<usize>>,
     pub(super) fail_embeddings: std::sync::atomic::AtomicBool,
     pub(super) large_parts: std::sync::atomic::AtomicBool,
     pub(super) part_calls: std::sync::atomic::AtomicUsize,
@@ -44,11 +50,13 @@ impl Drop for Active<'_> {
 #[async_trait]
 impl ModelProvider for Scripted {
     async fn chat(&self, request: ModelRequest) -> Result<LlmResponse, ModelProviderError> {
-        let kind = kind_name(system_text(&request)?);
+        let system = system_text(&request)?;
+        let kind = kind_name(system);
         let user = user_text(&request)?;
         self.calls.lock().await.push(Captured {
             kind: kind.to_owned(),
             user: user.to_owned(),
+            system: system.to_owned(),
         });
         self.call_arrived.notify_one();
         let active = self.concurrent.fetch_add(1, Ordering::SeqCst) + 1;
@@ -76,6 +84,12 @@ impl ModelProvider for Scripted {
         }
         let text = match kind {
             "TITLE_SYSTEM_PROMPT" => TITLE_ANSWER.to_owned(),
+            "TOP_DOWN_PART"
+                if user.starts_with("# Transcript of part 1\n")
+                    && let Some(text) = &self.part_reply =>
+            {
+                text.clone()
+            }
             "TOP_DOWN_PART" if self.large_parts.load(Ordering::SeqCst) => "parsnip ".repeat(4400),
             "TOP_DOWN_PART" => "Résultat du jardin".to_owned(),
             _ if self.live_output => "A conserved ledger.
@@ -114,13 +128,31 @@ The reconciliation uses saffron markers."
         if self.fail_embeddings.load(Ordering::SeqCst) {
             return Err(plain_error("scripted embedding failure"));
         }
+        if let Some(barrier) = &self.embed_pause {
+            barrier.wait().await;
+            barrier.wait().await;
+        }
         Ok(texts
             .into_iter()
             .map(|_| Embedding {
-                vector: vec![0.25; 1024],
+                vector: vec![0.25; self.embed_width.unwrap_or(1024)],
             })
             .collect())
     }
+    async fn count_tokens(&self, _: &str, text: &str) -> Result<Option<usize>, ModelProviderError> {
+        let Some(tokenizer) = self.tokenizer else {
+            return Ok(None);
+        };
+        let chars = text.chars().count();
+        let mut calls = self.tokenizations.lock().await;
+        let call = calls.len();
+        calls.push(chars);
+        drop(calls);
+        tokenizer(call, chars)
+            .map(Some)
+            .ok_or_else(|| plain_error("scripted tokenizer failure"))
+    }
+
     async fn list_models(&self) -> Result<Vec<String>, ModelProviderError> {
         Ok(Vec::new())
     }

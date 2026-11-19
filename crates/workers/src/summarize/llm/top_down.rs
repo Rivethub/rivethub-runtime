@@ -174,7 +174,7 @@ fn section(heading: &str, chars: Range<usize>, bounds: (usize, usize), verified:
     }
 }
 
-fn heading_range(raw: &str) -> (&str, Option<(usize, usize)>) {
+pub(crate) fn heading_range(raw: &str) -> (&str, Option<(usize, usize)>) {
     let heading = raw.trim_end_matches(python_whitespace);
     if let Some((title, suffix)) = heading.rsplit_once(" [")
         && !title.trim_matches(python_whitespace).is_empty()

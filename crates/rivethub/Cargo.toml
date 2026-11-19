@@ -50,6 +50,7 @@ reqwest = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+serde_with.workspace = true
 flate2 = { workspace = true }
 hex = { workspace = true }
 sha2 = { workspace = true }

@@ -6,7 +6,8 @@
     "PostgreSQL JSONB determines key order before rendering. The fixtures preserve the input object's key order as the runner does after export.",
     "The product reader exposes object-valued arguments and may decode legacy JSON strings or lose unsupported numbers before rendering. The runner dumps the export value directly.",
     "The seed has no ModelRequest field. The product OpenAI adapter sets streaming and usage itself, so the test compares all three as profile metadata.",
-    "Reply section rows use eval block/range analysis with the production Overview and fallback projection."
+    "Reply section rows use eval block/range analysis with the production Overview and fallback projection.",
+    "The wire check now compares the serialized request, including the adapter's stream and usage options. The seed difference is declared in wire_differences."
   ],
   "wire_differences": {
     "reference_seed": 0,
@@ -2351,7 +2352,7 @@
           "id": "00000000-0000-0000-0000-000000000001",
           "role": "assistant",
           "created_at": "2026-05-14T13:58:09Z",
-          "content": "texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 1",
+          "content": "note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 1",
           "tool_name": null,
           "tool_args": null,
           "tool_result": null
@@ -2360,7 +2361,7 @@
           "id": "00000000-0000-0000-0000-000000000002",
           "role": "assistant",
           "created_at": "2026-05-14T13:57:09Z",
-          "content": "texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 2",
+          "content": "note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 2",
           "tool_name": null,
           "tool_args": null,
           "tool_result": null
@@ -2369,7 +2370,7 @@
           "id": "00000000-0000-0000-0000-000000000003",
           "role": "assistant",
           "created_at": "2026-05-14T13:56:09Z",
-          "content": "texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 3",
+          "content": "note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 3",
           "tool_name": null,
           "tool_args": null,
           "tool_result": null
@@ -2378,7 +2379,7 @@
           "id": "00000000-0000-0000-0000-000000000004",
           "role": "assistant",
           "created_at": "2026-05-14T13:55:09Z",
-          "content": "texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 4",
+          "content": "note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 4",
           "tool_name": null,
           "tool_args": null,
           "tool_result": null
@@ -2387,7 +2388,7 @@
           "id": "00000000-0000-0000-0000-000000000005",
           "role": "assistant",
           "created_at": "2026-05-14T13:54:09Z",
-          "content": "texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 5",
+          "content": "note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 5",
           "tool_name": null,
           "tool_args": null,
           "tool_result": null
@@ -2396,7 +2397,7 @@
           "id": "00000000-0000-0000-0000-000000000006",
           "role": "assistant",
           "created_at": "2026-05-14T13:53:09Z",
-          "content": "texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 6",
+          "content": "note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 6",
           "tool_name": null,
           "tool_args": null,
           "tool_result": null
@@ -2405,19 +2406,19 @@
           "id": "00000000-0000-0000-0000-000000000007",
           "role": "assistant",
           "created_at": "2026-05-14T13:52:09Z",
-          "content": "texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 7",
+          "content": "note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 7",
           "tool_name": null,
           "tool_args": null,
           "tool_result": null
         }
       ],
       "calibration": 35000,
-      "ratio": 0.022294285714285714,
+      "ratio": 0.023014285714285716,
       "dense_exact": false,
       "window": 24000,
       "chunk_tokens": 6000,
       "thinking": false,
-      "rendered": "[m00001 2026-05-14 13:58 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 1\n[m00002 2026-05-14 13:57 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 2\n[m00003 2026-05-14 13:56 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 3\n[m00004 2026-05-14 13:55 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 4\n[m00005 2026-05-14 13:54 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 5\n[m00006 2026-05-14 13:53 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 6\n[m00007 2026-05-14 13:52 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 7",
+      "rendered": "[m00001 2026-05-14 13:58 assistant] note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 1\n[m00002 2026-05-14 13:57 assistant] note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 2\n[m00003 2026-05-14 13:56 assistant] note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 3\n[m00004 2026-05-14 13:55 assistant] note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 4\n[m00005 2026-05-14 13:54 assistant] note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 5\n[m00006 2026-05-14 13:53 assistant] note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 6\n[m00007 2026-05-14 13:52 assistant] note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 7",
       "tags": {
         "m00001": "00000000-0000-0000-0000-000000000001",
         "m00002": "00000000-0000-0000-0000-000000000002",
@@ -2428,130 +2429,130 @@
         "m00007": "00000000-0000-0000-0000-000000000007"
       },
       "render_keys": {
-        "00000000-0000-0000-0000-000000000001": "e7740d1c19fbc05cef1276e00e7e19f19f08b01483ba93de3fdbce57e3651155",
-        "00000000-0000-0000-0000-000000000002": "0d5d9a21318df0717f332643e7f4d30924b5b88c8a341447c07a0bebe59c6962",
-        "00000000-0000-0000-0000-000000000003": "112f423194284e26f9ee985cee41833c4f6e05446b54219fd49a3157d0f20d02",
-        "00000000-0000-0000-0000-000000000004": "af040fd68f15304b8a4e8883b3e15d63261d9cb5528a8d89c3e6dee5f59959ab",
-        "00000000-0000-0000-0000-000000000005": "b11508c00ec8eaa7a4669a4c34c5ad5b741e7a43423a4f6e14a53e7419fa4608",
-        "00000000-0000-0000-0000-000000000006": "1c90d6b94cdffd18549a68a6e7be180dcfd24b79a31f2d38754ab4b09455fce6",
-        "00000000-0000-0000-0000-000000000007": "5437aa34398224b34de5ef08bb2371cf51f7a0ef7b83b4612de2a850fc37cddd"
+        "00000000-0000-0000-0000-000000000001": "967b5307d141ff5e09f8f13ea034173576a0070962cc46a92d0925b88a8f131d",
+        "00000000-0000-0000-0000-000000000002": "49b7f4492f83e5ac86a142b704c489a0a895a3e83ad84bb4176bd221bd122edf",
+        "00000000-0000-0000-0000-000000000003": "5922c3b41cfef9d9f53db9691057e75cb91e7290bee9dd21d9009020fcb8287c",
+        "00000000-0000-0000-0000-000000000004": "7541ae0d69bd3d733cf6d24baf48584a25bfe5f023e84bc91178fd307435912e",
+        "00000000-0000-0000-0000-000000000005": "752b7f5a2a5e5d51bcbd1fe12fa3dc5373f7f3425bb81211d0788f49c6173d65",
+        "00000000-0000-0000-0000-000000000006": "3e3a7b3dc059d860010e2c10d1faef1fdbf5887a6d5e2baa239c8d8ef3db2540",
+        "00000000-0000-0000-0000-000000000007": "5523d0d13e2bd4425ab04b1ed6902b05d01ecf3f45d883ca713fb4fccbbbaf32"
       },
       "chunks": [
         {
-          "text": "[m00001 2026-05-14 13:58 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 1",
-          "estimate": 5518,
+          "text": "[m00001 2026-05-14 13:58 assistant] note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 1",
+          "estimate": 5519,
           "fragments": [
             {
               "id": "00000000-0000-0000-0000-000000000001",
               "block_chars": [
                 0,
-                123
+                127
               ],
               "chunk_chars": [
                 0,
-                123
+                127
               ]
             }
           ]
         },
         {
-          "text": "[m00002 2026-05-14 13:57 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 2",
-          "estimate": 5518,
+          "text": "[m00002 2026-05-14 13:57 assistant] note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 2",
+          "estimate": 5519,
           "fragments": [
             {
               "id": "00000000-0000-0000-0000-000000000002",
               "block_chars": [
                 0,
-                123
+                127
               ],
               "chunk_chars": [
                 0,
-                123
+                127
               ]
             }
           ]
         },
         {
-          "text": "[m00003 2026-05-14 13:56 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 3",
-          "estimate": 5518,
+          "text": "[m00003 2026-05-14 13:56 assistant] note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 3",
+          "estimate": 5519,
           "fragments": [
             {
               "id": "00000000-0000-0000-0000-000000000003",
               "block_chars": [
                 0,
-                123
+                127
               ],
               "chunk_chars": [
                 0,
-                123
+                127
               ]
             }
           ]
         },
         {
-          "text": "[m00004 2026-05-14 13:55 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 4",
-          "estimate": 5518,
+          "text": "[m00004 2026-05-14 13:55 assistant] note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 4",
+          "estimate": 5519,
           "fragments": [
             {
               "id": "00000000-0000-0000-0000-000000000004",
               "block_chars": [
                 0,
-                123
+                127
               ],
               "chunk_chars": [
                 0,
-                123
+                127
               ]
             }
           ]
         },
         {
-          "text": "[m00005 2026-05-14 13:54 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 5",
-          "estimate": 5518,
+          "text": "[m00005 2026-05-14 13:54 assistant] note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 5",
+          "estimate": 5519,
           "fragments": [
             {
               "id": "00000000-0000-0000-0000-000000000005",
               "block_chars": [
                 0,
-                123
+                127
               ],
               "chunk_chars": [
                 0,
-                123
+                127
               ]
             }
           ]
         },
         {
-          "text": "[m00006 2026-05-14 13:53 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 6",
-          "estimate": 5518,
+          "text": "[m00006 2026-05-14 13:53 assistant] note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 6",
+          "estimate": 5519,
           "fragments": [
             {
               "id": "00000000-0000-0000-0000-000000000006",
               "block_chars": [
                 0,
-                123
+                127
               ],
               "chunk_chars": [
                 0,
-                123
+                127
               ]
             }
           ]
         },
         {
-          "text": "[m00007 2026-05-14 13:52 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 7",
-          "estimate": 5518,
+          "text": "[m00007 2026-05-14 13:52 assistant] note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 7",
+          "estimate": 5519,
           "fragments": [
             {
               "id": "00000000-0000-0000-0000-000000000007",
               "block_chars": [
                 0,
-                123
+                127
               ],
               "chunk_chars": [
                 0,
-                123
+                127
               ]
             }
           ]
@@ -2580,7 +2581,7 @@
           "00000000-0000-0000-0000-000000000007"
         ]
       ],
-      "total_tokens": 38626,
+      "total_tokens": 38633,
       "requests": [
         {
           "step": "part1",
@@ -2593,7 +2594,7 @@
               },
               {
                 "role": "user",
-                "content": "# Transcript of part 1\n\n[m00001 2026-05-14 13:58 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 1"
+                "content": "# Transcript of part 1\n\n[m00001 2026-05-14 13:58 assistant] note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 1"
               }
             ],
             "temperature": 0,
@@ -2620,7 +2621,7 @@
               },
               {
                 "role": "user",
-                "content": "# Transcript of part 2\n\n[m00002 2026-05-14 13:57 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 2"
+                "content": "# Transcript of part 2\n\n[m00002 2026-05-14 13:57 assistant] note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 2"
               }
             ],
             "temperature": 0,
@@ -2647,7 +2648,7 @@
               },
               {
                 "role": "user",
-                "content": "# Transcript of part 3\n\n[m00003 2026-05-14 13:56 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 3"
+                "content": "# Transcript of part 3\n\n[m00003 2026-05-14 13:56 assistant] note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 3"
               }
             ],
             "temperature": 0,
@@ -2674,7 +2675,7 @@
               },
               {
                 "role": "user",
-                "content": "# Transcript of part 4\n\n[m00004 2026-05-14 13:55 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 4"
+                "content": "# Transcript of part 4\n\n[m00004 2026-05-14 13:55 assistant] note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 4"
               }
             ],
             "temperature": 0,
@@ -2701,7 +2702,7 @@
               },
               {
                 "role": "user",
-                "content": "# Transcript of part 5\n\n[m00005 2026-05-14 13:54 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 5"
+                "content": "# Transcript of part 5\n\n[m00005 2026-05-14 13:54 assistant] note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 5"
               }
             ],
             "temperature": 0,
@@ -2728,7 +2729,7 @@
               },
               {
                 "role": "user",
-                "content": "# Transcript of part 6\n\n[m00006 2026-05-14 13:53 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 6"
+                "content": "# Transcript of part 6\n\n[m00006 2026-05-14 13:53 assistant] note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 6"
               }
             ],
             "temperature": 0,
@@ -2755,7 +2756,7 @@
               },
               {
                 "role": "user",
-                "content": "# Transcript of part 7\n\n[m00007 2026-05-14 13:52 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 7"
+                "content": "# Transcript of part 7\n\n[m00007 2026-05-14 13:52 assistant] note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿 note 🌿  item 7"
               }
             ],
             "temperature": 0,
@@ -3102,7 +3103,7 @@
             "messages": [
               {
                 "role": "system",
-                "content": "You are given the records of all 7 parts of one working session between a person and an AI agent, in order. Write the single memory record of the whole session.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nLater parts override earlier ones where they disagree. Open with one paragraph that says what the session was about and how it ended. Then write the rest as sections, one section for each topic or thread of work the session actually contains. Use as few sections as the session needs, and keep material about one thing in one section. Where the same thread continues from one part into another, merge it into one section whose range runs from the earliest message tag in that thread to the latest. A reader will later look up one section without the rest of the record, so the section itself carries what that topic decided, what it found, and what it left open.\n\nEach section starts with one heading line of this form: ## <title> [m00012-m00087]. The title is a short name of the topic, written in place of the placeholder. The two tags are the first and last message tags the section covers, written in place of the sample tags. Those tags are the labels on the transcript message headers. The range is how a reader finds the messages for that topic, and it belongs in the section. Threads that interleave may have overlapping ranges. A heading that only introduces a part is not a section heading.\nWrite about 2896 words. A session this size needs that much to keep its decisions, exact values and open work. Do not pad, and never go over 7242 words."
+                "content": "You are given the records of all 7 parts of one working session between a person and an AI agent, in order. Write the single memory record of the whole session.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nLater parts override earlier ones where they disagree. Open with one paragraph that says what the session was about and how it ended. Then write the rest as sections, one section for each topic or thread of work the session actually contains. Use as few sections as the session needs, and keep material about one thing in one section. Where the same thread continues from one part into another, merge it into one section whose range runs from the earliest message tag in that thread to the latest. A reader will later look up one section without the rest of the record, so the section itself carries what that topic decided, what it found, and what it left open.\n\nEach section starts with one heading line of this form: ## <title> [m00012-m00087]. The title is a short name of the topic, written in place of the placeholder. The two tags are the first and last message tags the section covers, written in place of the sample tags. Those tags are the labels on the transcript message headers. The range is how a reader finds the messages for that topic, and it belongs in the section. Threads that interleave may have overlapping ranges. A heading that only introduces a part is not a section heading.\nWrite about 2897 words. A session this size needs that much to keep its decisions, exact values and open work. Do not pad, and never go over 7243 words."
               },
               {
                 "role": "user",
@@ -3111,7 +3112,7 @@
             ],
             "temperature": 0,
             "seed": 0,
-            "max_tokens": 14996,
+            "max_tokens": 14999,
             "stream": true,
             "stream_options": {
               "include_usage": true
@@ -3120,7 +3121,7 @@
               "enable_thinking": false
             }
           },
-          "editorial_ceiling": 9656
+          "editorial_ceiling": 9658
         }
       ],
       "part_records": [

@@ -5,6 +5,7 @@ use kernel::model::{
     Embedding, LlmResponse, ModelProvider, ModelProviderError, ModelRequest, ModelStreamItem,
 };
 use kernel::queue::JobQueue;
+use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
@@ -25,4 +26,14 @@ impl Scripted {
     }
 }
 
+fn assert_expected_request(request: &ModelRequest, expected: &wire::JsonObject, step: &str) {
+    let actual = providers::body::chat_body(providers::Variant::Vllm, request, None)
+        .ok()
+        .and_then(|body| wire::JsonObject::from_serialize(&body).ok());
+    assert_eq!(actual.as_ref(), Some(expected), "{step} wire request");
+}
+
 mod live;
+#[cfg(test)]
+#[path = "../../../workers/tests/it/summarizer/prompt_parity.rs"]
+mod prompt_parity;

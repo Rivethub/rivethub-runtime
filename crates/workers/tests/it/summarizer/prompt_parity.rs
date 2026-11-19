@@ -2,7 +2,7 @@
 mod top_down;
 
 use kernel::memory::MemoryEntry;
-use kernel::model::ModelProvider as _;
+use kernel::model::ModelProvider;
 use std::collections::BTreeMap;
 use wire::JsonObject;
 
@@ -82,7 +82,7 @@ struct Session {
 #[derive(Deserialize)]
 struct Request {
     step: String,
-    body: serde_json::Value,
+    body: JsonObject,
     editorial_ceiling: u32,
 }
 
@@ -141,12 +141,15 @@ impl Playback {
         let expected = self.requests.next().expect("expected request");
         assert_eq!(step, expected.step);
         let request = llm::model_request("fixture-chat", prompt);
-        check_request(&request, expected.body, self.differences, step);
+        let expected_wire = reference_wire(expected.body, self.differences, step);
+        super::assert_expected_request(&request, &expected_wire, step);
         assert_eq!(
             prompt.editorial_ceiling, expected.editorial_ceiling,
             "{step}"
         );
-        let reply = self.provider.chat(request).await.expect("scripted reply");
+        let reply = ModelProvider::chat(&self.provider, request)
+            .await
+            .expect("scripted reply");
         let kind = if step == "session" {
             "TOP_DOWN_SESSION"
         } else if step == "final" {
@@ -156,16 +159,11 @@ impl Playback {
         } else {
             "TOP_DOWN_CARRY"
         };
-        assert_eq!(
-            self.provider
-                .calls
-                .lock()
-                .await
-                .last()
-                .expect("captured call")
-                .kind,
-            kind
-        );
+        let calls = self.provider.calls.lock().await;
+        let captured = calls.last().expect("captured call");
+        assert_eq!(captured.kind, kind);
+        assert_eq!(captured.system, prompt.system);
+        drop(calls);
         llm::parse_model_reply(&reply, prompt.editorial_ceiling, owner)
             .expect("nonempty scripted reply")
             .text
@@ -185,30 +183,38 @@ impl Playback {
     }
 }
 
-fn check_request(
-    request: &ModelRequest,
-    mut expected: serde_json::Value,
+fn reference_wire(
+    mut expected: JsonObject,
     differences: WireDifferences,
     step: &str,
-) {
-    let wire = providers::body::chat_body(providers::Variant::Vllm, request, None)
-        .expect("OpenAI request body");
-    let actual = serde_json::to_value(wire).expect("serialized request body");
-    assert_eq!(expected["seed"], differences.reference_seed, "{step} seed");
-    assert_eq!(actual.get("seed").is_some(), differences.product_sends_seed);
-    if !differences.product_sends_seed {
-        expected
-            .as_object_mut()
-            .expect("reference body")
-            .remove("seed");
-    }
-    expected["temperature"] = serde_json::json!(
-        expected["temperature"]
-            .as_f64()
-            .expect("reference temperature")
+) -> JsonObject {
+    assert_eq!(
+        expected.get("seed").expect("reference seed").as_u64(),
+        Some(u64::from(differences.reference_seed)),
+        "{step} seed"
     );
-    expected["enable_thinking"] = expected["chat_template_kwargs"]["enable_thinking"].clone();
-    assert_eq!(actual, expected, "{step} request");
+    if !differences.product_sends_seed {
+        expected.retain(|key| key != "seed");
+    }
+    let temperature = expected
+        .get("temperature")
+        .expect("reference temperature")
+        .as_f64()
+        .expect("numeric temperature");
+    expected
+        .insert("temperature", temperature)
+        .expect("wire temperature");
+    let thinking = expected
+        .get("chat_template_kwargs")
+        .expect("reference chat template options")
+        .get("enable_thinking")
+        .expect("reference thinking option")
+        .as_bool()
+        .expect("boolean thinking option");
+    expected
+        .insert("enable_thinking", thinking)
+        .expect("wire thinking option");
+    expected
 }
 
 #[tokio::test]

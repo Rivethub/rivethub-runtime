@@ -47,7 +47,7 @@ pub(super) async fn prepare_index(
     sections: &[(std::ops::Range<usize>, std::ops::RangeInclusive<usize>)],
 ) -> Result<SummaryIndex, WorkerError> {
     let width = SUMMARY_EMBEDDING_WIDTH;
-    if usize::try_from(embed.width).ok() != Some(width) {
+    if !matches!(usize::try_from(embed.width), Ok(got) if got == width) {
         return Err(WorkerError::EmbedWidth {
             got: embed.width,
             expected: width,
@@ -162,7 +162,16 @@ mod probes {
             )
             .await;
             if got == 1024 {
-                assert_eq!(result.expect("full width").passages[0].vector.len(), got);
+                assert_eq!(
+                    result
+                        .expect("full width")
+                        .passages
+                        .first()
+                        .expect("passage")
+                        .vector
+                        .len(),
+                    got
+                );
             } else {
                 let error = result.expect_err("wrong embedding width");
                 assert!(matches!(error, WorkerError::Embed(_)));

@@ -338,13 +338,11 @@ async fn verify_late_input(
         .filter(|call| call.kind == "TOP_DOWN_PART")
         .collect();
     assert_eq!(new_parts.len(), 6);
-    assert!(
-        new_parts
-            .last()
-            .ok_or("delta part")?
-            .user
-            .contains("[m00001")
-    );
+    let prefix = new_parts.last().ok_or("delta part")?;
+    assert!(prefix.user.contains("[m00001"));
+    assert!(prefix.user.starts_with("# Transcript of part 1\n"));
+    assert!(prefix.system.contains("transcript of part 1."));
+    assert!(!prefix.system.contains("the last part"));
     drop(calls);
     assert_eq!(
         next_input.messages.first().ok_or("late message")?.content,
@@ -489,7 +487,8 @@ async fn top_down_live_sqlite() -> TestResult {
     migrate::sqlite(&path)?;
     let store = memory_sqlite::SqliteStore::open(&path)?.with_summary_index_key([7; 32]);
     short_and_reopen(&store).await?;
-    parts_and_late_input(&store).await?;
+    regressions::wrong_width(&store).await?;
+    regressions::capture_during_last_embedding(&store).await?;
     superseded_and_exhaustion(&store).await?;
     no_rendered_messages(&store).await?;
     contend(&store, false).await?;
@@ -509,6 +508,7 @@ async fn top_down_live_sqlite() -> TestResult {
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn top_down_live_postgres(pool: sqlx::PgPool) -> TestResult {
+    regressions::dead_process_releases_permit(&pool).await?;
     let scoped = memory_postgres::scoped(sqlx::postgres::PgPoolOptions::new())
         .connect_with(pool.connect_options().as_ref().clone())
         .await?;
@@ -522,6 +522,11 @@ async fn top_down_live_postgres(pool: sqlx::PgPool) -> TestResult {
     Scope::Maintenance
         .run(Box::pin(async {
             short_and_reopen(store.as_ref()).await?;
+            regressions::wrong_width(store.as_ref()).await?;
+            regressions::checkpoint_inactive_run(store.as_ref()).await?;
+            regressions::capture_during_last_embedding(store.as_ref()).await?;
+            regressions::tokenizer_fallback(store.as_ref()).await?;
+            regressions::oversized_composition(store.as_ref()).await?;
             parts_and_late_input(store.as_ref()).await?;
             superseded_and_exhaustion(store.as_ref()).await?;
             no_rendered_messages(store.as_ref()).await?;
@@ -718,7 +723,7 @@ where
     S: SummaryStore + kernel::memory::EmbeddingStore + 'static,
 {
     let script = Arc::new(Scripted::live());
-    assert!(store.repair_input(id).await?.is_some());
+    regressions::reject_wrong_width_repair(store.as_ref(), id).await?;
     let target = kernel::memory::EmbedTarget {
         id: id.to_string(),
         table: kernel::memory::EmbedTable::Summaries,
@@ -774,3 +779,4 @@ where
     Ok(())
 }
 mod conversion;
+mod regressions;
