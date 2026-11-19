@@ -1,9 +1,10 @@
 use jiff::Timestamp;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
 use kernel::memory::{Limit, MemoryScope, MemoryStore as _, SearchMode, SearchQuery, SummaryKind};
-use kernel::tenancy::Scope;
+use kernel::tenancy::{Scope, SpaceId, Viewer};
 use memory_postgres::{PostgresMemory, QueryEmbed};
 use sqlx::PgPool;
 use testkit::{FakeProvider, Script};
@@ -322,9 +323,19 @@ async fn top_down_search_respects_the_limit_without_collapsing_duplicate_passage
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn top_down_search_uses_one_snapshot_during_tree_replacement(pool: PgPool) -> TestResult {
     seed(&pool).await?;
-    let mut writer = pool.begin().await?;
-    sqlx::query("LOCK TABLE rh_summary_sources IN ACCESS EXCLUSIVE MODE")
-        .execute(&mut *writer)
+    sqlx::raw_sql(
+        "ALTER FUNCTION rh_summary_message_ids(uuid) RENAME TO unpaused_summary_message_ids;
+         CREATE FUNCTION rh_summary_message_ids(uuid) RETURNS TABLE (message_id uuid, ordinal integer)
+         LANGUAGE plpgsql AS $$
+         BEGIN
+            PERFORM pg_advisory_xact_lock(817632);
+            RETURN QUERY SELECT * FROM unpaused_summary_message_ids($1);
+         END
+         $$",
+    ).execute(&pool).await?;
+    let mut gate = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(817632)")
+        .execute(&mut *gate)
         .await?;
     let memory = PostgresMemory::new(pool.clone());
     let search = tokio::spawn(async move {
@@ -348,18 +359,16 @@ async fn top_down_search_uses_one_snapshot_during_tree_replacement(pool: PgPool)
         }
     })
     .await??;
-    sqlx::query("DELETE FROM rh_summaries WHERE parent_id=$1 OR id=$1")
-        .bind(Uuid::parse_str(OWNER)?)
-        .execute(&mut *writer)
-        .await?;
-    sqlx::query(
-        "INSERT INTO rh_summaries (id,conversation_id,depth,kind,content,message_count,earliest_at,latest_at,
-            owner_user_id,pipeline_version,summary_ordinal,source_first,source_last,input_key,index_needs_repair)
-         VALUES (md5('replacement')::uuid,'00000000-0000-4000-8000-000000000001',2,'session',
-            'Replacement created while passage search is running',3,'2024-01-01','2026-01-01','alice',
-            7,0,1,3,decode(repeat('ab',32),'hex'),true)",
-    ).execute(&mut *writer).await?;
-    writer.commit().await?;
+    let checksum = || {
+        sqlx::query_scalar::<_, String>(
+            "SELECT md5(jsonb_agg(to_jsonb(m) ORDER BY m.id)::text) FROM rh_messages m",
+        )
+        .fetch_one(&pool)
+    };
+    let transcript = checksum().await?;
+    replace_orchard(&pool).await?;
+    gate.commit().await?;
+    assert_eq!(checksum().await?, transcript);
     let result = search.await??;
     assert_eq!(
         result.results.first().expect("snapshot hit").detail_id(),
@@ -378,16 +387,192 @@ async fn top_down_search_uses_one_snapshot_during_tree_replacement(pool: PgPool)
     Ok(())
 }
 
+async fn replace_orchard(pool: &PgPool) -> TestResult {
+    use kernel::memory::summary_reference::{
+        PreparedSummaryRecord, PreparedSummaryTree, SummaryManifestEntry,
+    };
+    let previous = Uuid::parse_str(OWNER)?;
+    let conversation = Uuid::parse_str("00000000-0000-4000-8000-000000000001")?;
+    let links: Vec<(Uuid, i32)> =
+        sqlx::query_as("SELECT message_id, ordinal FROM rh_summary_sources WHERE summary_id = $1")
+            .bind(previous)
+            .fetch_all(pool)
+            .await?;
+    let expected_ids = sqlx::query_scalar("SELECT id FROM rh_summaries WHERE conversation_id = $1")
+        .bind(conversation)
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .collect();
+    let replacement = PreparedSummaryTree {
+        conversation,
+        owner: "alice".to_owned(),
+        expected_ids,
+        records: vec![PreparedSummaryRecord {
+            id: Uuid::new_v4(),
+            parent: None,
+            ordinal: 0,
+            kind: SummaryKind::Session,
+            content: "Replacement created while passage search is running.".to_owned(),
+            input_key: [1; 32],
+            index_key: None,
+            model: None,
+            issued_part_ordinal: None,
+            input_tokens: None,
+            quality_flags: 0,
+            section: None,
+            sources: links
+                .into_iter()
+                .map(|(message, ordinal)| SummaryManifestEntry {
+                    message,
+                    ordinal,
+                    render_key: None,
+                })
+                .collect(),
+        }],
+        retained_parts: BTreeSet::new(),
+        part_order: Vec::new(),
+        historical: false,
+        expected_revision: None,
+        passage_windows: BTreeMap::new(),
+        created_at: at(2026)?,
+    };
+    let scoped = memory_postgres::scoped(sqlx::postgres::PgPoolOptions::new())
+        .connect_with(pool.connect_options().as_ref().clone())
+        .await?;
+    let store = PostgresMemory::new(scoped);
+    Scope::Maintenance
+        .run(store.replace_summary_tree(&replacement))
+        .await?;
+    Ok(())
+}
+
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn top_down_search_does_not_expose_hidden_passages(pool: PgPool) -> TestResult {
     seed(&pool).await?;
-    let memory = PostgresMemory::new(crate::common::probe(&pool).await?);
-    for (name, expected) in [("alice", 1), ("bob", 0)] {
-        let scope = Scope::Viewer(crate::visibility::viewer(name)?);
-        let hits = scope
-            .run(memory.search(query("/srv/amber-cask", SearchMode::Trigram)))
+    sqlx::query(
+        "INSERT INTO rh_spaces (id,kind,name) VALUES ('team','team','Team'), ('shared','household','Shared')",
+    ).execute(&pool).await?;
+    let memory = wired(crate::common::probe(&pool).await?, 16);
+    for visibility in ["private", "team", "shared"] {
+        sqlx::query("UPDATE rh_conversations SET visibility = $1 WHERE session_key = 'orchard'")
+            .bind(visibility)
+            .execute(&pool)
             .await?;
-        assert_eq!(hits.results.len(), expected);
+        let alice = crate::visibility::viewer("alice")?;
+        let bob = Viewer::new(
+            crate::visibility::viewer("bob")?.principal().clone(),
+            Vec::new(),
+        );
+        check_passage_visibility(&memory, alice, true).await?;
+        check_passage_visibility(&memory, bob.clone(), false).await?;
+        if visibility != "private" {
+            let member = Viewer::new(
+                bob.principal().clone(),
+                vec![SpaceId::new(visibility.to_owned())?],
+            );
+            check_passage_visibility(&memory, member, true).await?;
+        }
     }
+    Ok(())
+}
+
+async fn check_passage_visibility(
+    memory: &PostgresMemory,
+    viewer: Viewer,
+    visible: bool,
+) -> TestResult {
+    let scope = Scope::Viewer(viewer);
+    for (mode, text) in [
+        (SearchMode::Trigram, "/srv/amber-cask"),
+        (SearchMode::Fts, "orchard valves"),
+        (SearchMode::Vector, "orchard meaning"),
+    ] {
+        let outcome = scope.clone().run(memory.search(query(text, mode))).await?;
+        if visible {
+            let hit = outcome
+                .results
+                .iter()
+                .find(|hit| hit.detail_id() == FIRST_PASSAGE)
+                .ok_or("visible passage missing")?;
+            assert!(hit.content.contains("/srv/amber-cask"));
+            let detail = outcome
+                .summaries
+                .get(FIRST_PASSAGE)
+                .ok_or("passage details missing")?;
+            assert_eq!(
+                detail.sections.first().ok_or("missing section")?.heading,
+                "Orchard valves"
+            );
+            assert!(
+                detail
+                    .sources
+                    .first()
+                    .ok_or("missing source")?
+                    .content
+                    .contains("Hand-seeded orchard source")
+            );
+        } else {
+            assert!(outcome.results.is_empty(), "{mode}");
+            assert!(outcome.summaries.is_empty(), "{mode}");
+            assert!(outcome.expanded.is_empty(), "{mode}");
+        }
+    }
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_vector_recovers_when_filtered_hnsw_exhausts_its_budget(
+    pool: PgPool,
+) -> TestResult {
+    seed(&pool).await?;
+    sqlx::raw_sql(
+        "UPDATE rh_summary_passages
+         SET embedding = array_cat(array_fill(1::real, ARRAY[512]), array_fill(-1::real, ARRAY[512]))::halfvec
+         WHERE ordinal = 0 AND record_id = '00000000-0000-4000-8000-000000000020';
+         UPDATE rh_summaries SET embedding = NULL WHERE kind = 'leaf';
+         UPDATE rh_summary_passages SET embedding = NULL
+         WHERE ordinal = 1 AND record_id = '00000000-0000-4000-8000-000000000020';
+         INSERT INTO rh_summary_passages
+            (id, record_id, ordinal, char_start, char_end, content, earliest_at, latest_at, index_key, embedding)
+         SELECT gen_random_uuid(), p.record_id, i, p.char_start, p.char_end, p.content,
+                p.earliest_at, p.latest_at, p.index_key,
+                array_append(array_fill(1::real, ARRAY[1023]), (1.0 + i * 0.005)::real)::halfvec
+         FROM rh_summary_passages p CROSS JOIN generate_series(1, 80) i
+         WHERE p.record_id = '00000000-0000-4000-8000-000000000021';
+         ANALYZE rh_summary_passages;",
+    ).execute(&pool).await?;
+    let tuned = sqlx::postgres::PgPoolOptions::new()
+        .after_connect(|conn, _| {
+            Box::pin(async move {
+                sqlx::query(
+                    "SELECT set_config('enable_seqscan', 'off', false),
+                         set_config('enable_sort', 'off', false),
+                         set_config('jit', 'off', false),
+                         set_config('hnsw.max_scan_tuples', '1', false)",
+                )
+                .execute(conn)
+                .await?;
+                Ok(())
+            })
+        })
+        .connect_with(pool.connect_options().as_ref().clone())
+        .await?;
+    let provider = FakeProvider::new(vec![Script::Embed(vec![kernel::model::Embedding {
+        vector: vec![1.0; 1024],
+    }])]);
+    let memory = PostgresMemory::new(tuned).with_query_embed(QueryEmbed::new(
+        Arc::new(provider),
+        None,
+        None,
+        Some(10),
+    ));
+    let q = query("orchard pressure", SearchMode::Vector);
+    let result = memory.search(q).await?;
+    assert!(result.degraded.is_none());
+    let [hit] = result.results.as_slice() else {
+        return Err("expected one visible, indexed passage".into());
+    };
+    assert_eq!(hit.detail_id(), FIRST_PASSAGE);
     Ok(())
 }

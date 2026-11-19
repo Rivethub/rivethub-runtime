@@ -183,28 +183,62 @@ async fn passage_vector(
     context: &ArmContext<'_>,
     vector: &HalfVector,
 ) -> Result<Vec<ArmRow>, Error> {
+    let limit = usize::try_from(hybrid_pool(context.options.limit))?;
+    let mut rows = passage_candidates(tx, context, vector, PassageScan::Indexed).await?;
+    if rows.len() < limit {
+        rows = passage_candidates(tx, context, vector, PassageScan::Exact).await?;
+    }
+    rows.into_iter().map(|row| row.into_arm(false)).collect()
+}
+
+#[derive(Clone, Copy)]
+enum PassageScan {
+    Indexed,
+    Exact,
+}
+
+impl PassageScan {
+    const fn distance_suffix(self) -> &'static str {
+        match self {
+            Self::Indexed => ")",
+            Self::Exact => ") + 0",
+        }
+    }
+
+    const fn filter(self) -> &'static str {
+        match self {
+            Self::Indexed => {
+                "WHERE p.embedding IS NOT NULL AND EXISTS (
+                SELECT 1 FROM rh_summaries s WHERE s.id = p.record_id"
+            }
+            Self::Exact => {
+                "JOIN rh_summaries s ON s.id = p.record_id WHERE p.embedding IS NOT NULL"
+            }
+        }
+    }
+}
+
+async fn passage_candidates(
+    tx: &mut sqlx::PgConnection,
+    context: &ArmContext<'_>,
+    vector: &HalfVector,
+    scan: PassageScan,
+) -> Result<Vec<ArmSqlRow>, Error> {
     use SearchTable::Passage;
     let options = context.options;
     let mut query = QueryBuilder::new(
         "WITH candidates AS MATERIALIZED (
-            SELECT p.id, p.record_id, p.ordinal, p.latest_at, p.content, p.embedding <=> ",
+            SELECT p.id, p.record_id, p.ordinal, p.latest_at, p.content, (p.embedding <=> ",
     );
     query.push_bind(vector.clone());
-    query.push(
-        " AS distance FROM rh_summary_passages p WHERE p.embedding IS NOT NULL
-          AND EXISTS (SELECT 1 FROM rh_summaries s WHERE s.id = p.record_id",
-    );
+    query.push(scan.distance_suffix());
+    query.push(" AS distance FROM rh_summary_passages p ");
+    query.push(scan.filter());
     Passage.push_eligibility(&mut query);
-    query.push(" AND p.index_key = s.index_key");
-    if let Some(key) = &options.summary_index_key {
-        query.push(" AND s.index_key = ").push_bind(key.as_slice());
+    push_passage_scope(&mut query, context);
+    if matches!(scan, PassageScan::Indexed) {
+        query.push(" OFFSET 0)");
     }
-    if let Some(filter) = context.tag_filter {
-        query.push(" AND ");
-        filter.push_condition(&mut query, false);
-    }
-    push_scope_conditions(&mut query, options, false);
-    query.push(" OFFSET 0)");
     push_time_conditions(&mut query, options, Passage);
     query.push(format!(
         " ORDER BY distance LIMIT {}) ",
@@ -218,12 +252,24 @@ async fn passage_vector(
         semantic_floor("p"),
         recency_columns(Passage)
     ));
-    let fetched = query
+    query
         .build_query_as::<ArmSqlRow>()
         .fetch_all(tx)
         .await
-        .map_err(|source| Error::operation("summary passage vector search", source))?;
-    fetched.into_iter().map(|row| row.into_arm(false)).collect()
+        .map_err(|source| Error::operation("summary passage vector search", source))
+}
+
+fn push_passage_scope(query: &mut QueryBuilder<sqlx::Postgres>, context: &ArmContext<'_>) {
+    let options = context.options;
+    query.push(" AND p.index_key = s.index_key");
+    if let Some(key) = &options.summary_index_key {
+        query.push(" AND s.index_key = ").push_bind(key.as_slice());
+    }
+    if let Some(filter) = context.tag_filter {
+        query.push(" AND ");
+        filter.push_condition(query, false);
+    }
+    push_scope_conditions(query, options, false);
 }
 
 fn merge_chunk_arm(parents: Vec<ArmRow>, chunks: Vec<ArmRow>) -> Vec<ArmRow> {
