@@ -10,6 +10,7 @@ use kernel::memory::{
     },
     summary_reference::PreparedSummaryTree,
 };
+use kernel::wiki::{builder::WIKI_PIPELINE_VERSION, entity_pass::ENTITY_PIPELINE_VERSION};
 use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
 use wire::time::TimestampFormat as _;
 
@@ -261,7 +262,11 @@ impl SummaryConversion for SqliteStore {
                     "UPDATE rh_summary_conversion_items SET state = 'pending', last_error = NULL, timeout_retries = 0, second_pass_at = NULL
                      WHERE conversation_id = ?1 AND state = 'failed'", [conversation.to_string()],
                 ),
-                ConversionControl::Release { conversation } => tx.execute(RELEASE, [conversation.to_string()]),
+                ConversionControl::Release { conversation } => {
+                    let id = conversation.to_string();
+                    tx.execute(RELEASE, [&id]).map_err(error)?;
+                    tx.execute(COMPLETE_EMPTY_DELIVERIES, params![id, WIKI_PIPELINE_VERSION, ENTITY_PIPELINE_VERSION])
+                }
             }.map_err(error)?;
             tx.commit().map_err(error)?;
             Ok(true)
@@ -536,4 +541,13 @@ const RELEASE: &str = "WITH part_order AS (
 )
 UPDATE ros_summary_deliveries AS d SET anchor_id = a.id, historical_backlog = 0
 FROM anchors a WHERE d.conversation_id = ?1 AND d.message_id = a.message_id
-  AND d.historical_backlog AND d.consumer = 'wiki' AND a.rank = 1";
+  AND d.historical_backlog AND a.rank = 1";
+
+const COMPLETE_EMPTY_DELIVERIES: &str = "UPDATE ros_summary_deliveries AS d
+SET completed_version = CASE d.consumer WHEN 'entity' THEN ?3 ELSE ?2 END, historical_backlog = 0
+FROM ros_messages m
+WHERE d.conversation_id = ?1 AND d.historical_backlog
+  AND m.id = d.message_id AND m.conversation_id = d.conversation_id
+  AND m.content = '' AND coalesce(m.tool_name, '') = ''
+  AND (EXISTS (SELECT 1 FROM ros_summaries WHERE conversation_id = ?1 AND kind = 'session')
+       OR EXISTS (SELECT 1 FROM rh_summary_conversion_items WHERE conversation_id = ?1 AND state = 'complete'))";

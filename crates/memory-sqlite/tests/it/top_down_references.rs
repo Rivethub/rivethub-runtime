@@ -433,8 +433,6 @@ async fn check_gone(
 
 #[tokio::test]
 async fn top_down_references_split_message_has_only_the_first_anchor() -> TestResult {
-    use kernel::memory::summary_conversion::{ConversionControl, SummaryConversion};
-
     let (_dir, store) = store(None)?;
     seed(&store).await?;
     store
@@ -447,8 +445,9 @@ async fn top_down_references_split_message_has_only_the_first_anchor() -> TestRe
         .with_conn(|conn| {
             conn.execute(
         "INSERT INTO ros_messages (id, conversation_id, agent, channel, role, content, created_at)
-         VALUES (?1, ?2, 'fixture', 'cli', 'user', 'A new measurement.', '2024-01-03T00:00:00Z')",
-        params![id(4).to_string(), id(1).to_string()],
+         VALUES (?1, ?2, 'fixture', 'cli', 'user', 'A new measurement.', '2024-01-03T00:00:00Z'),
+                (?3, ?2, 'fixture', 'cli', 'assistant', '', '2024-01-04T00:00:00Z')",
+        params![id(4).to_string(), id(1).to_string(), id(5).to_string()],
     ).map_err(failed)
         })
         .await?;
@@ -495,6 +494,13 @@ async fn top_down_references_split_message_has_only_the_first_anchor() -> TestRe
     prepared.part_order = vec![id(22), id(21)];
     assert_eq!(prepared.anchors().get(&id(2)), Some(&id(22)));
     store.replace_summary_tree(prepared).await?;
+    verify_released_deliveries(&store).await
+}
+
+async fn verify_released_deliveries(store: &SqliteStore) -> TestResult {
+    use kernel::memory::summary_conversion::{ConversionControl, SummaryConversion};
+
+    assert_eq!(backlog(store, "message_id", id(5)).await?, 2);
     store
         .control(ConversionControl::Release {
             conversation: id(1),
@@ -509,7 +515,46 @@ async fn top_down_references_split_message_has_only_the_first_anchor() -> TestRe
         assert_eq!(found, [(2, 22), (3, 21), (4, 22)].map(|(message, anchor)| (id(message).to_string(), id(anchor).to_string())));
         Ok(())
     }).await?;
+    assert_eq!(backlog(store, "conversation_id", id(1)).await?, 0);
+    store
+        .with_conn(|conn| {
+            let mut query = conn
+                .prepare(
+                    "SELECT consumer, completed_version FROM ros_summary_deliveries
+              WHERE message_id = ?1 AND anchor_id IS NULL ORDER BY consumer",
+                )
+                .map_err(failed)?;
+            let completed: Vec<(String, i32)> = query
+                .query_map([id(5).to_string()], |row| Ok((row.get(0)?, row.get(1)?)))
+                .map_err(failed)?
+                .collect::<Result<_, _>>()
+                .map_err(failed)?;
+            assert_eq!(
+                completed,
+                [
+                    (
+                        "entity".into(),
+                        kernel::wiki::entity_pass::ENTITY_PIPELINE_VERSION
+                    ),
+                    ("wiki".into(), kernel::wiki::builder::WIKI_PIPELINE_VERSION),
+                ]
+            );
+            Ok(())
+        })
+        .await?;
     Ok(())
+}
+
+async fn backlog(
+    store: &SqliteStore,
+    column: &'static str,
+    id: Uuid,
+) -> Result<i64, memory_sqlite::SqliteError> {
+    store.with_conn(move |conn| conn.query_row(
+        &format!("SELECT count(*) FROM ros_summary_deliveries WHERE {column} = ?1 AND historical_backlog"),
+        [id.to_string()],
+        |row| row.get(0),
+    ).map_err(failed)).await
 }
 
 async fn kept_parts(store: &SqliteStore) -> Result<String, memory_sqlite::SqliteError> {

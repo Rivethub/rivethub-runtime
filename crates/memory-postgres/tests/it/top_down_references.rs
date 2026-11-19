@@ -565,8 +565,6 @@ async fn check_gone(
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn top_down_references_split_message_has_only_the_first_anchor(pool: PgPool) -> TestResult {
-    use kernel::memory::summary_conversion::{ConversionControl, SummaryConversion};
-
     seed(&pool).await?;
     let store = scoped_store(&pool).await?;
     sqlx::query("DELETE FROM rh_wiki_extractions")
@@ -574,8 +572,9 @@ async fn top_down_references_split_message_has_only_the_first_anchor(pool: PgPoo
         .await?;
     sqlx::query(
         "INSERT INTO rh_messages (id, conversation_id, agent, channel, role, content, created_at, owner_user_id)
-         VALUES ($1, $2, 'fixture', 'cli', 'user', 'A new measurement.', '2024-01-03', 'alice')",
-    ).bind(id(4)).bind(id(1)).execute(&pool).await?;
+         VALUES ($1, $2, 'fixture', 'cli', 'user', 'A new measurement.', '2024-01-03', 'alice'),
+                ($3, $2, 'fixture', 'cli', 'assistant', '', '2024-01-04', 'alice')",
+    ).bind(id(4)).bind(id(1)).bind(id(5)).execute(&pool).await?;
     let mut prepared = tree(&[10, 11, 12], 20, &[2, 3, 4], true);
     for (part, ordinal, messages) in [(21, 1, vec![(2, 1), (3, 2)]), (22, 2, vec![(2, 1), (4, 2)])]
     {
@@ -623,6 +622,19 @@ async fn top_down_references_split_message_has_only_the_first_anchor(pool: PgPoo
     Scope::Maintenance
         .run(store.replace_summary_tree(&prepared))
         .await?;
+    verify_released_deliveries(&pool, &store).await
+}
+
+async fn verify_released_deliveries(pool: &PgPool, store: &PostgresMemory) -> TestResult {
+    use kernel::memory::summary_conversion::{ConversionControl, SummaryConversion};
+
+    let empty_backlog: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM rh_summary_deliveries WHERE message_id = $1 AND historical_backlog",
+    )
+    .bind(id(5))
+    .fetch_one(pool)
+    .await?;
+    assert_eq!(empty_backlog, 2);
     Scope::Maintenance
         .run(store.control(ConversionControl::Release {
             conversation: id(1),
@@ -630,8 +642,29 @@ async fn top_down_references_split_message_has_only_the_first_anchor(pool: PgPoo
         .await?;
     let found: Vec<(Uuid, Uuid)> = sqlx::query_as(
         "SELECT message_id, anchor_id FROM rh_summary_deliveries WHERE consumer = 'wiki' AND anchor_id IS NOT NULL ORDER BY message_id",
-    ).fetch_all(&pool).await?;
+    ).fetch_all(pool).await?;
     assert_eq!(found, [(id(2), id(22)), (id(3), id(21)), (id(4), id(22))]);
+    let remaining: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM rh_summary_deliveries WHERE conversation_id = $1 AND historical_backlog",
+    ).bind(id(1)).fetch_one(pool).await?;
+    assert_eq!(remaining, 0);
+    let completed: Vec<(String, i32)> = sqlx::query_as(
+        "SELECT consumer, completed_version FROM rh_summary_deliveries
+          WHERE message_id = $1 AND anchor_id IS NULL ORDER BY consumer",
+    )
+    .bind(id(5))
+    .fetch_all(pool)
+    .await?;
+    assert_eq!(
+        completed,
+        [
+            (
+                "entity".into(),
+                kernel::wiki::entity_pass::ENTITY_PIPELINE_VERSION
+            ),
+            ("wiki".into(), kernel::wiki::builder::WIKI_PIPELINE_VERSION),
+        ]
+    );
     Ok(())
 }
 

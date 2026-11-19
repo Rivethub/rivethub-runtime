@@ -10,6 +10,7 @@ use kernel::memory::{
     },
     summary_reference::PreparedSummaryTree,
 };
+use kernel::wiki::{builder::WIKI_PIPELINE_VERSION, entity_pass::ENTITY_PIPELINE_VERSION};
 use sqlx::{PgConnection, Row as _};
 use uuid::Uuid;
 
@@ -247,7 +248,11 @@ impl SummaryConversion for PostgresMemory {
             ).bind(conversation),
             ConversionControl::Release { conversation } => {
                 crate::summary_replace::exclusive(&mut tx, [conversation]).await.map_err(error)?;
-                sqlx::query(RELEASE).bind(conversation)
+                sqlx::query(RELEASE).bind(conversation).execute(&mut *tx).await.map_err(error)?;
+                sqlx::query(COMPLETE_EMPTY_DELIVERIES)
+                    .bind(conversation)
+                    .bind(WIKI_PIPELINE_VERSION)
+                    .bind(ENTITY_PIPELINE_VERSION)
             }
         };
         query.execute(&mut *tx).await.map_err(error)?;
@@ -573,3 +578,12 @@ const RELEASE: &str = "WITH part_order AS (
 UPDATE rh_summary_deliveries d SET anchor_id = a.id, historical_backlog = false
 FROM anchors a WHERE d.conversation_id = $1 AND d.message_id = a.message_id
   AND d.historical_backlog";
+
+const COMPLETE_EMPTY_DELIVERIES: &str = "UPDATE rh_summary_deliveries d
+SET completed_version = CASE d.consumer WHEN 'entity' THEN $3 ELSE $2 END, historical_backlog = false
+FROM rh_messages m
+WHERE d.conversation_id = $1 AND d.historical_backlog
+  AND m.id = d.message_id AND m.conversation_id = d.conversation_id
+  AND m.content = '' AND coalesce(m.tool_name, '') = ''
+  AND (EXISTS (SELECT 1 FROM rh_summaries WHERE conversation_id = $1 AND kind = 'session')
+       OR EXISTS (SELECT 1 FROM rh_summary_conversion_items WHERE conversation_id = $1 AND state = 'complete'))";
