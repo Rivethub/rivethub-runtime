@@ -38,6 +38,7 @@ impl SqliteStore {
             });
         }
         let owner = owner.clone();
+        let language_available = self.language_available;
         let (ids, opening_jobs) = self
             .with_conn(move |conn| {
                 let tx = conn
@@ -72,7 +73,8 @@ impl SqliteStore {
                 let mut opening_jobs = false;
                 for id in conversations {
                     crate::settlement::record_capture(&tx, &id, now, true, false, (None, None))?;
-                    opening_jobs |= crate::summary_opening::refresh(&tx, &id, now)?;
+                    opening_jobs |=
+                        crate::summary_opening::refresh(&tx, &id, now, language_available)?;
                 }
                 tx.commit().map_err(SqliteError::query("append commit"))?;
                 Ok((ids, opening_jobs))

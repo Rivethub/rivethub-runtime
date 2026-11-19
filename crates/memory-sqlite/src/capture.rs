@@ -80,6 +80,7 @@ impl SqliteStore {
         let prepared = PreparedBatch::new(batch, owner, node)?;
         let owner = owner.clone();
         let embed = self.embed_armed();
+        let language_available = self.language_available;
         let (result, opening_jobs) = self
             .with_conn(move |conn| {
                 let tx = conn
@@ -92,7 +93,7 @@ impl SqliteStore {
                     );
                     return Ok((prepared.dropped()?, false));
                 }
-                let result = prepared.write(&tx, owner.as_str(), now, embed)?;
+                let result = prepared.write(&tx, owner.as_str(), now, embed, language_available)?;
                 tx.commit().map_err(SqliteError::query("capture commit"))?;
                 Ok(result)
             })
@@ -181,6 +182,7 @@ impl PreparedBatch {
         owner: &str,
         now: Timestamp,
         embed: bool,
+        language_available: bool,
     ) -> Result<(CaptureResult, bool), SqliteError> {
         let found = self.key.find(tx)?;
         let prior = if let Some(found) = &found
@@ -223,7 +225,8 @@ impl PreparedBatch {
                 Outcome::Skipped => skipped += 1,
             }
         }
-        let opening_jobs = changed && crate::summary_opening::refresh(tx, &conversation.id, now)?;
+        let opening_jobs = changed
+            && crate::summary_opening::refresh(tx, &conversation.id, now, language_available)?;
         let enriched = if let Some(before) = before
             && inserted == 0
         {

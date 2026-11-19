@@ -159,6 +159,7 @@ async fn run(
         embed,
         model,
         crate::models::summary_index_key(config, env),
+        config.memory_models_available(),
     )
     .await?;
     import::pending(&store, config, &shutdown).await?;
@@ -395,6 +396,7 @@ async fn open_store(
     embed: Option<QueryEmbed>,
     model: Option<String>,
     index_key: Option<[u8; 32]>,
+    language_available: bool,
 ) -> Result<Arc<SqliteStore>, LocalError> {
     let store = tokio::task::spawn_blocking(move || SqliteStore::open(path)).await??;
     let store = match embed {
@@ -409,6 +411,7 @@ async fn open_store(
         Some(key) => store.with_summary_index_key(key),
         None => store,
     };
+    let store = store.with_language_available(language_available);
     Ok(Arc::new(match model {
         Some(model) => store.with_embed_model(&model),
         None => store,
