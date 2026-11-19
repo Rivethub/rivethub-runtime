@@ -690,3 +690,105 @@ async fn top_down_references_a_running_wiki_job_cannot_apply_or_retry() -> TestR
     assert_eq!(snapshot(&store).await?, before);
     Ok(())
 }
+
+#[tokio::test]
+async fn top_down_references_kept_part_competes_with_incoming_rows() -> TestResult {
+    let (_dir, store) = store(None)?;
+    seed(&store).await?;
+    store.replace_summary_tree(initial_parts()).await?;
+    store.with_conn(seed_kept_collision).await?;
+    let before = snapshot(&store).await?;
+    let mut prepared = reopen_parts();
+    prepared
+        .records
+        .retain(|row| row.kind != SummaryKind::Section);
+    store.replace_summary_tree(prepared.clone()).await?;
+    assert!(store.replace_summary_tree(prepared).await.is_err());
+    assert_eq!(snapshot(&store).await?, before);
+    let actual: (String, String, i32, i32, bool, String) = store
+        .with_conn(|conn| {
+            conn.query_row(
+                "SELECT c.note, e.status, e.pipeline_version, a.access_count,
+                    a.last_accessed_at = '2025-06-01T00:00:00Z', e.topics_touched
+             FROM ros_wiki_citations c JOIN ros_wiki_extractions e USING (summary_id)
+             JOIN ros_summaries a ON a.id = c.summary_id WHERE c.summary_id = ?1",
+                [id(21).to_string()],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                    ))
+                },
+            )
+            .map_err(failed)
+        })
+        .await?;
+    assert_eq!(
+        actual,
+        (
+            "new note".to_owned(),
+            "done".to_owned(),
+            4,
+            11,
+            true,
+            r#"["gasket","valve"]"#.to_owned(),
+        )
+    );
+    let winners: (String, String, String) = store.with_conn(|conn| conn.query_row(
+        "SELECT t.id, c.id, json_extract(d.patches, '$[0].slug') || ',' || json_extract(d.patches, '$[1].slug')
+         FROM ros_tags t JOIN rh_entity_fact_claims c ON c.summary_id = t.entity_id
+         JOIN rh_wiki_deferred d ON d.summary_id = t.entity_id WHERE t.entity_id = ?1",
+        [id(21).to_string()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).map_err(failed)).await?;
+    assert_eq!(
+        winners,
+        (
+            id(23).to_string(),
+            id(23).to_string(),
+            "gasket,valve".to_owned()
+        )
+    );
+    Ok(())
+}
+
+fn seed_kept_collision(conn: &mut rusqlite::Connection) -> Result<(), SqliteError> {
+    conn.execute(
+        "INSERT INTO ros_messages (id, conversation_id, agent, channel, role, content, created_at)
+         VALUES (?1, ?2, 'fixture', 'cli', 'user', 'A new measurement.', '2023-12-01T00:00:00Z')",
+        params![id(4).to_string(), id(1).to_string()],
+    )
+    .map_err(failed)?;
+    conn.execute(
+        "INSERT INTO rh_entity_facts (id, topic_id, key, created_at)
+         SELECT 'diameter', id, 'diameter', '2020-01-01' FROM rh_topics WHERE slug = 'hardware' AND kind = 'type'",
+        [],
+    ).map_err(failed)?;
+    for sql in [
+        "INSERT INTO ros_wiki_citations (topic_slug, summary_id, kind, note, cited_at)
+         VALUES ('valve', ?1, 'part', 'old note', '2020-01-01T00:00:00Z'),
+                ('valve', ?2, 'section', 'new note', '2025-06-01T00:00:00Z')",
+        r#"INSERT INTO ros_wiki_extractions (summary_id, status, pipeline_version, topics_touched, extracted_at)
+         VALUES (?1, 'failed', 1, '["gasket"]', '2020-01-01T00:00:00Z'),
+                (?2, 'done', 4, '["valve"]', '2025-06-01T00:00:00Z')"#,
+        "UPDATE ros_summaries SET access_count = CASE WHEN id = ?1 THEN 2 ELSE 9 END,
+             last_accessed_at = CASE WHEN id = ?1 THEN '2020-01-01T00:00:00Z' ELSE '2025-06-01T00:00:00Z' END
+         WHERE id IN (?1, ?2)",
+        "INSERT INTO ros_tags (id, entity_type, entity_id, key, value, source, state, created_at, updated_at)
+         VALUES (?1, 'summary', ?1, 'type', 'hardware', 'user', 'accepted', '2020-01-01', '2020-01-01'),
+                (?2, 'summary', ?2, 'type', 'hardware', 'user', 'rejected', '2025-06-01', '2025-06-01')",
+        "INSERT INTO rh_entity_fact_claims
+            (id, fact_id, value, actor, session_id, summary_id, at, recorded_at, owner_user_id)
+         VALUES (?1, 'diameter', 'small', 'wiki-writer', 'valves', ?1, '2020-01-01', '2020-01-01', 'alice'),
+                (?2, 'diameter', 'large', 'wiki-writer', 'valves', ?2, '2025-06-01', '2025-06-01', 'alice')",
+        r#"INSERT INTO rh_wiki_deferred (summary_id, waits_conversation, patches, deferred_at, owner_user_id)
+         VALUES (?1, '00000000-0000-0000-0000-000000000001', '[{"slug":"valve"}]', '2020-01-01', 'alice'),
+                (?2, '00000000-0000-0000-0000-000000000001', '[{"slug":"gasket"}]', '2025-06-01', 'alice')"#,
+    ] {
+        conn.execute(sql, params![id(21).to_string(), id(23).to_string()]).map_err(failed)?;
+    }
+    Ok(())
+}

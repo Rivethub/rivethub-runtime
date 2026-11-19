@@ -954,3 +954,95 @@ async fn top_down_references_reuses_passage_vectors_by_window_and_spec(pool: PgP
     assert_eq!(checksum(&pool).await?, transcript);
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_references_kept_part_competes_with_incoming_rows(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let store = scoped_store(&pool).await?;
+    Scope::Maintenance
+        .run(store.replace_summary_tree(&initial_parts()))
+        .await?;
+    sqlx::query(
+        "INSERT INTO rh_messages (id, conversation_id, agent, channel, role, content, created_at, owner_user_id)
+         VALUES ($1, $2, 'fixture', 'cli', 'user', 'A new measurement.', '2023-12-01', 'alice')",
+    ).bind(id(4)).bind(id(1)).execute(&pool).await?;
+    seed_kept_collision(&pool).await?;
+    let before = checksum(&pool).await?;
+    let mut prepared = reopen_parts();
+    prepared
+        .records
+        .retain(|row| row.kind != SummaryKind::Section);
+    Scope::Maintenance
+        .run(store.replace_summary_tree(&prepared))
+        .await?;
+    assert!(
+        Scope::Maintenance
+            .run(store.replace_summary_tree(&prepared))
+            .await
+            .is_err()
+    );
+    assert_eq!(checksum(&pool).await?, before);
+    let actual: (String, String, i32, i32, bool, Vec<String>) = sqlx::query_as(
+        "SELECT c.note, e.status, e.pipeline_version, a.access_count,
+                a.last_accessed_at = '2025-06-01', e.topics_touched
+         FROM rh_wiki_citations c JOIN rh_wiki_extractions e USING (summary_id)
+         JOIN rh_summary_access a USING (summary_id) WHERE c.summary_id = $1",
+    )
+    .bind(id(21))
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        actual,
+        (
+            "new note".to_owned(),
+            "done".to_owned(),
+            4,
+            11,
+            true,
+            vec!["gasket".to_owned(), "valve".to_owned()],
+        )
+    );
+    let winners: (Uuid, Uuid, String) = sqlx::query_as(
+        "SELECT t.id, c.id, (d.patches->0->>'slug') || ',' || (d.patches->1->>'slug')
+         FROM rh_tags t JOIN rh_entity_fact_claims c ON c.summary_id = t.entity_id
+         JOIN rh_wiki_deferred d ON d.summary_id = t.entity_id WHERE t.entity_id = $1",
+    )
+    .bind(id(21))
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(winners, (id(23), id(23), "gasket,valve".to_owned()));
+    Ok(())
+}
+
+async fn seed_kept_collision(pool: &PgPool) -> TestResult {
+    sqlx::query(
+        "INSERT INTO rh_entity_facts (id, topic_id, key, created_at)
+         SELECT $1, id, 'diameter', now() FROM rh_topics WHERE slug = 'hardware' AND kind = 'type'",
+    )
+    .bind(id(71))
+    .execute(pool)
+    .await?;
+    for sql in [
+        "INSERT INTO rh_wiki_citations (topic_slug, summary_id, kind, note, cited_at, owner_user_id)
+         VALUES ('valve', $1, 'part', 'old note', '2020-01-01', 'alice'),
+                ('valve', $2, 'section', 'new note', '2025-06-01', 'alice')",
+        "INSERT INTO rh_wiki_extractions (summary_id, status, pipeline_version, topics_touched, extracted_at, owner_user_id)
+         VALUES ($1, 'failed', 1, ARRAY['gasket'], '2020-01-01', 'alice'),
+                ($2, 'done', 4, ARRAY['valve'], '2025-06-01', 'alice')",
+        "INSERT INTO rh_summary_access (summary_id, access_count, last_accessed_at)
+         VALUES ($1, 2, '2020-01-01'), ($2, 9, '2025-06-01')",
+        "INSERT INTO rh_tags (id, entity_type, entity_id, key, value, source, state, updated_at)
+         VALUES ($1, 'summary', $1, 'type', 'hardware', 'user', 'accepted', '2020-01-01'),
+                ($2, 'summary', $2, 'type', 'hardware', 'user', 'rejected', '2025-06-01')",
+        "INSERT INTO rh_entity_fact_claims
+            (id, fact_id, value, actor, session_id, summary_id, at, recorded_at, owner_user_id)
+         SELECT id, '00000000-0000-0000-0000-000000000047', id::text, 'wiki-writer', 'valves', id, at, at, 'alice'
+         FROM (VALUES ($1::uuid, '2020-01-01'::timestamptz), ($2, '2025-06-01')) AS source(id, at)",
+        r#"INSERT INTO rh_wiki_deferred (summary_id, waits_conversation, patches, deferred_at, owner_user_id)
+         VALUES ($1, '00000000-0000-0000-0000-000000000001', '[{"slug":"valve"}]', '2020-01-01', 'alice'),
+                ($2, '00000000-0000-0000-0000-000000000001', '[{"slug":"gasket"}]', '2025-06-01', 'alice')"#,
+    ] {
+        sqlx::query(sql).bind(id(21)).bind(id(23)).execute(pool).await?;
+    }
+    Ok(())
+}

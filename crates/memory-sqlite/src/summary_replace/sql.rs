@@ -3,16 +3,22 @@ SET anchor_id = (SELECT a.anchor FROM summary_anchors a WHERE a.message = d.mess
     historical_backlog = NOT EXISTS (SELECT 1 FROM summary_anchors a WHERE a.message = d.message_id)
 WHERE d.anchor_id IN (SELECT old FROM summary_replacements);
 
+CREATE TEMP TABLE summary_reference_map AS
+SELECT old, new, kind FROM summary_replacements WHERE new IS NOT NULL
+UNION ALL
+SELECT DISTINCT map.new, map.new, map.kind
+FROM summary_replacements map JOIN summary_retained kept ON kept.id = map.new;
+
 CREATE TEMP TABLE summary_replaced_access AS
 SELECT map.new, sum(s.access_count) AS access_count, max(s.last_accessed_at) AS last_accessed_at
-FROM ros_summaries s JOIN summary_replacements map ON map.old = s.id
+FROM ros_summaries s JOIN summary_reference_map map ON map.old = s.id
 WHERE map.new IS NOT NULL GROUP BY map.new;
 
 CREATE TEMP TABLE summary_replaced_extractions AS
 SELECT e.*, map.new, row_number() OVER (PARTITION BY map.new ORDER BY
        (e.status IN ('done', 'skipped')) DESC, e.pipeline_version DESC, e.extracted_at DESC, map.old DESC) AS rank
 FROM ros_wiki_extractions e
-JOIN summary_replacements map ON map.old = e.summary_id AND map.new IS NOT NULL;
+JOIN summary_reference_map map ON map.old = e.summary_id AND map.new IS NOT NULL;
 
 DELETE FROM ros_summaries WHERE id IN (SELECT old FROM summary_replacements);
 ";
@@ -89,26 +95,32 @@ WHERE ros_summary_deliveries.completed_version IS NULL AND excluded.completed_ve
 
 pub(super) const REFERENCES: &str = r"UPDATE ros_summaries AS s
 SET access_count = a.access_count, last_accessed_at = a.last_accessed_at
-FROM summary_replaced_access a WHERE s.id = a.new AND s.id NOT IN (SELECT id FROM summary_retained);
+FROM summary_replaced_access a WHERE s.id = a.new;
 
-INSERT OR IGNORE INTO ros_wiki_extractions (summary_id, status, pipeline_version, topics_touched, git_sha, error, extracted_at)
+INSERT INTO ros_wiki_extractions (summary_id, status, pipeline_version, topics_touched, git_sha, error, extracted_at)
 SELECT e.new, e.status, e.pipeline_version,
        (SELECT json_group_array(topic) FROM (
            SELECT DISTINCT t.value AS topic
            FROM summary_replaced_extractions r, json_each(r.topics_touched) t
            WHERE r.new = e.new ORDER BY topic
         )), e.git_sha, e.error, e.extracted_at
-FROM summary_replaced_extractions e WHERE e.rank = 1;
+FROM summary_replaced_extractions e WHERE e.rank = 1
+ON CONFLICT (summary_id) DO UPDATE
+SET status = excluded.status, pipeline_version = excluded.pipeline_version,
+    topics_touched = excluded.topics_touched, git_sha = excluded.git_sha,
+    error = excluded.error, extracted_at = excluded.extracted_at;
 
 WITH ranked AS (
     SELECT c.*, map.new, map.kind AS new_kind,
         row_number() OVER (PARTITION BY c.topic_slug, map.new ORDER BY
             (nullif(trim(c.note), '') IS NOT NULL) DESC, c.cited_at DESC, map.old DESC) AS rank
-    FROM ros_wiki_citations c JOIN summary_replacements map ON map.old = c.summary_id AND map.new IS NOT NULL
+    FROM ros_wiki_citations c JOIN summary_reference_map map ON map.old = c.summary_id AND map.new IS NOT NULL
 )
-INSERT OR IGNORE INTO ros_wiki_citations (topic_slug, summary_id, kind, note, cited_at)
+INSERT INTO ros_wiki_citations (topic_slug, summary_id, kind, note, cited_at)
 SELECT topic_slug, new, CASE WHEN kind IS NOT NULL THEN new_kind END, note, cited_at
-FROM ranked WHERE rank = 1;
+FROM ranked WHERE rank = 1
+ON CONFLICT (topic_slug, summary_id) DO UPDATE
+SET kind = excluded.kind, note = excluded.note, cited_at = excluded.cited_at;
 
 WITH ranked AS (
     SELECT p.*, map.new,
@@ -117,19 +129,21 @@ WITH ranked AS (
         first_value(p.git_sha) OVER (PARTITION BY p.topic_slug, map.new ORDER BY
             (p.git_sha IS NOT NULL) DESC, p.created_at, map.old) AS sha
     FROM ros_wiki_provenance p
-    JOIN summary_replacements map ON map.old = p.source_id AND map.new IS NOT NULL
+    JOIN summary_reference_map map ON map.old = p.source_id AND map.new IS NOT NULL
     WHERE p.source_kind = 'summary'
 )
-INSERT OR IGNORE INTO ros_wiki_provenance (topic_slug, source_kind, source_id, conversation_id, git_sha, created_at)
+INSERT INTO ros_wiki_provenance (topic_slug, source_kind, source_id, conversation_id, git_sha, created_at)
 SELECT topic_slug, 'summary', new, conversation, sha, min(created_at)
-FROM ranked GROUP BY topic_slug, new, conversation, sha;
+FROM ranked WHERE true GROUP BY topic_slug, new, conversation, sha
+ON CONFLICT (topic_slug, source_kind, source_id) DO UPDATE
+SET conversation_id = excluded.conversation_id, git_sha = excluded.git_sha, created_at = excluded.created_at;
 
 CREATE TEMP TABLE summary_replaced_held AS
 SELECT c.*, map.new,
        CASE WHEN c.source = c.summary_id THEN map.new
             WHEN c.source = 'summary:' || c.summary_id THEN 'summary:' || map.new
             ELSE c.source END AS new_source
-FROM rh_wiki_entity_candidates c JOIN summary_replacements map ON map.old = c.summary_id
+FROM rh_wiki_entity_candidates c JOIN summary_reference_map map ON map.old = c.summary_id
 WHERE map.new IS NOT NULL;
 
 DELETE FROM rh_wiki_entity_candidates WHERE summary_id IN (SELECT old FROM summary_replacements);
@@ -139,37 +153,53 @@ WITH ranked AS (
 )
 INSERT INTO rh_wiki_entity_candidates (key, source, summary_id, patch, held_at, owner_user_id)
 SELECT key, new_source, new, patch, held_at, owner_user_id FROM ranked WHERE rank = 1
-ON CONFLICT (key, source) DO NOTHING;
+ON CONFLICT (key, source) DO UPDATE
+SET summary_id = excluded.summary_id, patch = excluded.patch, held_at = excluded.held_at
+WHERE rh_wiki_entity_candidates.owner_user_id = excluded.owner_user_id
+  AND rh_wiki_entity_candidates.held_at <= excluded.held_at;
 
 WITH ranked AS (
-    SELECT d.*, map.new, row_number() OVER (PARTITION BY map.new ORDER BY d.deferred_at DESC, map.old DESC) AS rank
-    FROM rh_wiki_deferred d JOIN summary_replacements map ON map.old = d.summary_id AND map.new IS NOT NULL
+    SELECT d.*, map.new, row_number() OVER (
+        PARTITION BY map.new ORDER BY d.deferred_at DESC, map.old DESC
+    ) AS rank
+    FROM rh_wiki_deferred d JOIN summary_reference_map map ON map.old = d.summary_id
 )
-INSERT OR IGNORE INTO rh_wiki_deferred (summary_id, waits_session, waits_conversation, applied_topic, patches, deferred_at, owner_user_id)
-SELECT new, waits_session, waits_conversation, applied_topic, patches, deferred_at, owner_user_id
-FROM ranked WHERE rank = 1;
+INSERT INTO rh_wiki_deferred (summary_id, waits_session, waits_conversation, applied_topic, patches, deferred_at, owner_user_id)
+SELECT d.new, d.waits_session, d.waits_conversation, d.applied_topic,
+       (SELECT json_group_array(json(patch)) FROM (
+           SELECT patch FROM (
+               SELECT item.value AS patch, r.rank AS source_rank, item.key AS ordinal,
+                      row_number() OVER (PARTITION BY json_extract(item.value, '$.slug')
+                          ORDER BY r.rank, item.key) AS patch_rank
+               FROM ranked r, json_each(r.patches) item
+               WHERE r.new = d.new AND r.owner_user_id = d.owner_user_id
+                 AND (r.waits_session, r.waits_conversation, r.applied_topic)
+                     IS (d.waits_session, d.waits_conversation, d.applied_topic)
+           ) WHERE patch_rank = 1 ORDER BY source_rank, ordinal
+       )), d.deferred_at, d.owner_user_id
+FROM ranked d WHERE d.rank = 1
+ON CONFLICT (summary_id) DO UPDATE
+SET waits_session = excluded.waits_session, waits_conversation = excluded.waits_conversation,
+    applied_topic = excluded.applied_topic, patches = excluded.patches, deferred_at = excluded.deferred_at;
 
-WITH ranked AS (
-    SELECT c.id, map.new, row_number() OVER (PARTITION BY c.fact_id, map.new ORDER BY
-        c.at DESC, c.recorded_at DESC, c.id DESC) AS rank
-    FROM rh_entity_fact_claims c
-    JOIN summary_replacements map ON map.old = c.summary_id AND map.new IS NOT NULL
-)
+CREATE TEMP TABLE summary_claim_ranks AS
+SELECT c.id, map.new, row_number() OVER (PARTITION BY c.fact_id, map.new ORDER BY
+       c.at DESC, c.recorded_at DESC, c.id DESC) AS rank
+FROM rh_entity_fact_claims c JOIN summary_reference_map map ON map.old = c.summary_id;
+
+DELETE FROM rh_entity_fact_claims WHERE id IN (SELECT id FROM summary_claim_ranks WHERE rank > 1);
 UPDATE rh_entity_fact_claims AS c SET summary_id = ranked.new
-FROM ranked WHERE c.id = ranked.id AND ranked.rank = 1
-AND NOT EXISTS (SELECT 1 FROM rh_entity_fact_claims existing
-                WHERE existing.fact_id = c.fact_id AND existing.summary_id = ranked.new);
+FROM summary_claim_ranks ranked WHERE c.id = ranked.id AND ranked.rank = 1 AND c.summary_id <> ranked.new;
 
-WITH ranked AS (
-    SELECT t.id, map.new, row_number() OVER (PARTITION BY t.key, t.value, map.new ORDER BY
-        t.updated_at DESC, t.id DESC) AS rank
-    FROM ros_tags t JOIN summary_replacements map ON map.old = t.entity_id AND map.new IS NOT NULL
-    WHERE t.entity_type = 'summary'
-)
-UPDATE ros_tags AS t SET entity_id = ranked.new FROM ranked WHERE t.id = ranked.id AND ranked.rank = 1
-AND NOT EXISTS (SELECT 1 FROM ros_tags existing
-                WHERE existing.entity_type = 'summary' AND existing.entity_id = ranked.new
-                  AND existing.key = t.key AND existing.value = t.value);
+CREATE TEMP TABLE summary_tag_ranks AS
+SELECT t.id, map.new, row_number() OVER (PARTITION BY t.key, t.value, map.new ORDER BY
+       t.updated_at DESC, t.id DESC) AS rank
+FROM ros_tags t JOIN summary_reference_map map ON map.old = t.entity_id
+WHERE t.entity_type = 'summary';
+
+DELETE FROM ros_tags WHERE id IN (SELECT id FROM summary_tag_ranks WHERE rank > 1);
+UPDATE ros_tags AS t SET entity_id = ranked.new
+FROM summary_tag_ranks ranked WHERE t.id = ranked.id AND ranked.rank = 1 AND t.entity_id <> ranked.new;
 
 DELETE FROM ros_tags WHERE entity_type = 'summary' AND entity_id IN (SELECT old FROM summary_replacements);
 DELETE FROM rh_entity_fact_claims WHERE summary_id IN (SELECT old FROM summary_replacements);
@@ -182,6 +212,9 @@ DELETE FROM ros_jobs WHERE state <> 'running' AND json_valid(payload) AND (
         AND json_extract(payload, '$.targetId') IN (SELECT old FROM summary_replacements))
 );
 
+DROP TABLE summary_claim_ranks;
+DROP TABLE summary_tag_ranks;
+DROP TABLE summary_reference_map;
 DROP TABLE summary_replaced_held;
 DROP TABLE summary_replaced_access;
 DROP TABLE summary_replaced_extractions;
