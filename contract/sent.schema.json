@@ -5304,7 +5304,6 @@
           "type": "integer"
         },
         "parts": {
-          "default": 0,
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -5315,13 +5314,11 @@
           "type": "integer"
         },
         "sections": {
-          "default": 0,
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "sessions": {
-          "default": 0,
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -5336,9 +5333,6 @@
         "leaves",
         "branches",
         "roots",
-        "sessions",
-        "parts",
-        "sections",
         "embedded",
         "top"
       ],
@@ -5440,7 +5434,6 @@
           ]
         },
         "qualityFlags": {
-          "default": 0,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -5495,7 +5488,6 @@
         "content",
         "messageCount",
         "createdAt",
-        "qualityFlags",
         "sourceMessageIds",
         "vector"
       ],

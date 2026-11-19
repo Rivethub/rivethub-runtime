@@ -78,6 +78,31 @@ fn every_definition_name_is_unique() -> Result<(), String> {
 }
 
 #[test]
+fn summary_contract_allows_decoder_defaults() {
+    let schema = wire::contract::sent();
+    let defs = schema.get("$defs").unwrap();
+    for (definition, fields) in [
+        (
+            "MemorySummaryCounts",
+            &["sessions", "parts", "sections"][..],
+        ),
+        ("MemorySummaryNode", &["qualityFlags", "truncated"][..]),
+    ] {
+        let required = defs
+            .get(definition)
+            .and_then(|schema| schema.get("required"))
+            .and_then(serde_json::Value::as_array)
+            .unwrap();
+        for field in fields {
+            assert!(
+                !required.iter().any(|name| name.as_str() == Some(field)),
+                "{definition}.{field}"
+            );
+        }
+    }
+}
+
+#[test]
 fn summary_kinds_and_counts_are_additive() -> Result<(), Box<dyn std::error::Error>> {
     use wire::gateway::memory::{MemorySummaryCounts, MemorySummaryNode, SummaryKind};
 
