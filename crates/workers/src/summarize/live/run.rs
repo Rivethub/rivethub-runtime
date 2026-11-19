@@ -1,3 +1,4 @@
+mod accounting;
 mod compose;
 
 use super::*;
@@ -307,24 +308,17 @@ impl Run<'_> {
             })
             .transpose()?;
         self.env.boundary(charge).await?;
-        let response = self
+        let started = Timestamp::now();
+        let (response, usage) = self
             .env
             .chat_request(llm::model_request(model, &prompt))
-            .await?;
+            .await;
         drop(permit);
         drop(local);
-        if let (Some((conversion, _)), Some(charge), Some(usage)) =
-            (self.env.conversion, charge, &response.usage)
-        {
-            conversion
-                .report(ConversionUsage {
-                    estimate: charge.estimate,
-                    input: i64::try_from(usage.prompt_tokens).map_err(|_| WorkerError::Count)?,
-                    output: i64::try_from(usage.completion_tokens)
-                        .map_err(|_| WorkerError::Count)?,
-                })
-                .await?;
-        }
+        self.record_model_call(started, &response, usage.as_ref())
+            .await;
+        self.report_conversion(charge, usage.as_ref()).await?;
+        let response = response?;
         let reply = llm::parse_model_reply(&response, prompt.editorial_ceiling, sources)
             .map_err(|_| WorkerError::EmptySummary)?;
         store
@@ -364,14 +358,17 @@ impl Run<'_> {
                 )
             })
             .collect::<Vec<_>>();
-        let index = prepare_index(
-            self.env.embedder,
-            self.env.embed,
-            &row.content,
-            &coverage,
-            &ranges,
-        )
-        .await?;
+        let index = tokio::select! {
+            biased;
+            () = self.env.summary.cancel.cancelled() => return Err(WorkerError::Cancelled),
+            index = prepare_index(
+                self.env.embedder,
+                self.env.embed,
+                &row.content,
+                &coverage,
+                &ranges,
+            ) => index?,
+        };
         store
             .save_live_checkpoint(self.id, self.revision, key, encode(&index)?)
             .await?;

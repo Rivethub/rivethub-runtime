@@ -139,5 +139,12 @@ async fn exercise_running_conversion(
         |row| row.get(0),
     )?;
     assert!(indexed);
+    let recorded: i64 = conn.query_row(
+        "SELECT count(*) FROM rh_model_calls WHERE session_key = 'conversion-local-fixture'
+         AND request_kind = 'summary-conversion' AND outcome = 'completed'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(recorded, 1);
     Ok(())
 }

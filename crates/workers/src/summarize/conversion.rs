@@ -16,12 +16,7 @@ pub(crate) async fn run(env: &live::LiveEnv<'_>, store: &dyn SummaryConversion) 
             () = cancel.cancelled() => return,
             _ = ticks.tick() => {}
         }
-        let result = tokio::select! {
-            biased;
-            () = cancel.cancelled() => return,
-            result = handle_conversion_tick(env, store) => result,
-        };
-        if let Err(error) = result {
+        if let Err(error) = handle_conversion_tick(env, store).await {
             tracing::warn!("summary conversion pump failed: {error}");
         }
     }

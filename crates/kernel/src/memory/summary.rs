@@ -159,6 +159,14 @@ pub trait SummaryStore: Send + Sync {
         None
     }
 
+    async fn record_summary_call(
+        &self,
+        _conversation: Uuid,
+        _call: &crate::model_calls::ModelCall,
+    ) -> Result<(), super::MemoryStoreError> {
+        Ok(())
+    }
+
     async fn summary_state(
         &self,
         _id: Uuid,

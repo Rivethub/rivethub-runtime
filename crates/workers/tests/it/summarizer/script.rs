@@ -23,6 +23,7 @@ pub(super) struct Scripted {
     pub(super) calls: Mutex<Vec<Captured>>,
     pub(super) call_arrived: tokio::sync::Notify,
     pub(super) live_output: bool,
+    pub(super) usage: Option<wire::stream::LlmUsage>,
     pub(super) fail_part_once: std::sync::atomic::AtomicBool,
     pub(super) empty: std::sync::atomic::AtomicBool,
     pub(super) truncated: std::sync::atomic::AtomicBool,
@@ -105,6 +106,7 @@ The reconciliation uses saffron markers."
             FinishReason::Stop
         };
         let mut response = response(text, Some(finish));
+        response.usage.clone_from(&self.usage);
         if kind == "TOP_DOWN_PART" && self.large_parts.load(Ordering::SeqCst) {
             response.usage = Some(wire::stream::LlmUsage {
                 prompt_tokens: 11_000,

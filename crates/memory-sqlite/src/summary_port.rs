@@ -47,6 +47,14 @@ impl SummaryStore for SqliteStore {
         Some(self)
     }
 
+    async fn record_summary_call(
+        &self,
+        conversation: Uuid,
+        call: &kernel::model_calls::ModelCall,
+    ) -> Result<(), kernel::memory::MemoryStoreError> {
+        self.record_conversation_call(conversation, call).await
+    }
+
     async fn live_candidates(
         &self,
         after: Uuid,

@@ -3,8 +3,10 @@ use kernel::memory::summary_conversion::{
     LEASE, SummaryConversion,
 };
 use kernel::memory::{NewSummary, SummaryKind, SummarySource};
+use kernel::model_calls::ModelCallStore;
 use sha2::{Digest as _, Sha256};
 use tokio::sync::Notify;
+use wire::model_call::{CallOutcome, CallUsage};
 use wire::time::TimestampFormat as _;
 use workers::handle_conversion_tick;
 
@@ -25,7 +27,17 @@ struct Provider {
 impl Provider {
     fn new() -> Self {
         Self {
-            script: Scripted::live(),
+            script: Scripted {
+                usage: Some(wire::stream::LlmUsage {
+                    prompt_tokens: 400,
+                    completion_tokens: 22,
+                    reasoning_tokens: Some(3),
+                    cached_tokens: Some(11),
+                    cache_creation_tokens: None,
+                    cache_read_tokens: None,
+                }),
+                ..Scripted::live()
+            },
             chat_gate: true.into(),
             midstream: false.into(),
             embed_gate: false.into(),
@@ -48,24 +60,21 @@ impl ModelProvider for Provider {
         observe: &kernel::model::ModelObserver<'_>,
     ) -> Result<LlmResponse, ModelProviderError> {
         let block = self.chat_gate.swap(false, SeqCst);
-        let mut reply = self.script.chat(request).await?;
+        let reply = self.script.chat(request).await?;
         if block {
             if self.midstream.load(SeqCst) {
                 observe(&kernel::model::ModelChunk::Text {
                     delta: "Invented".into(),
                 });
+                if let Some(usage) = &reply.usage {
+                    observe(&kernel::model::ModelChunk::Usage {
+                        usage: usage.clone(),
+                    });
+                }
             }
             self.entered.notify_one();
             self.proceed.notified().await;
         }
-        reply.usage = Some(wire::stream::LlmUsage {
-            prompt_tokens: 400,
-            completion_tokens: 22,
-            reasoning_tokens: None,
-            cached_tokens: None,
-            cache_creation_tokens: None,
-            cache_read_tokens: None,
-        });
         Ok(reply)
     }
 
@@ -132,7 +141,7 @@ async fn legacy(store: &(impl SummaryStore + MemoryStore)) -> TestResult<(Uuid, 
     let at = Timestamp::now() - wire::time::elapsed_days(3);
     let id = capture(
         store,
-        "historical-conversion",
+        "codex:historical-conversion",
         vec![("Store the amaranth log.".into(), at)],
     )
     .await?;
@@ -168,7 +177,7 @@ async fn legacy(store: &(impl SummaryStore + MemoryStore)) -> TestResult<(Uuid, 
 }
 
 async fn conversion(
-    store: &(impl SummaryStore + MemoryStore),
+    store: &(impl SummaryStore + MemoryStore + ModelCallStore),
     historical: Uuid,
     old: Uuid,
 ) -> TestResult {
@@ -234,7 +243,23 @@ async fn conversion(
         .await?
         .ok_or("published revision")?;
     assert_eq!(state.summarized_through, Some(state.input_revision));
-    Ok(())
+    let calls = store
+        .session_calls(&"codex:historical-conversion".parse()?)
+        .await?;
+    assert_eq!(calls.len(), 5);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call.outcome == CallOutcome::Aborted && call.usage.is_none())
+            .count(),
+        3
+    );
+    assert!(
+        calls
+            .iter()
+            .any(|call| call.outcome == CallOutcome::Aborted && call.usage.is_some())
+    );
+    assert_usage(store, "codex:historical-conversion", "summary-conversion").await
 }
 
 async fn verify_timeout_retry(
@@ -266,7 +291,7 @@ async fn verify_timeout_retry(
 }
 
 async fn verify_foreground_priority(
-    store: &(impl SummaryStore + MemoryStore),
+    store: &(impl SummaryStore + MemoryStore + ModelCallStore),
     capability: &dyn SummaryConversion,
     historical: Uuid,
     old: Uuid,
@@ -285,7 +310,7 @@ async fn verify_foreground_priority(
                 .expected_ids
                 .contains(&old)
         );
-        let live_session = "conversion-foreground";
+        let live_session = "codex:conversion-foreground";
         capture(
             store,
             live_session,
@@ -316,7 +341,31 @@ async fn verify_foreground_priority(
     );
     run(store, &provider.script, &live, 1, 32_768, permits).await?;
     assert_eq!(provider.script.calls.lock().await.len(), 2);
+    assert_usage(store, "codex:conversion-foreground", "summary-live").await
+}
 
+async fn assert_usage(store: &dyn ModelCallStore, session: &str, request_kind: &str) -> TestResult {
+    let calls = store.session_calls(&session.parse()?).await?;
+    let call = calls
+        .iter()
+        .find(|call| call.outcome == CallOutcome::Completed)
+        .ok_or("no completed summary model call was recorded")?;
+    assert_eq!(
+        call.turn
+            .as_ref()
+            .and_then(|turn| turn.request_kind.as_deref()),
+        Some(request_kind)
+    );
+    assert_eq!(
+        call.usage,
+        Some(CallUsage {
+            input: 400,
+            output: 22,
+            reasoning: 3,
+            cache_read: 11,
+            cache_write: 0,
+        })
+    );
     Ok(())
 }
 
@@ -371,7 +420,7 @@ async fn wait_for_claim(
 }
 
 async fn recover_conversion(
-    store: &(impl SummaryStore + MemoryStore),
+    store: &(impl SummaryStore + MemoryStore + ModelCallStore),
     capability: &dyn SummaryConversion,
     historical: Uuid,
     old: Uuid,
@@ -417,10 +466,11 @@ async fn recover_conversion(
     assert_eq!(
         (
             status.complete,
+            status.charged_tokens,
             status.provider_input_tokens,
             status.provider_output_tokens
         ),
-        (1, 400, 22)
+        (1, 800, 800, 44)
     );
     assert_eq!(
         provider.script.calls.lock().await.len(),
@@ -647,6 +697,11 @@ async fn exercise_giant_admission(
                 })
             )
             .await?
+    );
+    assert_eq!(
+        second.status().await?.charged_tokens,
+        0,
+        "an estimate reserves budget but does not count as observed input"
     );
     second
         .report(ConversionUsage {

@@ -16,7 +16,7 @@ use futures::{StreamExt as _, stream};
 use kernel::memory::{
     SummaryKind,
     summary_backend::{SummaryIndex, SummaryIndexes, SummaryInput, SummaryPermit},
-    summary_conversion::{ConversionCharge, ConversionLease, ConversionUsage, SummaryConversion},
+    summary_conversion::{ConversionCharge, ConversionLease, SummaryConversion},
     summary_reference::{
         PreparedSummaryRecord, PreparedSummaryTree, SummaryManifestEntry, SummarySectionBounds,
     },

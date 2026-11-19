@@ -60,6 +60,7 @@ impl ModelTasks {
 
 #[expect(missing_debug_implementations)]
 pub struct ModelBinding {
+    pub provider_id: String,
     pub provider: Arc<dyn ModelProvider>,
     pub model: String,
     pub context_window: Option<u32>,
@@ -296,6 +297,7 @@ impl ModelFactory {
                     None => provider.model().to_owned(),
                 };
                 Ok(ModelBinding {
+                    provider_id: id.to_owned(),
                     provider: Arc::new(provider),
                     model,
                     context_window: body.context_window,
@@ -335,6 +337,7 @@ impl ModelFactory {
                 )?
                 .with_task_tracker(self.tasks.clone());
                 Ok(ModelBinding {
+                    provider_id: id.to_owned(),
                     provider: Arc::new(provider),
                     model,
                     context_window: body.context_window,

@@ -2,8 +2,10 @@ use std::future::Future;
 use std::time::Duration;
 
 use kernel::model::{LlmResponse, ModelChunk, ModelProviderError, ModelRequest};
+use parking_lot::Mutex;
 use tokio::sync::watch;
 use tokio::time::{self, Instant};
+use wire::stream::LlmUsage;
 
 use super::Publisher;
 use crate::WorkerError;
@@ -15,11 +17,21 @@ impl Publisher<'_> {
     pub(super) async fn chat_request(
         &self,
         request: ModelRequest,
-    ) -> Result<LlmResponse, WorkerError> {
+    ) -> (Result<LlmResponse, WorkerError>, Option<LlmUsage>) {
         let settings = self.summary.settings;
         let provider = self.summary.provider;
-        self.interruptible(watch_chat(settings, provider, request))
-            .await
+        let observed = Mutex::new(None);
+        let result = self
+            .interruptible(watch_chat(settings, provider, request, &observed))
+            .await;
+        let usage = if let Ok(reply) = &result
+            && let Some(usage) = &reply.usage
+        {
+            Some(usage.clone())
+        } else {
+            observed.into_inner()
+        };
+        (result, usage)
     }
 
     pub(super) async fn tokenizer_request<T>(
@@ -65,6 +77,7 @@ async fn watch_chat(
     settings: &SummarySettings,
     provider: &dyn kernel::model::ModelProvider,
     request: ModelRequest,
+    observed: &Mutex<Option<LlmUsage>>,
 ) -> Result<LlmResponse, WorkerError> {
     let first = settings.first_token_timeout;
     let idle = settings.inter_token_timeout;
@@ -74,10 +87,8 @@ async fn watch_chat(
         ModelChunk::Text { delta } | ModelChunk::Reasoning { delta } if !delta.is_empty() => {
             progress.send_replace((Instant::now() + idle, idle));
         }
-        ModelChunk::Text { .. }
-        | ModelChunk::Reasoning { .. }
-        | ModelChunk::Usage { .. }
-        | ModelChunk::Done => {}
+        ModelChunk::Usage { usage } => *observed.lock() = Some(usage.clone()),
+        ModelChunk::Text { .. } | ModelChunk::Reasoning { .. } | ModelChunk::Done => {}
     };
     tokio::select! {
         biased;
@@ -179,7 +190,7 @@ mod tests {
     async fn steady_output_runs_past_five_minutes() -> Result<(), WorkerError> {
         let settings = SummarySettings::standard("cobalt-fixture")?;
         let start = Instant::now();
-        let response = watch_chat(&settings, &Slow, request()).await?;
+        let response = watch_chat(&settings, &Slow, request(), &Mutex::new(None)).await?;
         assert_eq!(response.finish_reason, Some(FinishReason::Stop));
         assert_eq!(start.elapsed(), Duration::from_secs(400));
         Ok(())
@@ -189,7 +200,7 @@ mod tests {
     async fn overall_ceiling_applies_despite_steady_tokens() -> Result<(), WorkerError> {
         let mut settings = SummarySettings::standard("cobalt-fixture")?;
         settings.request_timeout = Duration::from_secs(200);
-        let result = watch_chat(&settings, &Slow, request()).await;
+        let result = watch_chat(&settings, &Slow, request(), &Mutex::new(None)).await;
         assert!(matches!(
             result,
             Err(WorkerError::ModelTimeout { seconds: 200 })

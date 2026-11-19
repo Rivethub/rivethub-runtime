@@ -380,13 +380,8 @@ impl SummaryConversion for SqliteStore {
                 let mut bucket = bucket(&tx)?;
                 let admitted = bucket.debit(charge, clock);
                 tx.execute(
-                    "UPDATE rh_summary_conversion SET bucket_tokens = ?1, bucket_at = ?2,
-                             charged_tokens = charged_tokens + ?3",
-                    params![
-                        bucket.tokens,
-                        time::stamp(bucket.at),
-                        if admitted { charge.estimate } else { 0 }
-                    ],
+                    "UPDATE rh_summary_conversion SET bucket_tokens = ?1, bucket_at = ?2",
+                    params![bucket.tokens, time::stamp(bucket.at)],
                 )
                 .map_err(error)?;
                 if !admitted {
@@ -445,9 +440,9 @@ impl SummaryConversion for SqliteStore {
             let mut bucket = bucket(&tx)?;
             bucket.reconcile(usage);
             tx.execute("UPDATE rh_summary_conversion SET bucket_tokens = ?1, bucket_at = ?2,
-                         charged_tokens = charged_tokens + ?3 - ?4, provider_input_tokens = provider_input_tokens + ?3,
-                         provider_output_tokens = provider_output_tokens + ?5",
-                params![bucket.tokens, time::stamp(bucket.at), usage.input, usage.estimate, usage.output],
+                         charged_tokens = provider_input_tokens + ?3, provider_input_tokens = provider_input_tokens + ?3,
+                         provider_output_tokens = provider_output_tokens + ?4",
+                params![bucket.tokens, time::stamp(bucket.at), usage.input, usage.output],
             ).map_err(error)?;
             tx.commit().map_err(error)
         }).await.map_err(store_error)

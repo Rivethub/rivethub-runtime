@@ -297,6 +297,7 @@ pub fn with_models<Q: JobQueue + 'static>(
         summary.context_tokens = context;
     }
     summary.model_profile = summarizer.profile;
+    summary.provider_id = summarizer.provider_id;
     let deps = WorkerDeps {
         targets: ports.targets,
         summaries: ports.summaries,

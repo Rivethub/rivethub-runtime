@@ -388,16 +388,12 @@ impl SummaryConversion for PostgresMemory {
         if let Some(charge) = charge {
             let mut bucket = bucket(&mut tx).await.map_err(error)?;
             let admitted = bucket.debit(charge, clock);
-            sqlx::query(
-                "UPDATE rh_summary_conversion SET bucket_tokens = $1, bucket_at = $2,
-                         charged_tokens = charged_tokens + $3",
-            )
-            .bind(bucket.tokens)
-            .bind(crate::time::BindTime::bind_time(bucket.at))
-            .bind(if admitted { charge.estimate } else { 0 })
-            .execute(&mut *tx)
-            .await
-            .map_err(error)?;
+            sqlx::query("UPDATE rh_summary_conversion SET bucket_tokens = $1, bucket_at = $2")
+                .bind(bucket.tokens)
+                .bind(crate::time::BindTime::bind_time(bucket.at))
+                .execute(&mut *tx)
+                .await
+                .map_err(error)?;
             if !admitted {
                 tx.commit().await.map_err(error)?;
                 return Ok(false);
@@ -467,9 +463,9 @@ impl SummaryConversion for PostgresMemory {
         let mut bucket = bucket(&mut tx).await.map_err(error)?;
         bucket.reconcile(usage);
         sqlx::query("UPDATE rh_summary_conversion SET bucket_tokens = $1, bucket_at = $2,
-                     charged_tokens = charged_tokens + $3 - $4, provider_input_tokens = provider_input_tokens + $3,
-                     provider_output_tokens = provider_output_tokens + $5")
-            .bind(bucket.tokens).bind(crate::time::BindTime::bind_time(bucket.at)).bind(usage.input).bind(usage.estimate).bind(usage.output)
+                     charged_tokens = provider_input_tokens + $3, provider_input_tokens = provider_input_tokens + $3,
+                     provider_output_tokens = provider_output_tokens + $4")
+            .bind(bucket.tokens).bind(crate::time::BindTime::bind_time(bucket.at)).bind(usage.input).bind(usage.output)
             .execute(&mut *tx).await.map_err(error)?;
         tx.commit().await.map_err(error)
     }
