@@ -202,6 +202,11 @@ async fn conversion(
     assert!(capability.status().await?.inventory_complete);
 
     verify_foreground_priority(store, capability, historical, old, &provider, &permits).await?;
+    let preemption_charge = capability.status().await?.charged_tokens;
+    assert!(
+        preemption_charge > 0,
+        "the interrupted call incurred a debit"
+    );
     verify_timeout_retry(store, capability, &provider, &permits).await?;
     capability
         .control(ConversionControl::Retry {
@@ -243,9 +248,16 @@ async fn conversion(
         .await?
         .ok_or("published revision")?;
     assert_eq!(state.summarized_through, Some(state.input_revision));
-    let calls = store
-        .session_calls(&"codex:historical-conversion".parse()?)
-        .await?;
+    verify_historical_usage(store, capability, preemption_charge).await
+}
+
+async fn verify_historical_usage(
+    store: &dyn ModelCallStore,
+    capability: &dyn SummaryConversion,
+    preemption_charge: u64,
+) -> TestResult {
+    let session = "codex:historical-conversion";
+    let calls = store.session_calls(&session.parse()?).await?;
     assert_eq!(calls.len(), 5);
     assert_eq!(
         calls
@@ -259,7 +271,13 @@ async fn conversion(
             .iter()
             .any(|call| call.outcome == CallOutcome::Aborted && call.usage.is_some())
     );
-    assert_usage(store, "codex:historical-conversion", "summary-conversion").await
+    let status = capability.status().await?;
+    assert_eq!(
+        status.charged_tokens,
+        status.provider_input_tokens + 3 * preemption_charge,
+        "three calls to the same historical prompt returned no usage",
+    );
+    assert_usage(store, session, "summary-conversion").await
 }
 
 async fn verify_timeout_retry(
@@ -466,11 +484,10 @@ async fn recover_conversion(
     assert_eq!(
         (
             status.complete,
-            status.charged_tokens,
             status.provider_input_tokens,
             status.provider_output_tokens
         ),
-        (1, 800, 800, 44)
+        (1, 800, 44)
     );
     assert_eq!(
         provider.script.calls.lock().await.len(),
@@ -698,10 +715,11 @@ async fn exercise_giant_admission(
             )
             .await?
     );
+    let status = second.status().await?;
     assert_eq!(
-        second.status().await?.charged_tokens,
-        0,
-        "an estimate reserves budget but does not count as observed input"
+        (status.charged_tokens, status.provider_input_tokens),
+        (950_000, 0),
+        "the admitted debit counts as charged before provider usage arrives",
     );
     second
         .report(ConversionUsage {

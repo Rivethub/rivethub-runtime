@@ -1145,3 +1145,75 @@ async fn starting_and_resuming_conversion_reset_an_idle_bucket_on_both_stores(
     }
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn conversion_status_counts_debits_without_provider_usage_on_both_stores(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use kernel::memory::summary_conversion::{
+        ConversionCharge, ConversionControl, ConversionUsage, SummaryConversion,
+    };
+
+    sqlx::raw_sql(
+        "INSERT INTO rh_conversations (session_key, agent, channel, owner_user_id)
+         VALUES ('cli:ledger', 'fixture', 'cli', 'alice');
+         INSERT INTO rh_messages (conversation_id, agent, channel, role, content, created_at, owner_user_id)
+         SELECT id, 'fixture', 'cli', 'user', 'Measure the spring.', '2024-01-01', 'alice'
+         FROM rh_conversations;",
+    )
+    .execute(&pool)
+    .await?;
+    let pg = memory_postgres::PostgresMemory::new(pool);
+    let directory = tempfile::tempdir()?;
+    let path = migrated(directory.path());
+    let sqlite = memory_sqlite::SqliteStore::open(&path)?;
+    rusqlite::Connection::open(path)?.execute_batch(
+        "INSERT INTO ros_conversations (id, session_key, agent, channel, created_at, updated_at)
+         VALUES ('00000000-0000-4000-8000-000000000001', 'cli:ledger', 'fixture', 'cli',
+                 '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');
+         INSERT INTO ros_messages (id, conversation_id, agent, channel, role, content, created_at)
+         VALUES ('00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001',
+                 'fixture', 'cli', 'user', 'Measure the spring.', '2024-01-01T00:00:00Z');",
+    )?;
+
+    let mut totals = Vec::new();
+    for store in [&pg as &dyn SummaryConversion, &sqlite] {
+        store
+            .control(ConversionControl::Start {
+                rate: Some(1000),
+                include_giants: false,
+            })
+            .await?;
+        let inactivity = jiff::SignedDuration::from_hours(24);
+        assert!(store.claim(inactivity).await?.is_none(), "inventory pass");
+        let lease = store.claim(inactivity).await?.ok_or("fixture lease")?;
+        for estimate in [100, 50] {
+            assert!(
+                store
+                    .admit(
+                        lease,
+                        Some(ConversionCharge {
+                            estimate,
+                            capacity: 1000
+                        })
+                    )
+                    .await?
+            );
+        }
+        store
+            .report(ConversionUsage {
+                estimate: 50,
+                input: 40,
+                output: 5,
+            })
+            .await?;
+        let progress = store.status().await?;
+        totals.push((
+            progress.charged_tokens,
+            progress.provider_input_tokens,
+            progress.provider_output_tokens,
+        ));
+    }
+    assert_eq!(totals, [(140, 40, 5); 2]);
+    Ok(())
+}

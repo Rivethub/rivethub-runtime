@@ -239,12 +239,14 @@ impl ConversionBucket {
         true
     }
 
-    pub fn reconcile(&mut self, usage: ConversionUsage) {
-        self.tokens -= usage.input.saturating_sub(usage.estimate) as f64;
+    pub fn reconcile(&mut self, usage: ConversionUsage) -> i64 {
+        let adjustment = usage.input.saturating_sub(usage.estimate);
+        self.tokens -= adjustment as f64;
         if self.tokens < 0.0 {
             self.defer(-self.tokens);
             self.tokens = 0.0;
         }
+        adjustment
     }
 
     fn defer(&mut self, deficit: f64) {
