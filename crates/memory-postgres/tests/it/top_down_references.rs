@@ -1347,6 +1347,95 @@ async fn wiki_repository_holder_can_read_references_while_publication_waits(
     .await
 }
 
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn wiki_reference_queue_drains_while_entity_lease_waits(pool: PgPool) -> TestResult {
+    Box::pin(Scope::Maintenance.run(entity_lease_reference_queue(pool))).await
+}
+
+#[expect(
+    clippy::significant_drop_tightening,
+    reason = "hold the repository until the reference queue drains"
+)]
+async fn entity_lease_reference_queue(pool: PgPool) -> TestResult {
+    use std::time::Duration;
+
+    use kernel::owner::Owner;
+    use kernel::wiki::entity_pass::{EntityStore, PublishOutcome, StoredRewrite};
+    use memory_postgres::merge::MergeRequest;
+    use memory_postgres::wiki_writer::WikiRepository;
+    use tokio_util::sync::CancellationToken;
+
+    seed(&pool).await?;
+    let directory = tempfile::tempdir()?;
+    let store = scoped_store(&pool)
+        .await?
+        .with_wiki_directory(directory.path().to_path_buf());
+    let source = PostgresMemory::new(super::merge::source_database(&pool).await?);
+    let request = MergeRequest {
+        owner: Owner::new("alice".to_owned())?,
+        moves: BTreeMap::new(),
+        dry_run: true,
+    };
+    let cancel = CancellationToken::new();
+    let now = Timestamp::now();
+    let summary = id(10);
+    let view = entity_page_fixture(&store, summary, now).await?;
+    let mut lease = store.lease_entity(view.id).await?;
+    let rewrite = StoredRewrite {
+        summary: "A brass valve.".to_owned(),
+        article: "The brass valve seals the test pipe.".to_owned(),
+        facts: Vec::new(),
+        history: None,
+        owner: "alice".to_owned(),
+        session_at: now,
+        session_id: summary,
+        evidence: "The valve was sealed.".to_owned(),
+    };
+    let class = 0x7374_6f72_i32;
+    let key = 2_i32;
+    let outcome = {
+        let repository = WikiRepository::new(directory.path().to_path_buf())
+            .lock()
+            .await?;
+        let mut apply = std::pin::pin!(lease.apply(&rewrite, now));
+        let queue = async {
+            if let Ok(result) = tokio::time::timeout(
+                Duration::from_millis(250),
+                wait_for_advisory(&pool, class, key, "ShareLock", true),
+            )
+            .await
+            {
+                result?;
+            }
+            drain_reference_queue(&pool, class, key, async {
+                let report = store.merge_store(&source, &request, &cancel).await?;
+                assert!(!report.committed);
+                Ok(())
+            })
+            .await?;
+            let available: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock($1, $2)")
+                .bind(class)
+                .bind(key)
+                .fetch_one(&pool)
+                .await?;
+            assert!(available, "entity lease held the store reference key");
+            Ok::<_, Box<dyn std::error::Error>>(())
+        };
+        let drained = tokio::select! {
+            result = tokio::time::timeout(Duration::from_secs(5), queue) => result,
+            result = &mut apply => panic!("entity lease bypassed the repository: {result:?}"),
+        };
+        repository.release().await?;
+        drained.map_err(
+            |_| "reference queue stalled while the entity lease waited for the repository",
+        )??;
+        tokio::time::timeout(Duration::from_secs(5), apply).await??
+    };
+    lease.release().await?;
+    assert!(matches!(outcome, PublishOutcome::Stored { .. }));
+    Ok(())
+}
+
 #[expect(
     clippy::significant_drop_tightening,
     reason = "model a writer holding the repository through its reference read"
