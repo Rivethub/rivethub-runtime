@@ -349,7 +349,7 @@ impl SummaryStore for PostgresMemory {
             .begin()
             .await
             .map_err(|source| query_err("begin summary write", source))?;
-        crate::summary_replace::lock_conversation(&mut tx, summary.conversation_id, false)
+        crate::summary_replace::shared_conversation(&mut tx, summary.conversation_id)
             .await
             .map_err(|source| query_err("lock summary write", source))?;
         sqlx::query(INSERT_SQL)

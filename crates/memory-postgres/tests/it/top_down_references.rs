@@ -1280,3 +1280,87 @@ fn retry_patch(
         facts: None,
     }
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn summary_publication_waits_for_merge_to_commit(pool: PgPool) -> TestResult {
+    use std::time::Duration;
+
+    use kernel::owner::Owner;
+    use memory_postgres::merge::MergeRequest;
+    use tokio_util::sync::CancellationToken;
+
+    let source = PostgresMemory::new(super::merge::source_database(&pool).await?);
+    let family = scoped_store(&pool).await?;
+    sqlx::raw_sql(
+        "CREATE FUNCTION hold_merge_commit() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+           PERFORM pg_advisory_xact_lock(91836721::bigint);
+           RETURN NEW;
+         END
+         $$;
+         CREATE TRIGGER hold_merge_commit BEFORE INSERT ON rh_store_merges
+         FOR EACH ROW EXECUTE FUNCTION hold_merge_commit();",
+    )
+    .execute(&pool)
+    .await?;
+    let mut barrier = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(91836721::bigint)")
+        .execute(&mut *barrier)
+        .await?;
+    let request = MergeRequest {
+        owner: Owner::new("alice".to_owned())?,
+        moves: BTreeMap::new(),
+        dry_run: false,
+    };
+    let cancel = CancellationToken::new();
+    let merging = family.merge_store(&source, &request, &cancel);
+    tokio::pin!(merging);
+
+    let waiting = async {
+        let mut poll = tokio::time::interval(Duration::from_millis(10));
+        loop {
+            poll.tick().await;
+            let reached: bool = sqlx::query_scalar(
+                "SELECT EXISTS (
+                   SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND database = (
+                       SELECT oid FROM pg_database WHERE datname = current_database()
+                   ) AND classid = 0 AND objid = 91836721 AND objsubid = 1 AND NOT granted
+                 )",
+            )
+            .fetch_one(&pool)
+            .await?;
+            if reached {
+                return Ok::<_, sqlx::Error>(());
+            }
+        }
+    };
+    tokio::select! {
+        result = &mut merging => panic!("merge did not wait at the commit barrier: {result:?}"),
+        result = tokio::time::timeout(Duration::from_secs(5), waiting) => result??,
+    }
+
+    seed(&pool).await?;
+    let prepared = tree(&[10, 11, 12], 20, &[2, 3], false);
+    let publication = Scope::Maintenance.run(family.replace_summary_tree(&prepared));
+    tokio::pin!(publication);
+    let early = tokio::time::timeout(Duration::from_millis(500), &mut publication).await;
+    assert!(
+        early.is_err(),
+        "publication finished before merge committed: {early:?}"
+    );
+
+    barrier.rollback().await?;
+    let (merged, published) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(merging, publication)
+    })
+    .await?;
+    assert!(merged?.committed);
+    published?;
+    let visible: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM rh_summaries WHERE id = $1)")
+            .bind(id(20))
+            .fetch_one(&pool)
+            .await?;
+    assert!(visible);
+    Ok(())
+}

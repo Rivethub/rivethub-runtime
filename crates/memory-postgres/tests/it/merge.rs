@@ -384,3 +384,29 @@ async fn assert_keeps_destination_tree(pool: PgPool, legacy: bool) -> TestResult
     assert_eq!(report.inserted.get("rh_summary_passages"), Some(&0));
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn merge_accepts_a_store_with_eight_thousand_conversations(pool: PgPool) -> TestResult {
+    let source = PostgresMemory::new(source_database(&pool).await?);
+    let family = PostgresMemory::new(pool.clone());
+    sqlx::query(
+        "INSERT INTO rh_conversations (session_key, agent, owner_user_id)
+         SELECT 'cli:bulk-' || n, 'fixture', 'alice' FROM generate_series(1, 8000) n",
+    )
+    .execute(&pool)
+    .await?;
+    let report = family
+        .merge_store(
+            &source,
+            &MergeRequest {
+                owner: Owner::new("alice".to_owned())?,
+                moves: BTreeMap::new(),
+                dry_run: true,
+            },
+            &CancellationToken::new(),
+        )
+        .await?;
+    assert!(!report.committed);
+    assert_eq!(report.runs, 1);
+    Ok(())
+}

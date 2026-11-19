@@ -6,6 +6,9 @@ use uuid::Uuid;
 
 const LOCK_CLASS: i32 = 0x7375_6d6d;
 const APPLY_LOCK_CLASS: i32 = 0x7361_7070;
+const STORE_LOCK_CLASS: i32 = 0x7374_6f72;
+const STORE_APPLY: i32 = 1;
+const STORE_REFERENCE: i32 = 2;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum FenceError {
@@ -34,7 +37,35 @@ async fn inputs(conn: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<SummaryInpu
     .await
 }
 
-pub(crate) async fn lock_conversation(
+pub(crate) async fn lock_store_for_merge(conn: &mut PgConnection) -> Result<(), sqlx::Error> {
+    for key in [STORE_APPLY, STORE_REFERENCE] {
+        sqlx::query("SELECT pg_advisory_xact_lock($1, $2)")
+            .bind(STORE_LOCK_CLASS)
+            .bind(key)
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn lock_store_shared(conn: &mut PgConnection, key: i32) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_xact_lock_shared($1, $2)")
+        .bind(STORE_LOCK_CLASS)
+        .bind(key)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+pub(crate) async fn shared_conversation(
+    conn: &mut PgConnection,
+    conversation: Uuid,
+) -> Result<(), sqlx::Error> {
+    lock_store_shared(conn, STORE_REFERENCE).await?;
+    lock_conversation(conn, conversation, false).await
+}
+
+async fn lock_conversation(
     conn: &mut PgConnection,
     conversation: Uuid,
     exclusive: bool,
@@ -64,6 +95,7 @@ pub(crate) async fn shared_visible(
     if ids.is_empty() {
         return Ok(Vec::new());
     }
+    lock_store_shared(tx, STORE_REFERENCE).await?;
     let before = inputs(tx, ids).await?;
     let keys: BTreeSet<_> = before
         .iter()
@@ -168,6 +200,8 @@ pub(crate) async fn exclusive(
     conn: &mut PgConnection,
     conversations: impl IntoIterator<Item = Uuid>,
 ) -> Result<(), sqlx::Error> {
+    lock_store_shared(conn, STORE_APPLY).await?;
+    lock_store_shared(conn, STORE_REFERENCE).await?;
     let ordered: BTreeSet<_> = conversations.into_iter().collect();
     for id in &ordered {
         sqlx::query("SELECT pg_advisory_xact_lock($1, hashtext($2::text))")
@@ -188,6 +222,11 @@ pub(crate) async fn external(
 ) -> Result<(PgConnection, Vec<SummaryInput>), FenceError> {
     let mut conn = PgConnection::connect_with(pool.connect_options().as_ref()).await?;
     crate::scope::apply(&mut conn).await?;
+    sqlx::query("SELECT pg_advisory_lock_shared($1, $2)")
+        .bind(STORE_LOCK_CLASS)
+        .bind(STORE_APPLY)
+        .execute(&mut conn)
+        .await?;
     let before = inputs(&mut conn, ids).await?;
     let keys: BTreeSet<_> = before
         .iter()

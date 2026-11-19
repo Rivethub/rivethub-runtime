@@ -101,13 +101,7 @@ impl PostgresMemory {
         report.embeddings_cleared = stage::align_embeddings(source, self, &mut tx).await?;
         report.embeddings_cleared |=
             stage::mark_summary_repairs(&mut tx, self.summary_index_key.as_ref()).await?;
-        let conversations: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM rh_conversations UNION SELECT id FROM merge_rh_conversations",
-        )
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(|error| Error::operation("merge summary conversations", error))?;
-        crate::summary_replace::exclusive(&mut tx, conversations)
+        crate::summary_replace::lock_store_for_merge(&mut tx)
             .await
             .map_err(|error| Error::operation("merge summary fence", error))?;
         transform::run(&mut tx, request, &mut report).await?;
