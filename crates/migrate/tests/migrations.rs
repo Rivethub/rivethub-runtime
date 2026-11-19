@@ -21,10 +21,10 @@ async fn a_migration_missing_below_the_newest_is_pending_until_migrate_applies_i
         .await?;
 
     let gapped = migrate::postgres_status_pool(&pool).await?;
-    assert_eq!((gapped.current, gapped.pending), (78, 1));
+    assert_eq!((gapped.current, gapped.pending), (79, 1));
 
     let migrated = migrate::postgres_pool(&pool).await?;
-    assert_eq!((migrated.current, migrated.pending), (78, 0));
+    assert_eq!((migrated.current, migrated.pending), (79, 0));
     let index: Option<String> =
         sqlx::query_scalar("SELECT to_regclass('idx_rh_messages_unembedded')::text")
             .fetch_one(&pool)
@@ -411,7 +411,7 @@ async fn check_contended_top_down_upgrade(pool: &PgPool, hold: &'static str) -> 
     assert!(error.to_string().contains("safe to rerun"));
     reader.rollback().await?;
     blocker.rollback().await?;
-    assert_eq!(migrate::postgres_pool(pool).await?.current, 78);
+    assert_eq!(migrate::postgres_pool(pool).await?.current, 79);
     Ok(())
 }
 
@@ -421,7 +421,7 @@ async fn top_down_upgrade_from_postgres_75_preserves_legacy_kinds(pool: PgPool) 
     let pending = migrate::postgres_status_pool(&pool).await?;
     assert_eq!(
         (pending.current, pending.required, pending.pending),
-        (75, 78, 3)
+        (75, 79, 4)
     );
     sqlx::raw_sql(
         "INSERT INTO rh_conversations (id, session_key, agent, owner_user_id)
@@ -441,7 +441,7 @@ async fn top_down_upgrade_from_postgres_75_preserves_legacy_kinds(pool: PgPool) 
     let status = migrate::postgres_pool(&pool).await?;
     assert_eq!(
         (status.current, status.required, status.pending),
-        (78, 78, 0)
+        (79, 79, 0)
     );
     let filenode_after: sqlx::postgres::types::Oid =
         sqlx::query_scalar("SELECT pg_relation_filenode('rh_summaries'::regclass)")
@@ -513,12 +513,12 @@ fn top_down_upgrade_from_sqlite_35_preserves_legacy_kinds_and_matches_fresh() ->
     let pending = migrate::sqlite_status(&upgraded)?;
     assert_eq!(
         (pending.current, pending.required, pending.pending),
-        (35, 39, 4)
+        (35, 40, 5)
     );
     let status = migrate::sqlite(&upgraded)?;
     assert_eq!(
         (status.current, status.required, status.pending),
-        (39, 39, 0)
+        (40, 40, 0)
     );
     let up = Connection::open(&upgraded)?;
     let row: (String, i32, Option<i32>, bool) = up.query_row(

@@ -52,10 +52,13 @@ pub async fn handle_conversion_tick(
             | WorkerError::SummarySuperseded
             | WorkerError::SummaryReplan,
         ) => ConversionOutcome::Yield,
-        Err(WorkerError::ModelTimeout { .. })
+        Err(WorkerError::ModelTimeout { .. } | WorkerError::EmptySummary)
             if lease.timeout_retries < env.summary.settings.conversion_timeout_retries =>
         {
-            ConversionOutcome::RetryTimeout
+            ConversionOutcome::RetryTransient
+        }
+        Err(WorkerError::ModelTimeout { .. } | WorkerError::EmptySummary) if !lease.second_pass => {
+            ConversionOutcome::Requeue
         }
         Err(error) => ConversionOutcome::Fail(failure_reason(&error)),
     };

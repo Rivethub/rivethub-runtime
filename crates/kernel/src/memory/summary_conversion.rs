@@ -67,6 +67,8 @@ pub struct ConversionProgress {
     pub discovered: i64,
     pub pending: i64,
     pub waiting_quiet: i64,
+    #[serde(default)]
+    pub waiting_second_pass: i64,
     pub reserved: i64,
     pub complete: i64,
     pub failed: i64,
@@ -100,12 +102,14 @@ pub struct ConversionLease {
     pub revision: i64,
     pub claimed_at: Timestamp,
     pub timeout_retries: i32,
+    pub second_pass: bool,
 }
 
 #[derive(Debug)]
 pub enum ConversionOutcome {
     Yield,
-    RetryTimeout,
+    RetryTransient,
+    Requeue,
     Complete,
     Fail(String),
 }
@@ -115,7 +119,8 @@ impl ConversionOutcome {
     pub fn status(self, lease: ConversionLease) -> (&'static str, Option<String>, i32) {
         match self {
             Self::Yield => ("pending", None, lease.timeout_retries),
-            Self::RetryTimeout => ("pending", None, lease.timeout_retries.saturating_add(1)),
+            Self::RetryTransient => ("pending", None, lease.timeout_retries.saturating_add(1)),
+            Self::Requeue => ("pending", None, 0),
             Self::Complete => ("complete", None, 0),
             Self::Fail(error) => ("failed", Some(error), 0),
         }

@@ -141,6 +141,39 @@ async fn now(conn: &mut PgConnection) -> Result<Timestamp, sqlx::Error> {
         .map(jiff_sqlx::Timestamp::to_jiff)
 }
 
+async fn reserve(
+    conn: &mut PgConnection,
+    conversation: Uuid,
+    last_input: Timestamp,
+    clock: Timestamp,
+    expiry: SignedDuration,
+) -> Result<i64, sqlx::Error> {
+    use crate::time::BindTime as _;
+
+    let revision = sqlx::query_scalar(
+        "INSERT INTO rh_summary_state (conversation_id, input_revision, last_input_at, settled_at, historical_only)
+         VALUES ($1, 0, $2, $3, true) ON CONFLICT (conversation_id) DO UPDATE
+         SET settled_at = coalesce(rh_summary_state.settled_at, excluded.settled_at), unsettled_since = NULL
+         RETURNING input_revision",
+    )
+    .bind(conversation)
+    .bind(last_input.bind_time())
+    .bind(clock.bind_time())
+    .fetch_one(&mut *conn)
+    .await?;
+    let deadline = kernel::memory::summary_conversion::bounded_deadline(clock, expiry);
+    sqlx::query(
+        "UPDATE rh_summary_conversion_items SET state = 'reserved', next_at = $2,
+                reservation_expires_at = $3 WHERE conversation_id = $1",
+    )
+    .bind(conversation)
+    .bind(clock.bind_time())
+    .bind(deadline.bind_time())
+    .execute(conn)
+    .await?;
+    Ok(revision)
+}
+
 async fn clear_stale_items(conn: &mut PgConnection, clock: Timestamp) -> Result<(), sqlx::Error> {
     sqlx::query(
         "UPDATE rh_summary_conversion_items SET state = 'pending', reservation_expires_at = NULL
@@ -207,7 +240,7 @@ impl SummaryConversion for PostgresMemory {
             ).bind(include_giants),
             ConversionControl::Pause => sqlx::query("UPDATE rh_summary_conversion SET enabled = false"),
             ConversionControl::Retry { conversation } => sqlx::query(
-                "UPDATE rh_summary_conversion_items SET state = 'pending', last_error = NULL, timeout_retries = 0
+                "UPDATE rh_summary_conversion_items SET state = 'pending', last_error = NULL, timeout_retries = 0, second_pass_at = NULL
                  WHERE conversation_id = $1 AND state = 'failed'"
             ).bind(conversation),
             ConversionControl::Release { conversation } => {
@@ -240,6 +273,13 @@ impl SummaryConversion for PostgresMemory {
         for (state, count) in groups {
             progress.count(&state, count);
         }
+        progress.waiting_second_pass = sqlx::query_scalar(
+            "SELECT count(*) FROM rh_summary_conversion_items
+             WHERE second_pass_at IS NOT NULL AND state IN ('pending','waiting_quiet')",
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(error)?;
         progress.giant_deferred = if progress.include_giants {
             0
         } else {
@@ -298,8 +338,8 @@ impl SummaryConversion for PostgresMemory {
             tx.commit().await.map_err(error)?;
             return Ok(None);
         }
-        let candidate: Option<(Uuid, jiff_sqlx::Timestamp, bool, i32)> = sqlx::query_as(
-            "SELECT c.id, i.last_input_at, coalesce(coalesce(s.last_input_at, c.last_summary_input_at) <> i.last_input_at, false), i.timeout_retries FROM rh_summary_conversion_items i
+        let candidate: Option<(Uuid, jiff_sqlx::Timestamp, bool, i32, bool)> = sqlx::query_as(
+            "SELECT c.id, i.last_input_at, coalesce(coalesce(s.last_input_at, c.last_summary_input_at) <> i.last_input_at, false), i.timeout_retries, i.second_pass_at IS NOT NULL FROM rh_summary_conversion_items i
              JOIN rh_conversations c ON c.id = i.conversation_id
              LEFT JOIN rh_summary_state s ON s.conversation_id = c.id
              CROSS JOIN rh_summary_conversion ctl
@@ -308,49 +348,37 @@ impl SummaryConversion for PostgresMemory {
                AND (s.settled_at IS NOT NULL OR coalesce(s.last_input_at, c.last_summary_input_at, i.last_input_at) <= $1)
                AND (i.estimated_tokens <= $2 OR (ctl.include_giants AND NOT EXISTS (
                    SELECT 1 FROM rh_summary_conversion_items normal WHERE normal.estimated_tokens <= $2
-                     AND normal.state IN ('pending','waiting_quiet'))))
+                     AND normal.state IN ('pending','waiting_quiet')
+                     AND (i.second_pass_at IS NOT NULL OR normal.second_pass_at IS NULL))))
                AND coalesce(s.historical_only, true)
                AND (s.summarized_through IS NULL OR s.summarized_through < s.input_revision)
-             ORDER BY (i.estimated_tokens > $2), greatest(i.last_input_at, i.last_used_at) DESC, i.conversation_id
+             ORDER BY (i.second_pass_at IS NOT NULL), i.second_pass_at, (i.estimated_tokens > $2), greatest(i.last_input_at, i.last_used_at) DESC, i.conversation_id
              LIMIT 1 FOR UPDATE OF c SKIP LOCKED"
         ).bind(crate::time::BindTime::bind_time(cutoff)).bind(GIANT_TOKENS).fetch_optional(&mut *tx).await.map_err(error)?;
-        let lease = if let Some((conversation, last_input, input_changed, timeout_retries)) =
-            candidate
-        {
-            if input_changed {
-                measure(&mut tx, &[conversation], cutoff)
+        let lease =
+            if let Some((conversation, last_input, input_changed, timeout_retries, second_pass)) =
+                candidate
+            {
+                if input_changed {
+                    measure(&mut tx, &[conversation], cutoff)
+                        .await
+                        .map_err(error)?;
+                    tx.commit().await.map_err(error)?;
+                    return Ok(None);
+                }
+                let revision = reserve(&mut tx, conversation, last_input.to_jiff(), clock, expiry)
                     .await
                     .map_err(error)?;
-                tx.commit().await.map_err(error)?;
-                return Ok(None);
-            }
-            let revision = sqlx::query_scalar(
-                "INSERT INTO rh_summary_state (conversation_id, input_revision, last_input_at, settled_at, historical_only)
-                 VALUES ($1, 0, $2, $3, true) ON CONFLICT (conversation_id) DO UPDATE
-                 SET settled_at = coalesce(rh_summary_state.settled_at, excluded.settled_at), unsettled_since = NULL
-                 RETURNING input_revision"
-            ).bind(conversation).bind(crate::time::BindTime::bind_time(last_input.to_jiff())).bind(crate::time::BindTime::bind_time(clock)).fetch_one(&mut *tx).await.map_err(error)?;
-            sqlx::query(
-                "UPDATE rh_summary_conversion_items SET state = 'reserved', next_at = $2,
-                        reservation_expires_at = $3 WHERE conversation_id = $1",
-            )
-            .bind(conversation)
-            .bind(crate::time::BindTime::bind_time(clock))
-            .bind(crate::time::BindTime::bind_time(
-                kernel::memory::summary_conversion::bounded_deadline(clock, expiry),
-            ))
-            .execute(&mut *tx)
-            .await
-            .map_err(error)?;
-            Some(ConversionLease {
-                conversation,
-                revision,
-                claimed_at: clock,
-                timeout_retries,
-            })
-        } else {
-            None
-        };
+                Some(ConversionLease {
+                    conversation,
+                    revision,
+                    claimed_at: clock,
+                    timeout_retries,
+                    second_pass,
+                })
+            } else {
+                None
+            };
         tx.commit().await.map_err(error)?;
         Ok(lease)
     }
@@ -481,10 +509,12 @@ impl SummaryConversion for PostgresMemory {
     ) -> Result<(), SummaryStoreError> {
         let mut tx = self.pool.begin().await.map_err(error)?;
         lock(&mut tx).await.map_err(error)?;
+        let requeue = matches!(outcome, ConversionOutcome::Requeue);
         let (state, failure, retries) = outcome.status(lease);
         sqlx::query(
             "UPDATE rh_summary_conversion_items SET state = $3, reservation_expires_at = NULL,
-                     last_error = $4, next_at = clock_timestamp(), timeout_retries = $5
+                     last_error = $4, next_at = clock_timestamp(), timeout_retries = $5,
+                     second_pass_at = CASE WHEN $6 THEN clock_timestamp() ELSE second_pass_at END
                      WHERE conversation_id = $1 AND next_at = $2 AND state = 'reserved'",
         )
         .bind(lease.conversation)
@@ -492,6 +522,7 @@ impl SummaryConversion for PostgresMemory {
         .bind(state)
         .bind(failure)
         .bind(retries)
+        .bind(requeue)
         .execute(&mut *tx)
         .await
         .map_err(error)?;

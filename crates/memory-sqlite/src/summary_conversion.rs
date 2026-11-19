@@ -187,6 +187,14 @@ fn read_status(conn: &Connection) -> Result<ConversionProgress, SqliteError> {
         let (state, count) = row.map_err(error)?;
         progress.count(&state, count);
     }
+    progress.waiting_second_pass = conn
+        .query_row(
+            "SELECT count(*) FROM rh_summary_conversion_items
+         WHERE second_pass_at IS NOT NULL AND state IN ('pending','waiting_quiet')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(error)?;
     if !progress.include_giants {
         progress.giant_deferred = conn.query_row(
             "SELECT count(*) FROM rh_summary_conversion_items WHERE estimated_tokens > ?1 AND state IN ('pending','waiting_quiet')",
@@ -249,7 +257,7 @@ impl SummaryConversion for SqliteStore {
                 ),
                 ConversionControl::Pause => tx.execute("UPDATE rh_summary_conversion SET enabled = 0", []),
                 ConversionControl::Retry { conversation } => tx.execute(
-                    "UPDATE rh_summary_conversion_items SET state = 'pending', last_error = NULL, timeout_retries = 0
+                    "UPDATE rh_summary_conversion_items SET state = 'pending', last_error = NULL, timeout_retries = 0, second_pass_at = NULL
                      WHERE conversation_id = ?1 AND state = 'failed'", [conversation.to_string()],
                 ),
                 ConversionControl::Release { conversation } => tx.execute(RELEASE, [conversation.to_string()]),
@@ -305,8 +313,8 @@ impl SummaryConversion for SqliteStore {
                     SELECT c.id FROM ros_conversations c LEFT JOIN rh_summary_state s ON s.conversation_id = c.id
                     WHERE NOT ({INCLUDED}) OR NOT s.historical_only)"
              ), []).map_err(error)?;
-            let candidate: Option<(String, String, bool, i32)> = tx.query_row(
-                "SELECT i.conversation_id, i.last_input_at, coalesce(rh_instant(coalesce(s.last_input_at, clock.captured_at)) <> rh_instant(i.last_input_at), 0), i.timeout_retries FROM rh_summary_conversion_items i
+            let candidate: Option<(String, String, bool, i32, bool)> = tx.query_row(
+                "SELECT i.conversation_id, i.last_input_at, coalesce(rh_instant(coalesce(s.last_input_at, clock.captured_at)) <> rh_instant(i.last_input_at), 0), i.timeout_retries, i.second_pass_at IS NOT NULL FROM rh_summary_conversion_items i
                  LEFT JOIN rh_summary_state s ON s.conversation_id = i.conversation_id
                  LEFT JOIN rh_summary_capture_clock clock ON clock.conversation_id = i.conversation_id
                  CROSS JOIN rh_summary_conversion ctl
@@ -315,14 +323,15 @@ impl SummaryConversion for SqliteStore {
                    AND (s.settled_at IS NOT NULL OR rh_instant(coalesce(s.last_input_at, clock.captured_at, i.last_input_at)) <= ?1)
                    AND (i.estimated_tokens <= ?2 OR (ctl.include_giants AND NOT EXISTS (
                        SELECT 1 FROM rh_summary_conversion_items normal WHERE normal.estimated_tokens <= ?2
-                         AND normal.state IN ('pending','waiting_quiet'))))
+                         AND normal.state IN ('pending','waiting_quiet')
+                     AND (i.second_pass_at IS NOT NULL OR normal.second_pass_at IS NULL))))
                    AND coalesce(s.historical_only, 1)
                    AND (s.summarized_through IS NULL OR s.summarized_through < s.input_revision)
-                 ORDER BY (i.estimated_tokens > ?2), max(rh_instant(i.last_input_at), rh_instant(coalesce(i.last_used_at, i.last_input_at))) DESC, i.conversation_id
+                 ORDER BY (i.second_pass_at IS NOT NULL), i.second_pass_at, (i.estimated_tokens > ?2), max(rh_instant(i.last_input_at), rh_instant(coalesce(i.last_used_at, i.last_input_at))) DESC, i.conversation_id
                  LIMIT 1",
-                params![time::seek_key(cutoff), GIANT_TOKENS], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                params![time::seek_key(cutoff), GIANT_TOKENS], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
             ).optional().map_err(error)?;
-            let lease = if let Some((id, last_input, input_changed, timeout_retries)) = candidate {
+            let lease = if let Some((id, last_input, input_changed, timeout_retries, second_pass)) = candidate {
                 if input_changed {
                     measure(&tx, &[id], cutoff)?;
                     tx.commit().map_err(error)?;
@@ -338,7 +347,7 @@ impl SummaryConversion for SqliteStore {
                 tx.execute("UPDATE rh_summary_conversion_items SET state = 'reserved', next_at = ?2,
                             reservation_expires_at = ?3 WHERE conversation_id = ?1",
                            params![id, claim_stamp(clock), time::stamp(kernel::memory::summary_conversion::bounded_deadline(clock, expiry))]).map_err(error)?;
-                Some(ConversionLease { conversation: parse_id(&id)?, revision, claimed_at: clock, timeout_retries })
+                Some(ConversionLease { conversation: parse_id(&id)?, revision, claimed_at: clock, timeout_retries, second_pass })
             } else {
                 None
             };
@@ -459,10 +468,12 @@ impl SummaryConversion for SqliteStore {
         outcome: ConversionOutcome,
     ) -> Result<(), SummaryStoreError> {
         self.with_conn(move |conn| {
+            let requeue = matches!(outcome, ConversionOutcome::Requeue);
             let (state, failure, retries) = outcome.status(lease);
             conn.execute(
                 "UPDATE rh_summary_conversion_items SET state = ?3, reservation_expires_at = NULL,
-                         last_error = ?4, next_at = ?5, timeout_retries = ?6
+                         last_error = ?4, next_at = ?5, timeout_retries = ?6,
+                         second_pass_at = CASE WHEN ?7 THEN ?5 ELSE second_pass_at END
                          WHERE conversation_id = ?1 AND next_at = ?2 AND state = 'reserved'",
                 params![
                     lease.conversation.to_string(),
@@ -470,7 +481,8 @@ impl SummaryConversion for SqliteStore {
                     state,
                     failure,
                     claim_stamp(Timestamp::now()),
-                    retries
+                    retries,
+                    requeue
                 ],
             )
             .map_err(error)?;

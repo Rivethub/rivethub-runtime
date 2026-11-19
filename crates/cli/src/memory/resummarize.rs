@@ -192,6 +192,7 @@ fn format(progress: &ConversionProgress, json: bool) -> Result<String, Error> {
         "Conversion {mode} at {} input tokens/min\n\
          Inventory {inventory}, cursor {cursor}, {} discovered\n\
          {} pending, {} waiting for quiet, {} reserved, {} complete, {} failed, {} giants deferred\n\
+         {} waiting for a second pass\n\
          {} input tokens charged, {} provider input tokens, {} provider output tokens\n\
          Current conversation {current}\n",
         progress.rate,
@@ -202,6 +203,7 @@ fn format(progress: &ConversionProgress, json: bool) -> Result<String, Error> {
         progress.complete,
         progress.failed,
         progress.giant_deferred,
+        progress.waiting_second_pass,
         progress.charged_tokens,
         progress.provider_input_tokens,
         progress.provider_output_tokens

@@ -16,6 +16,7 @@ const QUIET: jiff::SignedDuration = jiff::SignedDuration::from_hours(24);
 
 struct Provider {
     script: Scripted,
+    empty_call: Option<usize>,
     chat_gate: std::sync::atomic::AtomicBool,
     midstream: std::sync::atomic::AtomicBool,
     embed_gate: std::sync::atomic::AtomicBool,
@@ -38,6 +39,7 @@ impl Provider {
                 }),
                 ..Scripted::live()
             },
+            empty_call: None,
             chat_gate: true.into(),
             midstream: false.into(),
             embed_gate: false.into(),
@@ -60,7 +62,12 @@ impl ModelProvider for Provider {
         observe: &kernel::model::ModelObserver<'_>,
     ) -> Result<LlmResponse, ModelProviderError> {
         let block = self.chat_gate.swap(false, SeqCst);
-        let reply = self.script.chat(request).await?;
+        let mut reply = self.script.chat(request).await?;
+        if let Some(call) = self.empty_call
+            && self.script.calls.lock().await.len() == call
+        {
+            reply.content = None;
+        }
         if block {
             if self.midstream.load(SeqCst) {
                 observe(&kernel::model::ModelChunk::Text {
@@ -258,13 +265,13 @@ async fn verify_historical_usage(
 ) -> TestResult {
     let session = "codex:historical-conversion";
     let calls = store.session_calls(&session.parse()?).await?;
-    assert_eq!(calls.len(), 5);
+    assert_eq!(calls.len(), 8);
     assert_eq!(
         calls
             .iter()
             .filter(|call| call.outcome == CallOutcome::Aborted && call.usage.is_none())
             .count(),
-        3
+        6
     );
     assert!(
         calls
@@ -274,8 +281,8 @@ async fn verify_historical_usage(
     let status = capability.status().await?;
     assert_eq!(
         status.charged_tokens,
-        status.provider_input_tokens + 3 * preemption_charge,
-        "three calls to the same historical prompt returned no usage",
+        status.provider_input_tokens + 6 * preemption_charge,
+        "six calls to the same historical prompt returned no usage",
     );
     assert_usage(store, session, "summary-conversion").await
 }
@@ -290,7 +297,7 @@ async fn verify_timeout_retry(
         ("RIVETHUB_SUMMARY_FIRST_TOKEN_TIMEOUT_MS", "100"),
         ("RIVETHUB_SUMMARY_INTER_TOKEN_TIMEOUT_MS", "100"),
     ]);
-    for attempt in 1..=3 {
+    for attempt in 1..=6 {
         provider.chat_gate.store(true, SeqCst);
         provider.midstream.store(attempt == 2, SeqCst);
         tokio::time::timeout(
@@ -301,11 +308,167 @@ async fn verify_timeout_retry(
         provider.entered.notified().await;
         let status = capability.status().await?;
         assert_eq!(status.reserved, 0);
-        assert_eq!(status.pending, i64::from(attempt < 3));
-        assert_eq!(status.failed, i64::from(attempt == 3));
+        assert_eq!(status.pending, i64::from(attempt < 6));
+        assert_eq!(status.failed, i64::from(attempt == 6));
+        assert_eq!(
+            status.waiting_second_pass,
+            i64::from((3..6).contains(&attempt))
+        );
         assert_eq!(permits.available_permits(), 3);
     }
     Ok(())
+}
+
+async fn empty_replies(
+    store: &(impl SummaryStore + MemoryStore),
+    historical: impl AsyncFn(Uuid, Timestamp) -> TestResult,
+) -> TestResult {
+    let base = Timestamp::now() - wire::time::elapsed_days(3);
+    let rows = (1..=8)
+        .map(|index| {
+            (
+                format!("Deposit {index} {}", "chestnut ".repeat(1_750)),
+                base + jiff::SignedDuration::from_mins(index),
+            )
+        })
+        .collect();
+    let multipart = capture(store, "codex:empty-part", rows).await?;
+    historical(multipart, base).await?;
+    let queue = store.summary_conversion().ok_or("conversion support")?;
+    let start = ConversionControl::Start {
+        rate: Some(1_000_000),
+        include_giants: false,
+    };
+    let provider = Provider {
+        empty_call: Some(2),
+        ..Provider::new()
+    };
+    provider.chat_gate.store(false, SeqCst);
+    let permits = Semaphore::new(3);
+    queue.control(start).await?;
+    tick(store, &provider, &permits).await?;
+    tick(store, &provider, &permits).await?;
+    assert_eq!(queue.status().await?.pending, 1);
+    tick(store, &provider, &permits).await?;
+    assert_eq!(queue.status().await?.complete, 1);
+    {
+        let calls = provider.script.calls.lock().await;
+        let [first, second, replay, ..] = calls.as_slice() else {
+            return Err("missing part calls".into());
+        };
+        assert_eq!(first.kind, "TOP_DOWN_PART");
+        assert_eq!(second.kind, "TOP_DOWN_PART");
+        assert_eq!(second.user, replay.user);
+        assert_eq!(
+            calls.iter().filter(|call| call.user == first.user).count(),
+            1
+        );
+    }
+
+    let deferred = capture(
+        store,
+        "codex:always-empty",
+        vec![("Inventory the copper tags.".into(), base)],
+    )
+    .await?;
+    historical(deferred, base).await?;
+    let next = capture(
+        store,
+        "codex:queued-behind",
+        vec![("Inventory the amber tags.".into(), base)],
+    )
+    .await?;
+    historical(next, base - jiff::SignedDuration::from_secs(1)).await?;
+    queue.control(start).await?;
+    verify_empty_exhaustion(store, queue, deferred, next, &permits).await
+}
+
+async fn verify_empty_exhaustion(
+    store: &dyn SummaryStore,
+    queue: &dyn SummaryConversion,
+    deferred: Uuid,
+    next: Uuid,
+    permits: &Semaphore,
+) -> TestResult {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct DryStatus {
+        waiting_second_pass: i64,
+    }
+    let provider = Provider::new();
+    provider.chat_gate.store(false, SeqCst);
+    provider.script.empty.store(true, SeqCst);
+    tick(store, &provider, permits).await?;
+    for _ in 0..3 {
+        tick(store, &provider, permits).await?;
+    }
+    let status = queue.status().await?;
+    assert_eq!((status.pending, status.failed), (2, 0));
+    assert_eq!(status.waiting_second_pass, 1);
+    let dry_status: DryStatus =
+        serde_json::from_str(&serde_json::to_string(&queue.status().await?)?)?;
+    assert_eq!(dry_status.waiting_second_pass, 1);
+    let lease = queue.claim(QUIET).await?.ok_or("next candidate")?;
+    assert_eq!(lease.conversation, next);
+    queue.finish(lease, ConversionOutcome::Complete).await?;
+    for expected_failed in [0, 0, 1] {
+        tick(store, &provider, permits).await?;
+        assert_eq!(queue.status().await?.failed, expected_failed);
+    }
+    let status = queue.status().await?;
+    assert_eq!(
+        status.recent_failures,
+        [(deferred, "the model returned an empty summary".into())]
+    );
+    assert_eq!(status.waiting_second_pass, 0);
+    assert_eq!(provider.script.calls.lock().await.len(), 6);
+    queue
+        .control(ConversionControl::Retry {
+            conversation: deferred,
+        })
+        .await?;
+    provider.script.empty.store(false, SeqCst);
+    tick(store, &provider, permits).await?;
+    assert_eq!(queue.status().await?.complete, 3);
+    Ok(())
+}
+
+#[tokio::test]
+async fn top_down_conversion_empty_replies_sqlite() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("s.sqlite");
+    migrate::sqlite(&path)?;
+    let store = memory_sqlite::SqliteStore::open(&path)?.with_summary_index_key([7; 32]);
+    empty_replies(&store, async |id, at| {
+        rusqlite::Connection::open(&path)?.execute(
+            "UPDATE rh_summary_state SET historical_only = 1, unsettled_since = NULL,
+                 settled_at = ?2, last_input_at = ?2 WHERE conversation_id = ?1",
+            (id.to_string(), at.rfc3339_offset()),
+        )?;
+        Ok(())
+    })
+    .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_conversion_empty_replies_postgres(pool: sqlx::PgPool) -> TestResult {
+    let scoped = memory_postgres::scoped(sqlx::postgres::PgPoolOptions::new())
+        .connect_with(pool.connect_options().as_ref().clone())
+        .await?;
+    let store = memory_postgres::PostgresMemory::new(scoped).with_summary_index_key([7; 32]);
+    Scope::Maintenance
+        .run(empty_replies(&store, async |id, at| {
+            sqlx::query(
+                "UPDATE rh_summary_state SET historical_only = true, unsettled_since = NULL,
+                 settled_at = $2, last_input_at = $2 WHERE conversation_id = $1",
+            )
+            .bind(id)
+            .bind(memory_postgres::time::PgTimestamp::from(at))
+            .execute(&pool)
+            .await?;
+            Ok(())
+        }))
+        .await
 }
 
 async fn verify_foreground_priority(
@@ -491,7 +654,7 @@ async fn recover_conversion(
     );
     assert_eq!(
         provider.script.calls.lock().await.len(),
-        6,
+        9,
         "resume reused the completed chat after preemption and timeouts"
     );
     Ok(())

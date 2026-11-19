@@ -57,7 +57,7 @@ pub enum Error {
 
 fn migration_reason(error: &sqlx::migrate::MigrateError) -> String {
     if let sqlx::migrate::MigrateError::ExecuteMigration(source, version) = error {
-        if matches!(version, 76..=78)
+        if matches!(version, 76..=79)
             && source
                 .as_database_error()
                 .is_some_and(|db| db.code().as_deref() == Some("55P03"))
