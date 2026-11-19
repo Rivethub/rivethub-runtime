@@ -135,3 +135,31 @@ fn malformed_pages_are_typed_errors_and_slugs_cannot_name_paths() {
         }
     }
 }
+
+#[test]
+fn top_down_citation_kinds_survive_a_wiki_page_round_trip() -> TestResult {
+    let markdown = "---
+title: Spring inspection
+slug: spring
+---
+
+## Citations
+
+| Date | Kind | Summary | Note |
+|------|------|---------|------|
+| 2026-10-10 | session | `00000000-0000-4000-8000-000000000001` | Inspection |
+| 2026-10-10 | part | `00000000-0000-4000-8000-000000000002` | Measurements |
+| 2026-10-10 | section | `00000000-0000-4000-8000-000000000003` | Tension |
+";
+    let page = parse_wiki_page(markdown)?;
+    assert_eq!(
+        page.citations
+            .iter()
+            .filter_map(|citation| citation.kind)
+            .map(|kind| kind.to_string())
+            .collect::<Vec<_>>(),
+        ["session", "part", "section"]
+    );
+    assert_eq!(parse_wiki_page(&serialize_wiki_page(&page)?)?, page);
+    Ok(())
+}

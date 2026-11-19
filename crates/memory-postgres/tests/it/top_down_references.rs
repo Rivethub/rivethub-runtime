@@ -736,6 +736,15 @@ async fn top_down_references_wiki_projects_committed_ids_after_retry(pool: PgPoo
                 [id(20).to_string()]
             );
             assert_eq!(
+                projected
+                    .citations
+                    .first()
+                    .and_then(|citation| citation.kind)
+                    .map(|kind| kind.to_string())
+                    .as_deref(),
+                Some("session"),
+            );
+            assert_eq!(
                 projected.meta.sources.first().ok_or("source")?.ids,
                 [id(20).to_string()]
             );

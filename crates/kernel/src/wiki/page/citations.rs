@@ -1,5 +1,4 @@
 use jiff::civil::Date;
-use strum::IntoEnumIterator as _;
 
 use super::slug::{is_link_target, normalize_slug};
 use super::{CitationKind, PageCitation};
@@ -47,7 +46,7 @@ fn table_row(line: &str) -> Option<PageCitation> {
     Some(PageCitation {
         summary_id: uuid_text(unquote(summary))?,
         date: iso_date(date),
-        kind: citation_kind(kind),
+        kind: CitationKind::from_label(kind),
         note: Some(note.clone()).filter(|note| !note.is_empty()),
     })
 }
@@ -90,7 +89,7 @@ fn bullet_entry(line: &str) -> Option<PageCitation> {
     let rest = rest.strip_prefix('`').unwrap_or(rest);
     let mut words = rest.split_whitespace();
     if let (Some(date), Some(kind), Some("—")) = (words.next(), words.next(), words.next())
-        && let (Some(date), Some(kind)) = (iso_date(date), citation_kind(kind))
+        && let (Some(date), Some(kind)) = (iso_date(date), CitationKind::from_label(kind))
     {
         let note = rest.split_once('—').map(|(_, note)| note.trim().to_owned());
         return Some(PageCitation {
@@ -103,7 +102,7 @@ fn bullet_entry(line: &str) -> Option<PageCitation> {
     Some(PageCitation {
         summary_id,
         date: rest.split_whitespace().find_map(iso_date),
-        kind: rest.split_whitespace().find_map(citation_kind),
+        kind: rest.split_whitespace().find_map(CitationKind::from_label),
         note: Some(item.to_owned()),
     })
 }
@@ -125,10 +124,6 @@ pub(super) fn iso_date(text: &str) -> Option<Date> {
             None
         }
     }
-}
-
-fn citation_kind(text: &str) -> Option<CitationKind> {
-    CitationKind::iter().find(|kind| kind.to_string().eq_ignore_ascii_case(text))
 }
 
 fn uuid_text(text: &str) -> Option<String> {

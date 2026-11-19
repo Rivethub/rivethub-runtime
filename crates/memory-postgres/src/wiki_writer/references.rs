@@ -53,13 +53,7 @@ fn project_page(
         .extend(citations.map(|citation| PageCitation {
             summary_id: citation.summary_id.clone(),
             date: citation.date.map(wire::time::TimestampFormat::utc_date),
-            kind: match citation.kind.as_deref() {
-                Some("leaf") => Some(CitationKind::Leaf),
-                Some("branch") => Some(CitationKind::Branch),
-                Some("root") => Some(CitationKind::Root),
-                Some("condensed") => Some(CitationKind::Condensed),
-                _ => None,
-            },
+            kind: citation.kind.as_deref().and_then(CitationKind::from_label),
             note: citation.note.clone(),
         }));
     page.meta.sources.extend(
