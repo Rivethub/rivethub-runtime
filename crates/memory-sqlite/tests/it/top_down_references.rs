@@ -860,3 +860,91 @@ async fn top_down_references_does_not_rewrite_foreign_delivery() -> TestResult {
     assert_eq!(snapshot(&store).await?, before);
     Ok(())
 }
+
+#[tokio::test]
+async fn top_down_search_uses_one_snapshot_during_tree_replacement() -> TestResult {
+    use kernel::memory::{MemoryScope, MemoryStore as _, SearchMode};
+    use std::sync::Arc;
+    use testkit::{FakeProvider, Script};
+
+    let vector = kernel::model::Embedding {
+        vector: vec![1.0, 0.0],
+    };
+    let embedder = Arc::new(FakeProvider::new(vec![Script::Embed(vec![vector])]));
+    let (directory, reader) = store(Some(embedder))?;
+    let writer = SqliteStore::open(directory.path().join("memory.sqlite"))?;
+    seed(&writer).await?;
+    let summary = |old: &[u128], next: u128| -> Result<PreparedSummaryTree, &str> {
+        let mut prepared = tree(old, next, &[2, 3], false);
+        prepared
+            .records
+            .first_mut()
+            .ok_or("missing session root")?
+            .content = "The brass valve stays in the cabinet. ".repeat(4);
+        Ok(prepared)
+    };
+    writer
+        .replace_summary_tree(summary(&[10, 11, 12], 20)?)
+        .await?;
+    let before = snapshot(&writer).await?;
+    let (ready, resume) = pause_before_full_text(&reader).await?;
+    let searcher = reader.clone();
+    let mut q = crate::search_support::query("cabinet", SearchMode::Hybrid);
+    q.scope = MemoryScope::Summaries;
+    let request = q.clone();
+    let search = tokio::spawn(async move { searcher.search(request).await });
+    tokio::time::timeout(std::time::Duration::from_secs(15), ready).await??;
+    let swapped = writer.replace_summary_tree(summary(&[20], 30)?).await;
+    resume.send(())?;
+    swapped?;
+    let old = search.await??;
+    assert_eq!(
+        old.results.first().map(|hit| &hit.id),
+        Some(&id(20).to_string())
+    );
+    let new = reader.search(q).await?;
+    assert_eq!(
+        new.results.first().map(|hit| &hit.id),
+        Some(&id(30).to_string())
+    );
+    assert_eq!(snapshot(&writer).await?, before);
+    Ok(())
+}
+
+async fn pause_before_full_text(
+    store: &SqliteStore,
+) -> Result<
+    (
+        tokio::sync::oneshot::Receiver<()>,
+        std::sync::mpsc::Sender<()>,
+    ),
+    SqliteError,
+> {
+    use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+    let (reached, ready) = tokio::sync::oneshot::channel();
+    let (resume, resuming) = std::sync::mpsc::channel();
+    let mut reached = Some(reached);
+    store
+        .with_conn(move |conn| {
+            conn.authorizer(Some(move |context: AuthContext<'_>| {
+                if matches!(
+                    context.action,
+                    AuthAction::Read {
+                        table_name: "ros_summaries_fts",
+                        ..
+                    }
+                ) && let Some(reached) = reached.take()
+                    && (reached.send(()).is_err()
+                        || resuming
+                            .recv_timeout(std::time::Duration::from_secs(15))
+                            .is_err())
+                {
+                    return Authorization::Deny;
+                }
+                Authorization::Allow
+            }))
+            .map_err(failed)
+        })
+        .await?;
+    Ok((ready, resume))
+}
