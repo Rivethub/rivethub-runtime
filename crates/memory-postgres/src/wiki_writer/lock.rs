@@ -189,6 +189,7 @@ fn publish_lock<T>(
         .open(&staged)?;
     let result = (|| {
         writeln!(file, "{token} {}", Timestamp::now().epoch_millis())?;
+        file.sync_all()?;
         publish(&staged)
     })();
     match std::fs::remove_file(&staged) {
