@@ -128,12 +128,36 @@ impl SummaryStore for SqliteStore {
         key: [u8; 32],
         artifact: SummaryArtifact,
     ) -> Result<(), SummaryStoreError> {
-        self.with_conn(move |conn| {
-            conn.execute("INSERT INTO rh_summary_checkpoints (run_id, artifact_key, artifact)
-                          SELECT id, ?2, ?3 FROM rh_summary_runs WHERE id = ?1 AND revision = ?4 ON CONFLICT DO NOTHING",
-                params![run.to_string(), key.as_slice(), artifact.as_json(), revision]).map_err(backend::error)?;
+        let exists = self
+            .with_conn(move |conn| {
+                let tx = crate::summary_replace::immediate(conn).map_err(backend::error)?;
+                let inserted = tx
+                    .execute(
+                        "INSERT INTO rh_summary_checkpoints (run_id, artifact_key, artifact)
+                 SELECT id, ?2, ?3 FROM rh_summary_runs WHERE id = ?1 AND revision = ?4
+                 ON CONFLICT DO NOTHING",
+                        params![
+                            run.to_string(),
+                            key.as_slice(),
+                            artifact.as_json(),
+                            revision
+                        ],
+                    )
+                    .map_err(backend::error)?;
+                let exists = inserted != 0 || tx.query_row(
+                "SELECT EXISTS (SELECT 1 FROM rh_summary_runs WHERE id = ?1 AND revision = ?2)",
+                params![run.to_string(), revision], |row| row.get(0),
+            ).map_err(backend::error)?;
+                tx.commit().map_err(backend::error)?;
+                Ok(exists)
+            })
+            .await
+            .map_err(store_err)?;
+        if exists {
             Ok(())
-        }).await.map_err(store_err)
+        } else {
+            Err(SummaryStoreError::StaleRun { id: run, revision })
+        }
     }
 
     async fn publish_live(

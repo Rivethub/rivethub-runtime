@@ -200,17 +200,27 @@ impl SummaryStore for PostgresMemory {
         key: [u8; 32],
         artifact: SummaryArtifact,
     ) -> Result<(), SummaryStoreError> {
-        sqlx::query(
-            "INSERT INTO rh_summary_checkpoints (run_id, artifact_key, artifact)
-                     SELECT id, $2, $3 FROM rh_summary_runs WHERE id = $1 AND revision = $4 ON CONFLICT DO NOTHING",
+        let exists: bool = sqlx::query_scalar(
+            "WITH live_run AS (
+                SELECT id FROM rh_summary_runs WHERE id = $1 AND revision = $4 FOR SHARE
+             ), saved AS (
+                INSERT INTO rh_summary_checkpoints (run_id, artifact_key, artifact)
+                SELECT id, $2, $3 FROM live_run ON CONFLICT DO NOTHING
+             )
+             SELECT EXISTS (SELECT 1 FROM live_run)",
         )
         .bind(run)
         .bind(key.as_slice())
-        .bind(Json(artifact)).bind(revision)
-        .execute(&self.pool)
+        .bind(Json(artifact))
+        .bind(revision)
+        .fetch_one(&self.pool)
         .await
         .map_err(backend::error)?;
-        Ok(())
+        if exists {
+            Ok(())
+        } else {
+            Err(SummaryStoreError::StaleRun { id: run, revision })
+        }
     }
 
     async fn try_summary_permit(

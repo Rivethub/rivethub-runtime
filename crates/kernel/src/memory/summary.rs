@@ -146,6 +146,8 @@ pub enum SummaryStoreError {
     Kind { kind: String },
     #[error("a summary count does not fit")]
     Count,
+    #[error("summary checkpoint run {id} no longer owns revision {revision}")]
+    StaleRun { id: Uuid, revision: i64 },
     #[error("the summary store is closed")]
     Closed,
 }

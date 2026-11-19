@@ -171,7 +171,11 @@ impl From<EmbeddingStoreError> for WorkerError {
 
 impl From<SummaryStoreError> for WorkerError {
     fn from(source: SummaryStoreError) -> Self {
-        Self::Summary(source)
+        if matches!(source, SummaryStoreError::StaleRun { .. }) {
+            Self::SummarySuperseded
+        } else {
+            Self::Summary(source)
+        }
     }
 }
 
