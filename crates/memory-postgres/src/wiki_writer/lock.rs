@@ -4,7 +4,6 @@ use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{ErrorKind, Write as _};
 use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, LazyLock, Weak};
 use std::thread::{self, JoinHandle};
@@ -21,7 +20,6 @@ static OWNERS: LazyLock<Mutex<HashMap<PathBuf, Weak<Semaphore>>>> = LazyLock::ne
 const RECLAIM_AGE_MILLIS: i64 = 60_000;
 const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(42);
-const REFRESHED_LOCK: &str = "heartbeat";
 
 #[derive(Debug)]
 pub(super) struct WriterLock {
@@ -190,11 +188,7 @@ fn publish_lock<T>(
         .mode(0o600)
         .open(&staged)?;
     let result = (|| {
-        writeln!(
-            file,
-            "{token} {} {REFRESHED_LOCK}",
-            Timestamp::now().epoch_millis()
-        )?;
+        writeln!(file, "{token} {}", Timestamp::now().epoch_millis())?;
         publish(&staged)
     })();
     match std::fs::remove_file(&staged) {
@@ -220,8 +214,7 @@ fn reclaim(path: &Path, reclaim_age_millis: i64) -> std::io::Result<Attempt> {
     let Some(content) = read_lock(path)? else {
         return Ok(Attempt::Reclaimed);
     };
-    let mut fields = content.split_whitespace();
-    let (Some(token), Some(timestamp)) = (fields.next(), fields.next()) else {
+    let Some(timestamp) = content.split_whitespace().nth(1) else {
         return Ok(Attempt::Busy);
     };
     #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
@@ -229,9 +222,6 @@ fn reclaim(path: &Path, reclaim_age_millis: i64) -> std::io::Result<Attempt> {
         return Ok(Attempt::Busy);
     };
     if Timestamp::now().epoch_millis().saturating_sub(timestamp) <= reclaim_age_millis {
-        return Ok(Attempt::Busy);
-    }
-    if fields.next() != Some(REFRESHED_LOCK) && legacy_holder_is_alive(token)? {
         return Ok(Attempt::Busy);
     }
     if read_lock(path)?.as_ref() != Some(&content) {
@@ -250,31 +240,6 @@ fn reclaim(path: &Path, reclaim_age_millis: i64) -> std::io::Result<Attempt> {
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(Attempt::Reclaimed),
         Err(error) => Err(error),
     }
-}
-
-fn legacy_holder_is_alive(token: &str) -> std::io::Result<bool> {
-    let Some((pid, id)) = token.split_once('-') else {
-        return Ok(false);
-    };
-    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
-    let Ok(pid) = pid.parse::<i32>() else {
-        return Ok(false);
-    };
-    if pid <= 0 || Uuid::parse_str(id).is_err() {
-        return Ok(false);
-    }
-    let process = Command::new("/bin/ps")
-        .args(["-p", &pid.to_string(), "-o", "state="])
-        .output()?;
-    if process.status.success() {
-        return Ok(!process.stdout.trim_ascii_start().starts_with(b"Z"));
-    }
-    if process.status.code() == Some(1) && process.stderr.is_empty() {
-        return Ok(false);
-    }
-    Err(std::io::Error::other(
-        "failed to check legacy wiki lock process",
-    ))
 }
 
 fn read_lock(path: &Path) -> Result<Option<String>, std::io::Error> {
@@ -414,20 +379,6 @@ mod tests {
         assert!(pending.is_err());
         tokio::time::timeout(DEADLINE, release).await??;
         assert!(!path.exists());
-        Ok(())
-    }
-
-    #[test]
-    fn live_legacy_process_is_not_reclaimed_after_expiry() -> TestResult {
-        let root = tempfile::tempdir()?;
-        let path = root.path().join(".wiki-writer.lock");
-        let legacy = format!("{}-{} 1\n", std::process::id(), Uuid::new_v4());
-        std::fs::write(&path, &legacy)?;
-        assert!(matches!(
-            acquire_once(&path, "contender", AGE_MILLIS)?,
-            Attempt::Busy
-        ));
-        assert_eq!(std::fs::read_to_string(path)?, legacy);
         Ok(())
     }
 
