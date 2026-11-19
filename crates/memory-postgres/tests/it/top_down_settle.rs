@@ -48,7 +48,7 @@ async fn revisions_and_ownership(pool: PgPool) -> TestResult {
             .is_none()
     );
 
-    sqlx::query("UPDATE rh_summary_state SET summarized_through = input_revision WHERE conversation_id = $1")
+    sqlx::query("UPDATE rh_summary_state SET summarized_through = input_revision, failed_revision = input_revision WHERE conversation_id = $1")
         .bind(id).execute(&pool).await?;
     let result = scope
         .clone()
@@ -56,7 +56,15 @@ async fn revisions_and_ownership(pool: PgPool) -> TestResult {
         .await?
         .ok_or("summarized")?;
     assert_eq!(result.status, SettleStatus::AlreadySummarized);
-    assert!(!scope.run(store.summary_eligible(id, 4)).await?);
+    assert!(!scope.clone().run(store.summary_eligible(id, 4)).await?);
+    assert_eq!(
+        scope
+            .run(store.summary_state(id))
+            .await?
+            .ok_or("state")?
+            .failed_revision,
+        None
+    );
     Ok(())
 }
 

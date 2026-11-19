@@ -198,8 +198,9 @@ impl SqliteStore {
             let Some(mut current) = current else {
                 return Ok(None);
             };
+            let previously_failed = current.failed_revision.is_some();
             let result = current.manual_settle(now);
-            if result.status == SettleStatus::Settled {
+            if result.status == SettleStatus::Settled || previously_failed {
                 save(&tx, &current)?;
             }
             tx.commit().map_err(failure)?;

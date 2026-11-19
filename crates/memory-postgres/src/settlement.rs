@@ -224,8 +224,9 @@ impl PostgresMemory {
             .fetch_one(&mut *tx)
             .await
             .map_err(failure)?;
+        let previously_failed = current.failed_revision.is_some();
         let result = current.manual_settle(now.to_jiff());
-        if result.status == SettleStatus::Settled {
+        if result.status == SettleStatus::Settled || previously_failed {
             save(&mut tx, &current).await?;
         }
         tx.commit().await.map_err(failure)?;

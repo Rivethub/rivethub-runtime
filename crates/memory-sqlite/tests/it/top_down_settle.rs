@@ -80,7 +80,7 @@ async fn result_fills_and_persistence() -> TestResult {
     );
 
     local.with_conn(move |conn| {
-        conn.execute("UPDATE rh_summary_state SET summarized_through = input_revision WHERE conversation_id = ?1", [id.to_string()])
+        conn.execute("UPDATE rh_summary_state SET summarized_through = input_revision, failed_revision = input_revision WHERE conversation_id = ?1", [id.to_string()])
             .map_err(|source| memory_sqlite::SqliteError::Query { operation: "test completed revision", source })?;
         Ok(())
     }).await?;
@@ -93,6 +93,14 @@ async fn result_fills_and_persistence() -> TestResult {
         SettleStatus::AlreadySummarized
     );
     assert!(!local.summary_eligible(id, 1).await?);
+    assert_eq!(
+        local
+            .summary_state(id)
+            .await?
+            .ok_or("state")?
+            .failed_revision,
+        None
+    );
     Ok(())
 }
 
