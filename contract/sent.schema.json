@@ -8607,6 +8607,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "nativeSessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "origin": {
           "anyOf": [
             {

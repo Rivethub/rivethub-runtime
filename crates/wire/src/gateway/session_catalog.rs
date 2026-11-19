@@ -86,6 +86,7 @@ pub struct SessionDetail {
     pub row: SessionSummaryRow,
     pub cwd: Option<String>,
     pub resume_command: Option<String>,
+    pub native_session_id: Option<String>,
     pub changed: Vec<SessionChange>,
     pub entities: Vec<SessionEntity>,
     pub tags: Vec<SessionTag>,
