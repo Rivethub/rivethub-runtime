@@ -22,7 +22,11 @@ pub(super) fn clear(page: &mut WikiPage) -> bool {
 }
 
 pub(crate) fn archive(markdown: String) -> Result<String, WikiPageError> {
-    let projected = project(markdown, &[], &[])?;
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
+    let projected = match parse_wiki_page(&markdown) {
+        Ok(page) => project_page(markdown, page, &[], &[])?,
+        Err(_) => markdown,
+    };
     Ok(kernel::wiki::page::archive::without_summary_citations(
         &projected,
     ))
@@ -33,10 +37,16 @@ pub(crate) fn project(
     citations: &[WikiCitation],
     sources: &[WikiSource],
 ) -> Result<String, WikiPageError> {
-    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
-    let Ok(mut page) = parse_wiki_page(&markdown) else {
-        return Ok(markdown);
-    };
+    let page = parse_wiki_page(&markdown)?;
+    project_page(markdown, page, citations, sources)
+}
+
+fn project_page(
+    markdown: String,
+    mut page: WikiPage,
+    citations: &[WikiCitation],
+    sources: &[WikiSource],
+) -> Result<String, WikiPageError> {
     let cleared = clear(&mut page);
     let citations = citations.iter().rev().take(40).rev();
     page.citations

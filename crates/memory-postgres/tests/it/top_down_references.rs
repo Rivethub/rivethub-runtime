@@ -771,8 +771,15 @@ async fn top_down_references_wiki_projects_committed_ids_after_retry(pool: PgPoo
             Ok::<_, Box<dyn std::error::Error>>(())
         })
         .await?;
-    assert_eq!(tokio::fs::read_to_string(page_path).await?, cached);
+    assert_eq!(tokio::fs::read_to_string(&page_path).await?, cached);
     assert_eq!(tokio::fs::read_to_string(archival_file).await?, cached);
+    tokio::fs::write(&page_path, format!("## Citations\n- {}\n", id(10))).await?;
+    assert!(
+        Scope::Maintenance
+            .run(store.wiki_page(&slug))
+            .await
+            .is_err()
+    );
     assert_eq!(checksum(&pool).await?, before);
     Ok(())
 }
