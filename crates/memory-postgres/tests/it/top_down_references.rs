@@ -1120,3 +1120,105 @@ async fn top_down_references_does_not_rewrite_foreign_delivery(pool: PgPool) -> 
     assert_eq!(checksum(&pool).await?, before);
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_references_wiki_retry_after_git_commit_fills_sql_receipt(
+    pool: PgPool,
+) -> TestResult {
+    seed(&pool).await?;
+    let directory = tempfile::tempdir()?;
+    let store = scoped_store(&pool)
+        .await?
+        .with_wiki_directory(directory.path().to_path_buf());
+    let before = checksum(&pool).await?;
+    Scope::Maintenance
+        .run(exercise_wiki_commit_retry(&pool, &store, directory.path()))
+        .await?;
+    assert_eq!(checksum(&pool).await?, before);
+    Ok(())
+}
+
+async fn exercise_wiki_commit_retry(
+    pool: &PgPool,
+    store: &PostgresMemory,
+    directory: &std::path::Path,
+) -> TestResult {
+    use kernel::memory::MemoryStore as _;
+    use kernel::wiki::WikiLookup;
+    use kernel::wiki::page::{WikiSlug, parse_wiki_page};
+
+    store
+        .replace_summary_tree(&tree(&[10, 11, 12], 20, &[2, 3], false))
+        .await?;
+    let job = ExtractWiki {
+        summary_id: id(20),
+        conversation_id: Some(id(1)),
+    };
+    let WikiWork::Pending(input) = store.wiki_work(&job).await? else {
+        return Err("expected pending work".into());
+    };
+    let routing = WikiRouting {
+        input: Some(input),
+        ..WikiRouting::default()
+    };
+    let when: Timestamp = "2025-06-01T00:00:00Z".parse()?;
+    let slug = WikiSlug::try_from("gasket-rack".to_owned())?;
+    let patch = retry_patch(slug.clone(), when);
+    sqlx::raw_sql(
+        "CREATE FUNCTION refuse_wiki_commit() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN RAISE EXCEPTION 'interrupted wiki receipt'; END $$;
+         CREATE CONSTRAINT TRIGGER refuse_wiki_commit AFTER INSERT OR UPDATE ON rh_wiki_extractions
+         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION refuse_wiki_commit();",
+    )
+    .execute(pool)
+    .await?;
+    assert!(
+        store
+            .apply_wiki(&job, vec![patch.clone()], &routing, when)
+            .await
+            .is_err()
+    );
+    let ahead = tokio::fs::read_to_string(directory.join("topics/gasket-rack.md")).await?;
+    assert_eq!(parse_wiki_page(&ahead)?.history.len(), 1);
+    assert!(matches!(store.wiki_work(&job).await?, WikiWork::Pending(_)));
+    sqlx::query("DROP TRIGGER refuse_wiki_commit ON rh_wiki_extractions")
+        .execute(pool)
+        .await?;
+    store.apply_wiki(&job, vec![patch], &routing, when).await?;
+    assert!(matches!(
+        store.wiki_work(&job).await?,
+        WikiWork::Complete { .. }
+    ));
+    let WikiLookup::Page(page) = store.wiki_page(&slug).await? else {
+        return Err("missing retried wiki page".into());
+    };
+    assert_eq!(parse_wiki_page(&page.markdown)?.history.len(), 1);
+    assert_eq!(page.citations.len(), 1);
+    Ok(())
+}
+fn retry_patch(
+    slug: kernel::wiki::page::WikiSlug,
+    when: Timestamp,
+) -> kernel::wiki::page::WikiPatch {
+    use kernel::wiki::page::{WikiAction, WikiHistoryEntry, WikiPatch};
+    use wire::time::TimestampFormat as _;
+
+    WikiPatch {
+        action: WikiAction::Create,
+        slug,
+        title: "Gasket rack".to_owned(),
+        aliases: Vec::new(),
+        tags: Vec::new(),
+        entities: Vec::new(),
+        summary: "The spare gasket is in the top drawer.".to_owned(),
+        article: None,
+        related: None,
+        history_entry: Some(WikiHistoryEntry {
+            date: when.utc_date(),
+            title: "Put the spare away".to_owned(),
+            body: "The brass drawer is marked with its size.".to_owned(),
+        }),
+        entity_type: None,
+        facts: None,
+    }
+}
