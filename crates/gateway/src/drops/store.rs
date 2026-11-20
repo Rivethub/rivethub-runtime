@@ -195,9 +195,22 @@ fn nofollow() -> i32 {
 }
 
 fn digest(file: &mut std::fs::File) -> std::io::Result<(u64, String)> {
-    let mut hasher = Sha256::new();
+    let mut hasher = Hashing(Sha256::new());
     let total = std::io::copy(file, &mut hasher)?;
-    Ok((total, hex::encode(hasher.finalize())))
+    Ok((total, hex::encode(hasher.0.finalize())))
+}
+
+struct Hashing(Sha256);
+
+impl std::io::Write for Hashing {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.update(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 impl Store {

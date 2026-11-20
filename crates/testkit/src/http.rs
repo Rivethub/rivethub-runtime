@@ -305,11 +305,10 @@ pub(crate) fn compare_response(
         }
         return Ok(());
     }
-    if let Some(want_sha) = &recorded.body_sha256 {
-        let digest = Sha256::digest(&actual.body);
-        if format!("{digest:x}") != *want_sha {
-            return Err(Mismatch::new(id, "body sha256 mismatch"));
-        }
+    if let Some(want_sha) = &recorded.body_sha256
+        && hex::encode(Sha256::digest(&actual.body)) != *want_sha
+    {
+        return Err(Mismatch::new(id, "body sha256 mismatch"));
     }
     let want_text =
         std::str::from_utf8(&want_body).map_err(|error| Mismatch::new(id, error.to_string()))?;
