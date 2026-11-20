@@ -451,6 +451,7 @@ async fn top_down_references_split_message_has_only_the_first_anchor() -> TestRe
     ).map_err(failed)
         })
         .await?;
+    seed_non_source_messages(&store).await?;
     let mut prepared = tree(&[10, 11, 12], 20, &[2, 3, 4], true);
     for (part, ordinal, messages) in [(21, 1, vec![(2, 1), (3, 2)]), (22, 2, vec![(2, 1), (4, 2)])]
     {
@@ -497,6 +498,30 @@ async fn top_down_references_split_message_has_only_the_first_anchor() -> TestRe
     verify_released_deliveries(&store).await
 }
 
+async fn seed_non_source_messages(store: &SqliteStore) -> TestResult {
+    store
+        .with_conn(|conn| {
+            conn.execute(
+                "UPDATE ros_messages SET metadata = '{\"session_jsonl_line\":2}' WHERE id = ?1",
+                [id(3).to_string()],
+            )
+            .map_err(failed)?;
+            conn.execute(
+                "INSERT INTO ros_messages
+           (id, conversation_id, agent, channel, role, tool_result, tool_args, metadata, created_at)
+         VALUES (?1, ?3, 'fixture', 'cli', 'tool', 'Pressure is steady.', NULL,
+                 '{\"session_jsonl_line\":3}', '2024-01-01T00:00:00Z'),
+                (?2, ?3, 'fixture', 'cli', 'tool', NULL, '{\"unit\":\"bar\"}',
+                 '{\"session_jsonl_line\":1}', '2023-12-31T00:00:00Z')",
+                params![id(6).to_string(), id(7).to_string(), id(1).to_string()],
+            )
+            .map_err(failed)?;
+            Ok(())
+        })
+        .await?;
+    Ok(())
+}
+
 async fn verify_released_deliveries(store: &SqliteStore) -> TestResult {
     use kernel::memory::summary_conversion::{ConversionControl, SummaryConversion};
 
@@ -508,11 +533,11 @@ async fn verify_released_deliveries(store: &SqliteStore) -> TestResult {
         .await?;
     store.with_conn(|conn| {
         let mut query = conn.prepare(
-            "SELECT message_id, anchor_id FROM ros_summary_deliveries WHERE consumer = 'wiki' AND anchor_id IS NOT NULL ORDER BY message_id",
+            "SELECT message_id, anchor_id FROM ros_summary_deliveries WHERE consumer = 'entity' AND anchor_id IS NOT NULL AND completed_version IS NULL ORDER BY message_id",
         ).map_err(failed)?;
         let found: Vec<(String, String)> = query.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .map_err(failed)?.collect::<Result<_, _>>().map_err(failed)?;
-        assert_eq!(found, [(2, 22), (3, 21), (4, 22)].map(|(message, anchor)| (id(message).to_string(), id(anchor).to_string())));
+        assert_eq!(found, [(2, 22), (3, 21), (4, 22), (6, 21), (7, 22)].map(|(message, anchor)| (id(message).to_string(), id(anchor).to_string())));
         Ok(())
     }).await?;
     assert_eq!(backlog(store, "conversation_id", id(1)).await?, 0);

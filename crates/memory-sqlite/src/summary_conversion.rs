@@ -1,3 +1,5 @@
+mod release;
+
 use jiff::SignedDuration;
 use jiff::Timestamp;
 use kernel::memory::summary_backend::SummaryArtifact;
@@ -10,7 +12,6 @@ use kernel::memory::{
     },
     summary_reference::PreparedSummaryTree,
 };
-use kernel::wiki::{builder::WIKI_PIPELINE_VERSION, entity_pass::ENTITY_PIPELINE_VERSION};
 use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
 use wire::time::TimestampFormat as _;
 
@@ -263,9 +264,7 @@ impl SummaryConversion for SqliteStore {
                      WHERE conversation_id = ?1 AND state = 'failed'", [conversation.to_string()],
                 ),
                 ConversionControl::Release { conversation } => {
-                    let id = conversation.to_string();
-                    tx.execute(RELEASE, [&id]).map_err(error)?;
-                    tx.execute(COMPLETE_EMPTY_DELIVERIES, params![id, WIKI_PIPELINE_VERSION, ENTITY_PIPELINE_VERSION])
+                    Ok(release::deliveries(&tx, &conversation.to_string())?)
                 }
             }.map_err(error)?;
             tx.commit().map_err(error)?;
@@ -521,33 +520,3 @@ impl SummaryConversion for SqliteStore {
         }
     }
 }
-
-const RELEASE: &str = "WITH part_order AS (
-    SELECT part.id, max(root_link.ordinal) AS last_position, min(root_link.ordinal) AS first_position
-    FROM ros_summaries part JOIN ros_summary_sources link ON link.summary_id = part.id
-    JOIN ros_summary_sources root_link ON root_link.summary_id = part.parent_id
-        AND root_link.message_id = link.message_id
-    WHERE part.conversation_id = ?1 AND part.kind = 'part'
-    GROUP BY part.id
-), anchors AS (
-    SELECT src.message_id, s.id, row_number() OVER (
-        PARTITION BY src.message_id ORDER BY (s.kind = 'session'), p.last_position NULLS LAST, p.first_position NULLS LAST, s.issued_part_ordinal, s.id
-    ) AS rank
-    FROM ros_summaries s JOIN ros_summary_sources src ON src.summary_id = s.id
-    LEFT JOIN part_order p ON p.id = s.id
-    WHERE s.conversation_id = ?1 AND s.kind IN ('session','part')
-      AND (s.kind = 'part' OR NOT EXISTS (SELECT 1 FROM ros_summaries part
-           WHERE part.parent_id = s.id AND part.kind = 'part'))
-)
-UPDATE ros_summary_deliveries AS d SET anchor_id = a.id, historical_backlog = 0
-FROM anchors a WHERE d.conversation_id = ?1 AND d.message_id = a.message_id
-  AND d.historical_backlog AND a.rank = 1";
-
-const COMPLETE_EMPTY_DELIVERIES: &str = "UPDATE ros_summary_deliveries AS d
-SET completed_version = CASE d.consumer WHEN 'entity' THEN ?3 ELSE ?2 END, historical_backlog = 0
-FROM ros_messages m
-WHERE d.conversation_id = ?1 AND d.historical_backlog
-  AND m.id = d.message_id AND m.conversation_id = d.conversation_id
-  AND m.content = '' AND coalesce(m.tool_name, '') = ''
-  AND (EXISTS (SELECT 1 FROM ros_summaries WHERE conversation_id = ?1 AND kind = 'session')
-       OR EXISTS (SELECT 1 FROM rh_summary_conversion_items WHERE conversation_id = ?1 AND state = 'complete'))";

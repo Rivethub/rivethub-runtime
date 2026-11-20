@@ -47,8 +47,8 @@ pub(crate) fn pending(
 ) -> Result<Vec<Uuid>, rusqlite::Error> {
     conn.prepare(
         "SELECT d.message_id FROM ros_summary_deliveries d
-         JOIN ros_summary_sources s ON s.summary_id = d.anchor_id AND s.message_id = d.message_id
-         WHERE d.anchor_id = ?1 AND d.consumer = ?2 ORDER BY s.ordinal, d.message_id",
+         LEFT JOIN ros_summary_sources s ON s.summary_id = d.anchor_id AND s.message_id = d.message_id
+         WHERE d.anchor_id = ?1 AND d.consumer = ?2 ORDER BY s.ordinal NULLS LAST, d.message_id",
     )?
     .query_map(params![anchor.to_string(), consumer.as_str()], |row| {
         let id: String = row.get(0)?;

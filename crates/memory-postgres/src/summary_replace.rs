@@ -138,8 +138,8 @@ pub(crate) async fn pending(
 ) -> Result<Vec<Uuid>, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT d.message_id FROM rh_summary_deliveries d
-         JOIN rh_summary_sources s ON s.summary_id = d.anchor_id AND s.message_id = d.message_id
-         WHERE d.anchor_id = $1 AND d.consumer = $2 ORDER BY s.ordinal, d.message_id",
+         LEFT JOIN rh_summary_sources s ON s.summary_id = d.anchor_id AND s.message_id = d.message_id
+         WHERE d.anchor_id = $1 AND d.consumer = $2 ORDER BY s.ordinal NULLS LAST, d.message_id",
     )
     .bind(anchor)
     .bind(consumer.as_str())
