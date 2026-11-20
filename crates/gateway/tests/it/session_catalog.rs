@@ -179,6 +179,7 @@ async fn the_detail_adds_cwd_and_a_resume_command() {
         detail.resume_command.as_deref(),
         Some("claude --resume solo")
     );
+    assert_eq!(detail.native_session_id.as_deref(), Some("solo"));
     assert_eq!(detail.row.message_count, 4);
     assert_eq!(
         detail.row.memory_state,

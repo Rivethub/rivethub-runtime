@@ -51,7 +51,7 @@ async fn status_and_doctor_accept_the_config_rh_local_writes() {
     let (status, doctor) = status_and_doctor(stub.addr.port(), "").await;
     stub.close().await.expect("stub shuts down");
     assert_eq!(status.exit, Exit::Ok);
-    assert_eq!(status.stdout, "RivetHub is running (v1.2.3)\n");
+    assert_eq!(status.stdout, "RivetHub is running (v1.2.3)\nWeb: none\n");
     assert!(!status.stderr.contains("unavailable"), "{}", status.stderr);
     assert_eq!(doctor.exit, Exit::Ok, "{}", doctor.stdout);
     assert!(doctor.stdout.contains("pass: config"), "{}", doctor.stdout);
@@ -180,7 +180,7 @@ async fn status_and_doctor_state_the_hub_policy() {
     stub.close().await.expect("stub shuts down");
     assert_eq!(
         status.stdout,
-        "RivetHub is running (v1.2.3)\nHub policy: cloud disabled; sharing with only team.example.com; cloud.disabled refuses rivethub.cloud:443\n"
+        "RivetHub is running (v1.2.3)\nWeb: none\nHub policy: cloud disabled; sharing with only team.example.com; cloud.disabled refuses rivethub.cloud:443\n"
     );
     let doctor = run(&["doctor"], &env).await;
     assert!(

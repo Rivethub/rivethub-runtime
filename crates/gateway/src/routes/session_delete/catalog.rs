@@ -244,6 +244,7 @@ pub(super) async fn detail(
     Ok(Json(SessionDetail {
         resume_command: session
             .and_then(|session| resume_command(session.harness(), session.native())),
+        native_session_id: session.map(|session| session.native().to_owned()),
         row: row(record, seen.shared_with, &lineage),
         cwd,
         changed: Vec::new(),

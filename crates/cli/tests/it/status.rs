@@ -46,7 +46,7 @@ async fn status_reads_health_and_optional_version_and_uptime() {
     assert_eq!(status.exit, Exit::Ok);
     assert_eq!(
         status.stdout,
-        "RivetHub is running (v1.2.3); uptime 12.5s\n"
+        "RivetHub is running (v1.2.3); uptime 12.5s\nWeb: none\n"
     );
     assert_eq!(status.stderr, "");
     stub.close().await.expect("stub shuts down");
@@ -115,7 +115,7 @@ async fn ordinary_redirects_reach_the_health_route() {
     );
     let report = run(&["status"], &env).await;
     assert_eq!(report.exit, Exit::Ok);
-    assert_eq!(report.stdout, "RivetHub is running\n");
+    assert_eq!(report.stdout, "RivetHub is running\nWeb: none\n");
     assert_eq!(report.stderr, "");
     stub.close().await.expect("stub shuts down");
 }
@@ -215,7 +215,7 @@ async fn status_names_each_degraded_provider() {
     assert_eq!(report.exit, Exit::Ok);
     assert_eq!(
         report.stdout,
-        "RivetHub is running\nProvider hermes-cli is degraded (retrying): ACP discovery timed out after 30000ms\nProvider kimi is degraded (permanent): not installed\n"
+        "RivetHub is running\nWeb: none\nProvider hermes-cli is degraded (retrying): ACP discovery timed out after 30000ms\nProvider kimi is degraded (permanent): not installed\n"
     );
     stub.close().await.expect("stub shuts down");
 }

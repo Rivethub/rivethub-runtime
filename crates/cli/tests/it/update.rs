@@ -9,6 +9,8 @@ mod cloud;
 mod source;
 #[path = "update_support/mod.rs"]
 mod update_support;
+#[path = "update/web.rs"]
+mod web;
 
 use std::os::unix::fs::symlink;
 
@@ -16,7 +18,7 @@ use cli::Exit;
 use cli::service::Scope;
 use cli::update::{Channel, Updater};
 use tokio_util::sync::CancellationToken;
-use update_support::{BINARY, Fixture, MIGRATION, Published, Result, args, server};
+use update_support::{BINARY, Fixture, MIGRATION, Published, Result, args, server, web_url};
 
 #[tokio::test]
 async fn stable_verifies_redirected_archive_migrates_swaps_and_restarts() -> Result {
@@ -228,7 +230,7 @@ async fn an_unpinned_update_never_installs_an_older_or_the_same_release() -> Res
             .run_as(&args, &fixture.env(), Published::Good, running)
             .await?;
         assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
-        assert!(report.stdout.ends_with(message), "{}", report.stdout);
+        assert!(report.stdout.contains(message), "{}", report.stdout);
         assert_eq!(std::fs::read(&fixture.binary)?, b"old runtime");
         assert_eq!(std::fs::read_to_string(&fixture.calls)?, "");
     }
@@ -255,7 +257,7 @@ async fn without_a_unit_and_without_a_running_node_nothing_is_restarted() -> Res
     assert!(
         report
             .stdout
-            .ends_with("No RivetHub node is running, so none needed a restart.\n"),
+            .contains("No RivetHub node is running, so none needed a restart.\n"),
         "{}",
         report.stdout
     );
@@ -283,7 +285,7 @@ async fn without_a_unit_a_local_node_is_stopped_and_started_with_the_new_binary(
     assert!(
         report
             .stdout
-            .ends_with("Started RivetHub local node at http://127.0.0.1:6123\n"),
+            .contains("Started RivetHub local node at http://127.0.0.1:6123\n"),
         "{}",
         report.stdout
     );
@@ -306,7 +308,7 @@ async fn without_a_unit_a_node_rh_local_did_not_start_is_left_running() -> Resul
         .run(&args(), &fixture.env(), Published::Good)
         .await?;
     assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
-    assert!(report.stdout.ends_with(&format!(
+    assert!(report.stdout.contains(&format!(
         "The RivetHub node running as PID {pid} was not started by `rh local`; restart it to run the new binary.\n"
     )));
     assert!(!node.is_finished());
@@ -374,6 +376,7 @@ async fn symlinks_out_and_traversal_are_refused() -> Result {
         let updater = Updater::new(
             path,
             format!("http://{}/releases/", server.addr).parse()?,
+            web_url(&server)?,
             Scope::User,
         );
         let report = updater
@@ -394,6 +397,7 @@ async fn cancellation_and_busy_installations_refuse_changes() -> Result {
     let updater = Updater::new(
         fixture.binary.clone(),
         format!("http://{}/releases/", server.addr).parse()?,
+        web_url(&server)?,
         Scope::User,
     );
     let shutdown = CancellationToken::new();
@@ -462,6 +466,7 @@ async fn cancellation_during_download_cleans_staging_and_preserves_installation(
     let updater = Updater::new(
         fixture.binary.clone(),
         format!("http://{}/releases/", server.addr).parse()?,
+        web_url(&server)?,
         Scope::User,
     );
     let env = fixture.env();

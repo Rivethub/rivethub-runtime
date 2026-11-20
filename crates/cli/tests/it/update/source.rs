@@ -35,7 +35,7 @@ if [ "$RIVETHUB_TEST_FAIL" = escape ]; then
     /bin/ln -s "$RIVETHUB_INSTALL_ROOT/output" "$last"
 fi
 /bin/mkdir -p "$last/release"
-printf '#!/bin/sh\nprintf source\n' > "$last/release/rh"
+printf '#!/bin/sh\nprintf "RivetHub v0.8.3\\n"\n' > "$last/release/rh"
 /bin/cp "$RIVETHUB_INSTALL_ROOT/migration" "$last/release/rivethub-migrate"
 /bin/chmod 755 "$last/release/rh" "$last/release/rivethub-migrate"
 "#,

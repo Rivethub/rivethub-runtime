@@ -136,3 +136,42 @@ fn app_deep_links_get_the_shell_and_removed_live_routes_answer_404() {
         assert_eq!((path, gone.status), (path, 404));
     }
 }
+
+#[test]
+fn the_same_router_picks_up_managed_activation_and_prefers_explicit_static_dir() {
+    let scratch = tempfile::tempdir().expect("temp");
+    let mut settings = common::settings();
+    settings.state_dir = scratch.path().to_owned();
+    let router = app(settings.clone());
+    let first = call(router.clone(), "/").expect("empty");
+    assert!(String::from_utf8_lossy(&first.body).contains("rh update"));
+
+    let current = gateway::managed_web_link(scratch.path());
+    let web = current.parent().expect("web root");
+    for (version, contents) in [("1.0.0", "first"), ("2.0.0", "second")] {
+        let bundle = web.join(version);
+        std::fs::create_dir_all(&bundle).expect("bundle");
+        std::fs::write(bundle.join("index.html"), contents).expect("index");
+        std::fs::write(bundle.join("app.js"), contents).expect("asset");
+        let next = web.join("next");
+        std::os::unix::fs::symlink(version, &next).expect("link");
+        std::fs::rename(next, &current).expect("activate");
+        for target in ["/", "/app.js", "/sessions"] {
+            let page = call(router.clone(), target).expect("managed");
+            assert_eq!(
+                (page.status, page.body.as_slice()),
+                (200, contents.as_bytes())
+            );
+        }
+    }
+
+    let explicit = scratch.path().join("explicit");
+    std::fs::create_dir(&explicit).expect("explicit");
+    std::fs::write(explicit.join("index.html"), "explicit").expect("index");
+    settings.static_dir = Some(explicit);
+    let page = call(app(settings), "/").expect("explicit");
+    assert_eq!(
+        (page.status, page.body.as_slice()),
+        (200, b"explicit".as_slice())
+    );
+}

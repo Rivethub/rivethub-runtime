@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use wire::gateway::{CloudPolicy, HubPolicy};
@@ -34,6 +34,19 @@ pub fn state_dir(env: &config::Environment) -> Result<PathBuf, config::ConfigErr
     ))
 }
 
+pub fn managed_web_link(state_dir: &Path) -> PathBuf {
+    state_dir.join("web/current")
+}
+
+pub fn explicit_static_dir(config: &config::Config, env: &config::Environment) -> Option<PathBuf> {
+    configured_path(env, "RIVETHUB_STATIC_DIR", "RIVETOS_DEN_STATIC_DIR").or_else(|| {
+        config
+            .gateway
+            .as_ref()
+            .and_then(|gateway| gateway.static_dir.clone())
+    })
+}
+
 impl Settings {
     pub fn from_config_in(
         config: &config::Config,
@@ -50,11 +63,7 @@ impl Settings {
             node,
             allowed_origins: section.allowed_origins,
             allowed_hosts: section.allowed_hosts,
-            static_dir: match configured_path(env, "RIVETHUB_STATIC_DIR", "RIVETOS_DEN_STATIC_DIR")
-            {
-                Some(path) => Some(path),
-                None => section.static_dir,
-            },
+            static_dir: explicit_static_dir(config, env),
             root_redirect: match configured_text(
                 env,
                 "RIVETHUB_ROOT_REDIRECT",

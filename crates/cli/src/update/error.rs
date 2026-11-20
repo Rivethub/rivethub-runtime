@@ -48,6 +48,18 @@ pub enum UpdateError {
     Http(#[from] reqwest::Error),
     #[error("release asset is too large")]
     AssetSize,
+    #[error("Start the node once to adopt its legacy state before installing the web app.")]
+    WebLegacyState,
+    #[error("the web release manifest does not match the expected schema or release")]
+    WebManifest,
+    #[error("the web archive has an unsafe or reserved entry at {}", .0.display())]
+    WebArchivePath(PathBuf),
+    #[error("web release {0} differs from the active copy of that version")]
+    WebChanged(semver::Version),
+    #[error(
+        "web {0} is incompatible with rh {1} on the {2} channel and no replacement was published"
+    )]
+    WebCompatibility(semver::Version, semver::Version, super::Channel),
     #[error("release checksum manifest is invalid")]
     Manifest,
     #[error("SHA-256 verification failed for {0}")]

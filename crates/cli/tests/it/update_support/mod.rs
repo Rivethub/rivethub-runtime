@@ -153,6 +153,7 @@ if [ "$failed" = yes ] && [ "$last" != true ]; then exit 1; fi
         let updater = Updater::new(
             self.binary.clone(),
             format!("http://{}/releases/", server.addr).parse()?,
+            web_url(&server)?,
             Scope::User,
         )
         .running(running);
@@ -171,13 +172,14 @@ pub(crate) fn args() -> UpdateArgs {
         channel: Channel::Stable,
         version: None,
         no_restart: false,
+        web_only: false,
         source: None,
     }
 }
 
 #[derive(Serialize)]
 struct Release {
-    tag_name: &'static str,
+    tag_name: String,
     draft: bool,
     prerelease: bool,
     assets: Vec<Asset>,
@@ -229,9 +231,35 @@ pub(crate) fn archive(published: Published) -> Result<Vec<u8>> {
 struct Assets {
     manifest: String,
     archive: Vec<u8>,
+    web: Vec<WebRelease>,
+}
+
+pub(crate) fn web_url(server: &testkit::Stub) -> Result<url::Url> {
+    Ok(format!("http://{}/web-releases", server.addr).parse()?)
+}
+
+pub(crate) struct WebRelease {
+    pub(crate) version: &'static str,
+    pub(crate) minimum: &'static str,
+    pub(crate) archive: Vec<u8>,
+    pub(crate) bad_digest: bool,
+    pub(crate) broken_manifest: bool,
+}
+
+impl WebRelease {
+    fn asset_name(&self) -> String {
+        format!("rivethub-web-{}.tar.gz", self.version)
+    }
 }
 
 pub(crate) async fn server(published: Published) -> Result<testkit::Stub> {
+    server_with_web(published, Vec::new()).await
+}
+
+pub(crate) async fn server_with_web(
+    published: Published,
+    web: Vec<WebRelease>,
+) -> Result<testkit::Stub> {
     let archive = archive(published)?;
     let digest = hex::encode(Sha256::digest(if published == Published::BadChecksum {
         b"wrong".as_slice()
@@ -247,7 +275,13 @@ pub(crate) async fn server(published: Published) -> Result<testkit::Stub> {
         .route("/releases/latest", get(latest))
         .route("/releases/tags/{tag}", get(tagged))
         .route("/assets/{name}", get(download))
-        .with_state(Arc::new(Assets { manifest, archive }));
+        .route("/web-releases", get(web_list))
+        .route("/web-assets/{version}/{name}", get(web_download))
+        .with_state(Arc::new(Assets {
+            manifest,
+            archive,
+            web,
+        }));
     Ok(testkit::stub_server(routes).await?)
 }
 
@@ -261,7 +295,7 @@ fn release(
         .to_str()
         .expect("host text");
     Release {
-        tag_name,
+        tag_name: tag_name.to_owned(),
         draft,
         prerelease,
         assets: [archive_name(tag_name), "SHA256SUMS".to_owned()]
@@ -303,6 +337,78 @@ async fn download(Path(name): Path<String>, State(assets): State<Arc<Assets>>) -
         Redirect::temporary("/assets/archive").into_response()
     } else if name == "archive" {
         assets.archive.clone().into_response()
+    } else {
+        StatusCode::NOT_FOUND.into_response()
+    }
+}
+
+async fn web_list(headers: HeaderMap, State(assets): State<Arc<Assets>>) -> Response {
+    let host = headers
+        .get("host")
+        .expect("host")
+        .to_str()
+        .expect("host text");
+    let mut releases = vec![release(&headers, RELEASES[0])];
+    releases.extend(assets.web.iter().map(|web| {
+        Release {
+            tag_name: format!("web-v{}", web.version),
+            draft: false,
+            prerelease: web.version.contains('-'),
+            assets: ["web-manifest.json".to_owned(), web.asset_name()]
+                .into_iter()
+                .map(|name| Asset {
+                    browser_download_url: format!(
+                        "http://{host}/web-assets/{}/{name}",
+                        web.version
+                    ),
+                    name,
+                })
+                .collect(),
+        }
+    }));
+    axum::Json(releases).into_response()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WebManifest {
+    schema_version: u32,
+    version: &'static str,
+    commit: String,
+    channel: &'static str,
+    min_rh_version: &'static str,
+    asset: String,
+    sha256: String,
+}
+
+async fn web_download(
+    Path((version, name)): Path<(String, String)>,
+    State(assets): State<Arc<Assets>>,
+) -> Response {
+    let Some(web) = assets.web.iter().find(|web| web.version == version) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if name == "web-manifest.json" {
+        if web.broken_manifest {
+            return "{}".into_response();
+        }
+        let data = if web.bad_digest {
+            b"wrong".as_slice()
+        } else {
+            &web.archive
+        };
+        axum::Json(WebManifest {
+            schema_version: 1,
+            version: web.version,
+            commit: "a".repeat(40),
+            channel: "stable",
+            min_rh_version: web.minimum,
+            asset: web.asset_name(),
+            sha256: hex::encode(Sha256::digest(data)),
+        })
+        .into_response()
+    } else if name == web.asset_name() {
+        web.archive.clone().into_response()
     } else {
         StatusCode::NOT_FOUND.into_response()
     }
