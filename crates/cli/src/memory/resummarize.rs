@@ -145,6 +145,21 @@ pub(super) async fn run(
             } else {
                 store.status().await?
             };
+            if let Some(ConversionControl::ArmOpening { conversation }) = args.action {
+                if args.json {
+                    return Ok(Report::success(format!(
+                        "{}\n",
+                        serde_json::to_string(&ArmedOpening {
+                            conversation_id: conversation,
+                            armed: true,
+                            progress: &progress,
+                        })?
+                    )));
+                }
+                return Ok(Report::success(format!(
+                    "Opening armed for conversation {conversation}.\n"
+                )));
+            }
             if !args.watch {
                 return Ok(Report::success(format(&progress, args.json)?));
             }
@@ -160,6 +175,15 @@ pub(super) async fn run(
             }
         })
         .await
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ArmedOpening<'a> {
+    conversation_id: uuid::Uuid,
+    armed: bool,
+    #[serde(flatten)]
+    progress: &'a ConversionProgress,
 }
 
 fn write_snapshot(snapshot: &str) -> Result<(), std::io::Error> {

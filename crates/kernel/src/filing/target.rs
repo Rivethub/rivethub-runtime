@@ -70,11 +70,7 @@ impl Filable {
     #[must_use]
     pub fn of(head: &ConversationHead) -> Self {
         let key = head.session_key.as_str();
-        if head.trashed
-            || key.starts_with(SANDBOX_RUN_PREFIX)
-            || key.starts_with(HEARTBEAT_PREFIX)
-            || UnfiledChannel::from_str(&head.channel).is_ok()
-        {
+        if Self::exclusion_reason(head).is_some() {
             return Self::Never;
         }
         if let Some(task) = key.strip_prefix(TASK_PREFIX) {
@@ -92,6 +88,21 @@ impl Filable {
             return Self::Conversation;
         };
         Self::Session(session)
+    }
+
+    #[must_use]
+    pub fn exclusion_reason(head: &ConversationHead) -> Option<&'static str> {
+        if head.trashed {
+            Some("it is in the trash")
+        } else if head.session_key.starts_with(SANDBOX_RUN_PREFIX) {
+            Some("it is a sandbox run")
+        } else if head.session_key.starts_with(HEARTBEAT_PREFIX) {
+            Some("it is a heartbeat session")
+        } else if UnfiledChannel::from_str(&head.channel).is_ok() {
+            Some("it is in a test channel")
+        } else {
+            None
+        }
     }
 
     #[must_use]

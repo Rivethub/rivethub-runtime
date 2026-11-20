@@ -1,4 +1,5 @@
 use kernel::filing::Filable;
+use kernel::memory::summary_opening::ArmOpeningOutcome;
 use kernel::memory::summary_opening::OpeningTitle;
 use kernel::memory::{ConversationHead, names_session, needs_title, summary_title};
 use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
@@ -163,17 +164,20 @@ pub(crate) fn head(
     .transpose()
 }
 
-pub(crate) fn arm_historical(conn: &Connection, id: uuid::Uuid) -> Result<bool, SqliteError> {
+pub(crate) fn arm_historical(
+    conn: &Connection,
+    id: uuid::Uuid,
+) -> Result<ArmOpeningOutcome, SqliteError> {
     let id = id.to_string();
     let Some((head, supplied)) = head(conn, &id)? else {
-        return Ok(false);
+        return Ok(ArmOpeningOutcome::NotFound);
     };
-    let has_opening = load(conn, &id)?.is_some();
-    if Filable::of(&head) == Filable::Never {
-        return Ok(has_opening);
+    if let Some(reason) = Filable::exclusion_reason(&head) {
+        return Ok(ArmOpeningOutcome::CannotFile(reason));
     }
+    let has_opening = load(conn, &id)?.is_some();
     if !has_opening && !crate::summary_opening::seed_historical(conn, &id)? {
-        return Ok(false);
+        return Ok(ArmOpeningOutcome::NoRequest);
     }
     let title = !supplied && needs_title(head.title.as_deref());
     conn.execute(
@@ -184,7 +188,7 @@ pub(crate) fn arm_historical(conn: &Connection, id: uuid::Uuid) -> Result<bool, 
          params![id, title, head.session_key, kernel::filing::session_key(Some(&head.channel), &head.session_key)],
     )
     .map_err(failure)?;
-    Ok(true)
+    Ok(ArmOpeningOutcome::Armed)
 }
 
 pub(crate) fn seed(

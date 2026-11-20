@@ -933,6 +933,11 @@ async fn memory_settle_reports_the_persisted_revision() -> Result<(), Box<dyn st
 
 #[tokio::test]
 async fn resummarize_arms_one_historical_opening_once() {
+    #[derive(serde::Deserialize)]
+    struct ArmReport {
+        armed: bool,
+    }
+
     let directory = tempfile::tempdir().expect("directory");
     let database = migrated(directory.path());
     let conn = rusqlite::Connection::open(&database).unwrap();
@@ -945,25 +950,30 @@ async fn resummarize_arms_one_historical_opening_once() {
          INSERT INTO rh_session_trash (session_key, trashed_at) VALUES ('cli:trashed','2026-01-01Z');",
     ).unwrap();
     let (_home, environment) = env(&[]);
-    for id in [
-        "00000000-0000-0000-0000-000000000001",
-        "00000000-0000-0000-0000-000000000002",
-    ] {
-        let report = run(
-            &[
-                "memory",
-                "resummarize",
-                "arm-opening",
-                id,
-                "--sqlite",
-                database.to_str().unwrap(),
-                "--json",
-            ],
-            &environment,
-        )
-        .await;
-        assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
-    }
+    let arm = async |id, json| {
+        let mut args = vec![
+            "memory",
+            "resummarize",
+            "arm-opening",
+            id,
+            "--sqlite",
+            database.to_str().unwrap(),
+        ];
+        if json {
+            args.push("--json");
+        }
+        run(&args, &environment).await
+    };
+    let armed = arm("00000000-0000-0000-0000-000000000001", false).await;
+    assert_eq!(armed.exit, Exit::Ok, "{}", armed.stderr);
+    assert!(armed.stdout.contains("Opening armed"), "{}", armed.stdout);
+    let refused = arm("00000000-0000-0000-0000-000000000002", false).await;
+    assert_eq!(refused.exit, Exit::Failure);
+    assert!(
+        refused
+            .stderr
+            .contains("cannot be filed because it is in the trash")
+    );
     assert_eq!(
         scalar(
             &database,
@@ -980,20 +990,10 @@ async fn resummarize_arms_one_historical_opening_once() {
     );
     conn.execute_batch("UPDATE rh_summary_openings SET filing_armed = 0, title_armed = 0")
         .unwrap();
-    let retry = run(
-        &[
-            "memory",
-            "resummarize",
-            "arm-opening",
-            "00000000-0000-0000-0000-000000000001",
-            "--sqlite",
-            database.to_str().unwrap(),
-            "--json",
-        ],
-        &environment,
-    )
-    .await;
+    let retry = arm("00000000-0000-0000-0000-000000000001", true).await;
     assert_eq!(retry.exit, Exit::Ok, "{}", retry.stderr);
+    let result: ArmReport = serde_json::from_str(&retry.stdout).unwrap();
+    assert!(result.armed);
     assert_eq!(
         scalar(
             &database,

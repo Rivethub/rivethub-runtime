@@ -56,6 +56,31 @@ fn substantive(text: &str) -> bool {
             .is_some()
 }
 
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArmOpeningOutcome {
+    Armed,
+    NotFound,
+    CannotFile(&'static str),
+    NoRequest,
+}
+
+impl ArmOpeningOutcome {
+    pub fn require_armed(self, conversation: Uuid) -> Result<(), super::SummaryStoreError> {
+        use super::SummaryStoreError;
+
+        match self {
+            Self::Armed => Ok(()),
+            Self::NotFound => Err(SummaryStoreError::OpeningConversationNotFound { conversation }),
+            Self::CannotFile(reason) => Err(SummaryStoreError::OpeningCannotFile {
+                conversation,
+                reason,
+            }),
+            Self::NoRequest => Err(SummaryStoreError::NoOpening { conversation }),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpeningTitle {
     pub head: ConversationHead,

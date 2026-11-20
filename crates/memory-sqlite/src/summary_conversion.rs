@@ -237,13 +237,13 @@ impl SummaryConversion for SqliteStore {
         &self,
         action: ConversionControl,
     ) -> Result<ConversionProgress, SummaryStoreError> {
-        let has_opening = self.with_conn(move |conn| {
+        let arm = self.with_conn(move |conn| {
             let tx = immediate(conn)?;
             match action {
                 ConversionControl::ArmOpening { conversation } => {
-                    let has_opening = crate::title::arm_historical(&tx, conversation)?;
+                    let outcome = crate::title::arm_historical(&tx, conversation)?;
                     tx.commit().map_err(error)?;
-                    return Ok(has_opening);
+                    return Ok(Some((conversation, outcome)));
                 }
                 ConversionControl::Start { rate, include_giants } => tx.execute(
                     "UPDATE rh_summary_conversion SET enabled = 1, include_giants = ?1, rate = coalesce(?2, rate),
@@ -268,10 +268,10 @@ impl SummaryConversion for SqliteStore {
                 }
             }.map_err(error)?;
             tx.commit().map_err(error)?;
-            Ok(true)
+            Ok(None)
         }).await.map_err(store_error)?;
-        if !has_opening && let ConversionControl::ArmOpening { conversation } = action {
-            return Err(SummaryStoreError::NoOpening { conversation });
+        if let Some((conversation, outcome)) = arm {
+            outcome.require_armed(conversation)?;
         }
         self.status().await
     }

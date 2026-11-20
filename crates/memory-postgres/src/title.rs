@@ -1,4 +1,5 @@
 use kernel::filing::Filable;
+use kernel::memory::summary_opening::ArmOpeningOutcome;
 use kernel::memory::summary_opening::OpeningTitle;
 use kernel::memory::{ConversationHead, names_session, needs_title, summary_title};
 use sqlx::PgConnection;
@@ -143,7 +144,10 @@ pub(crate) async fn head(
     Ok((row.head.into(), row.title_from_capture))
 }
 
-pub(crate) async fn arm_historical(conn: &mut PgConnection, id: Uuid) -> Result<bool, Error> {
+pub(crate) async fn arm_historical(
+    conn: &mut PgConnection,
+    id: Uuid,
+) -> Result<ArmOpeningOutcome, Error> {
     let present = sqlx::query_scalar::<_, Uuid>(
         "SELECT id FROM rh_conversations WHERE id = $1 FOR NO KEY UPDATE",
     )
@@ -152,15 +156,15 @@ pub(crate) async fn arm_historical(conn: &mut PgConnection, id: Uuid) -> Result<
     .await
     .map_err(failure)?;
     if present.is_none() {
-        return Ok(false);
+        return Ok(ArmOpeningOutcome::NotFound);
     }
     let (head, supplied) = head(conn, id).await?;
-    let has_opening = load(conn, id).await?.is_some();
-    if Filable::of(&head) == Filable::Never {
-        return Ok(has_opening);
+    if let Some(reason) = Filable::exclusion_reason(&head) {
+        return Ok(ArmOpeningOutcome::CannotFile(reason));
     }
+    let has_opening = load(conn, id).await?.is_some();
     if !has_opening && !crate::summary_opening::seed_historical(conn, id).await? {
-        return Ok(false);
+        return Ok(ArmOpeningOutcome::NoRequest);
     }
     let title = !supplied && needs_title(head.title.as_deref());
     sqlx::query(
@@ -176,7 +180,7 @@ pub(crate) async fn arm_historical(conn: &mut PgConnection, id: Uuid) -> Result<
     .execute(conn)
     .await
     .map_err(failure)?;
-    Ok(true)
+    Ok(ArmOpeningOutcome::Armed)
 }
 
 pub(crate) async fn seed(

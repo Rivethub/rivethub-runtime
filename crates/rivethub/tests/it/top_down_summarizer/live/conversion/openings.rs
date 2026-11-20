@@ -28,6 +28,53 @@ COPY public.ros_messages (id, conversation_id, agent, channel, role, content, cr
     )
 }
 
+const UNFILABLE: Uuid = Uuid::from_u128(33);
+const MISSING: Uuid = Uuid::from_u128(34);
+
+async fn verify_arm_diagnostics(store: &impl SummaryStore) -> TestResult {
+    let capability = store.summary_conversion().ok_or("conversion support")?;
+    for _ in 0..2 {
+        for (conversation, expected) in [
+            (UNFILABLE, "cannot be filed because it is a sandbox run"),
+            (NO_REQUEST, "has no qualifying user request"),
+            (MISSING, "was not found"),
+        ] {
+            let Err(error) = capability
+                .control(ConversionControl::ArmOpening { conversation })
+                .await
+            else {
+                return Err(format!("opening should be refused for {conversation}").into());
+            };
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+        testkit::settlement::expire(store, Timestamp::now(), 2).await?;
+    }
+    let opening = store
+        .opening_title(UNFILABLE)
+        .await?
+        .ok_or("dormant sandbox opening")?;
+    assert!(!opening.armed);
+    assert_eq!(store.undelivered_openings().await?, [] as [Job; 0]);
+    Ok(())
+}
+
+fn sandbox_dump() -> String {
+    format!(
+        "COPY public.ros_conversations (id, session_key, agent, channel, created_at, updated_at, owner_user_id) FROM stdin;
+{UNFILABLE}\tgrokbot-run-sand-subagent-fixture\tfixture\tcli\t2024-01-01T00:00:00Z\t2024-01-01T00:00:00Z\talice
+{NO_REQUEST}\tcodex:assistant-only-fixture\tfixture\tcli\t2024-01-01T00:00:00Z\t2024-01-01T00:00:00Z\talice
+\\.
+COPY public.ros_messages (id, conversation_id, agent, channel, role, content, created_at, owner_user_id) FROM stdin;
+{}\t{UNFILABLE}\tfixture\tcli\tuser\tRecord the copper tags\t2024-01-01T00:01:00Z\talice
+{}\t{NO_REQUEST}\tfixture\tcli\tassistant\tAn assistant-only note\t2024-01-01T00:01:00Z\talice
+\\.
+-- PostgreSQL database dump complete
+",
+        Uuid::from_u128(106),
+        Uuid::from_u128(107),
+    )
+}
+
 async fn exercise(store: &impl SummaryStore, jobs: &dyn JobQueue) -> TestResult {
     assert!(store.opening_title(IMPORTED).await?.is_none());
     testkit::settlement::expire(store, Timestamp::now(), 2).await?;
@@ -76,7 +123,7 @@ async fn exercise(store: &impl SummaryStore, jobs: &dyn JobQueue) -> TestResult 
     assert!(
         missing
             .to_string()
-            .contains("no opening from a user request"),
+            .contains("has no qualifying user request"),
         "{missing}"
     );
     Ok(())
@@ -127,4 +174,34 @@ async fn top_down_conversion_imported_opening_sqlite() -> TestResult {
         .import_pg_dump(archive, CancellationToken::new())
         .await?;
     exercise(&store, &store).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_arm_opening_diagnostics_postgres(pool: sqlx::PgPool) -> TestResult {
+    let scoped = memory_postgres::scoped(sqlx::postgres::PgPoolOptions::new())
+        .connect_with(pool.connect_options().as_ref().clone())
+        .await?;
+    let store = memory_postgres::PostgresMemory::new(scoped);
+    Scope::Maintenance
+        .run(async {
+            store
+                .import_memory_dump(&sandbox_dump(), false, &CancellationToken::new())
+                .await?;
+            verify_arm_diagnostics(&store).await
+        })
+        .await
+}
+
+#[tokio::test]
+async fn top_down_arm_opening_diagnostics_sqlite() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("s.sqlite");
+    migrate::sqlite(&path)?;
+    let store = memory_sqlite::SqliteStore::open(&path)?;
+    let archive = dir.path().join("dump.sql");
+    std::fs::write(&archive, sandbox_dump())?;
+    store
+        .import_pg_dump(archive, CancellationToken::new())
+        .await?;
+    verify_arm_diagnostics(&store).await
 }
