@@ -6,10 +6,10 @@ use std::sync::atomic::AtomicBool;
 use agent_client_protocol::Agent;
 use agent_client_protocol::ByteStreams;
 use agent_client_protocol::Client;
-use agent_client_protocol::ConnectionTo;
 use agent_client_protocol::JsonRpcRequest;
 use agent_client_protocol::schema::ProtocolVersion;
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::v1::ConnectionTo;
+use agent_client_protocol::v1::schema as acp;
 use kernel::harness::SessionEvent;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -37,12 +37,12 @@ pub(crate) enum SessionCommand {
     NewSession {
         cwd: PathBuf,
         meta: Option<acp::Meta>,
-        reply: oneshot::Sender<Result<crate::context::OpenedSession, acp::Error>>,
+        reply: oneshot::Sender<Result<crate::context::OpenedSession, agent_client_protocol::Error>>,
     },
     Prompt {
         acp_session: acp::SessionId,
         content: Vec<acp::ContentBlock>,
-        reply: oneshot::Sender<Result<acp::PromptResponse, acp::Error>>,
+        reply: oneshot::Sender<Result<acp::PromptResponse, agent_client_protocol::Error>>,
     },
     Cancel {
         acp_session: acp::SessionId,
@@ -51,19 +51,21 @@ pub(crate) enum SessionCommand {
         acp_session: acp::SessionId,
         config_id: acp::SessionConfigId,
         value: acp::SessionConfigOptionValue,
-        reply: oneshot::Sender<Result<acp::SetSessionConfigOptionResponse, acp::Error>>,
+        reply: oneshot::Sender<
+            Result<acp::SetSessionConfigOptionResponse, agent_client_protocol::Error>,
+        >,
     },
     Delete {
         acp_session: acp::SessionId,
         deletion: crate::discovery::Deletion,
-        reply: oneshot::Sender<Result<(), acp::Error>>,
+        reply: oneshot::Sender<Result<(), agent_client_protocol::Error>>,
     },
 }
 
 #[derive(Debug)]
 pub(crate) enum RequestFailure {
     Closed,
-    Protocol(acp::Error),
+    Protocol(agent_client_protocol::Error),
 }
 
 pub(crate) fn port_failure(failure: RequestFailure, method: &'static str) -> AcpError {
@@ -144,7 +146,7 @@ impl Connecting {
 
 pub(crate) async fn request<R>(
     commands: &mpsc::Sender<SessionCommand>,
-    build: impl FnOnce(oneshot::Sender<Result<R, acp::Error>>) -> SessionCommand,
+    build: impl FnOnce(oneshot::Sender<Result<R, agent_client_protocol::Error>>) -> SessionCommand,
 ) -> Result<R, RequestFailure> {
     let (reply, answer) = oneshot::channel();
     commands
@@ -255,11 +257,11 @@ async fn serve(
     stdout: tokio::process::ChildStdout,
     client: crate::client::SessionClient,
     commands_rx: mpsc::Receiver<SessionCommand>,
-    ready_tx: oneshot::Sender<Result<acp::InitializeResponse, acp::Error>>,
-) -> Result<(), acp::Error> {
+    ready_tx: oneshot::Sender<Result<acp::InitializeResponse, agent_client_protocol::Error>>,
+) -> Result<(), agent_client_protocol::Error> {
     let session_client = client.clone();
     Client
-        .builder()
+        .v1()
         .name("rivethub")
         .on_receive_notification(
             async move |notification: acp::SessionNotification, _cx| {
@@ -309,8 +311,8 @@ fn initialize_request() -> acp::InitializeRequest {
 async fn drive(
     connection: ConnectionTo<Agent>,
     commands_rx: mpsc::Receiver<SessionCommand>,
-    ready_tx: oneshot::Sender<Result<acp::InitializeResponse, acp::Error>>,
-) -> Result<(), acp::Error> {
+    ready_tx: oneshot::Sender<Result<acp::InitializeResponse, agent_client_protocol::Error>>,
+) -> Result<(), agent_client_protocol::Error> {
     let initialized = connection
         .send_request(initialize_request())
         .block_task()
@@ -397,7 +399,7 @@ async fn new_session(
     connection: &ConnectionTo<Agent>,
     cwd: PathBuf,
     meta: Option<acp::Meta>,
-) -> Result<crate::context::OpenedSession, acp::Error> {
+) -> Result<crate::context::OpenedSession, agent_client_protocol::Error> {
     connection
         .send_request(crate::context::OpenSession {
             request: acp::NewSessionRequest::new(cwd).meta(meta),
@@ -411,7 +413,7 @@ async fn set_config(
     acp_session: acp::SessionId,
     config_id: acp::SessionConfigId,
     value: acp::SessionConfigOptionValue,
-) -> Result<acp::SetSessionConfigOptionResponse, acp::Error> {
+) -> Result<acp::SetSessionConfigOptionResponse, agent_client_protocol::Error> {
     connection
         .send_request(acp::SetSessionConfigOptionRequest::new(
             acp_session,
@@ -425,7 +427,7 @@ async fn set_config(
 fn spawn_request<Request: JsonRpcRequest>(
     connection: &ConnectionTo<Agent>,
     request: Request,
-    reply: oneshot::Sender<Result<Request::Response, acp::Error>>,
+    reply: oneshot::Sender<Result<Request::Response, agent_client_protocol::Error>>,
 ) {
     let request_connection = connection.clone();
     if let Err(error) = connection.spawn(async move {

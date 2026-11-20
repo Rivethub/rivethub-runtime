@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::v1::schema as acp;
 use kernel::harness::Command;
 use kernel::harness::PlanEntry;
 use kernel::harness::PlanPriority;

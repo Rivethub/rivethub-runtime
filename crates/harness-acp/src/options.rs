@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::v1::schema as acp;
 use kernel::harness::SessionOption;
 use kernel::harness::SessionSwitches;
 use parking_lot::Mutex;
@@ -172,7 +172,7 @@ fn select_options(
 #[cfg(test)]
 mod tests {
     use super::select;
-    use agent_client_protocol::schema::v1 as acp;
+    use agent_client_protocol::v1::schema as acp;
     use kernel::harness::SessionOption;
     use wire::stream::ThinkingLevel;
 

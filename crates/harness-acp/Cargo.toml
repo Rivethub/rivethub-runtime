@@ -19,7 +19,7 @@ serde.workspace = true
 serde_json.workspace = true
 strum.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["fs", "io-std", "io-util", "process", "rt", "rt-multi-thread", "sync"] }
+tokio = { workspace = true, features = ["fs", "io-std", "io-util", "macros", "process", "rt", "rt-multi-thread", "sync", "time"] }
 tokio-util = { workspace = true, features = ["compat"] }
 tracing.workspace = true
 uuid.workspace = true
