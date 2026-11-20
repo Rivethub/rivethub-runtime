@@ -259,17 +259,19 @@ async fn execute(
 mod tests {
 
     use super::{ScheduleTime, parser};
-    use croner::errors::CronError;
     use jiff::ZonedDateTime;
 
     #[test]
-    fn numeric_sunday_with_last_modifier_reaches_the_search_limit()
+    fn numeric_sunday_with_last_modifier_finds_the_last_sunday_of_the_month()
     -> Result<(), Box<dyn std::error::Error>> {
         let start = ScheduleTime("2024-09-30T20:00:00-04:00[America/New_York]".parse()?);
-        let result = parser()
+        let next_at = parser()
             .parse("0 0 * * 7L")?
-            .find_next_occurrence(&start, false);
-        assert!(matches!(result, Err(CronError::TimeSearchLimitExceeded)));
+            .find_next_occurrence(&start, false)?;
+        assert_eq!(
+            next_at.0.to_string(),
+            "2024-10-27T00:00:00-04:00[America/New_York]"
+        );
         Ok(())
     }
 
