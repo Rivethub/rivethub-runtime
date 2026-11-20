@@ -20,7 +20,7 @@ agent-client-protocol = "3.3"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["ws", "macros"] }
 aws-lc-rs = { version = "1", default-features = false, features = ["aws-lc-sys", "alloc"] }
-base64 = "0.22"
+base64 = "0.23"
 bytes = "1"
 capture = { path = "crates/capture", version = "0.8.3" }
 cargo_metadata = "0.23"
@@ -40,7 +40,7 @@ harness-acp = { path = "crates/harness-acp", version = "0.8.3" }
 governor = { version = "0.10", default-features = false, features = ["std", "dashmap"] }
 headers = "0.4"
 hex = "0.4"
-hmac = "0.12"
+hmac = "0.13"
 http-body = { version = "1", default-features = false }
 httparse = "1"
 hyper = { version = "1", default-features = false }
@@ -81,14 +81,14 @@ serde_path_to_error = "0.1"
 serde_urlencoded = "0.7"
 serde_with = { version = "=3.24.0", default-features = false, features = ["macros", "schemars_1"] }
 serde_yaml_ng = "0.10"
-sha2 = "0.10"
+sha2 = "0.11"
 shlex = "2"
 similar = "3"
 similar-asserts = "2"
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-aws-lc-rs", "postgres", "uuid", "json", "migrate"] }
 strum = { version = "0.27", features = ["derive"] }
 subtle = "2"
-syn = { version = "2", features = ["full", "visit"] }
+syn = { version = "3", features = ["full", "visit"] }
 tar = { version = "0.4", default-features = false }
 
 tempfile = "3"

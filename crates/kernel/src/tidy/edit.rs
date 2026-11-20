@@ -291,7 +291,7 @@ fn member_digest(members: &[Target]) -> String {
         })
         .collect();
     let joined: Vec<&str> = ids.iter().map(String::as_str).collect();
-    format!("{:x}", Sha256::digest(joined.join("\n").as_bytes()))
+    hex::encode(Sha256::digest(joined.join("\n").as_bytes()))
 }
 
 fn sessions(members: &[Target]) -> Vec<SessionId> {

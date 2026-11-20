@@ -5,6 +5,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use hmac::Hmac;
+use hmac::KeyInit as _;
 use hmac::Mac as _;
 use serde::Deserialize;
 use serde::Serialize;
