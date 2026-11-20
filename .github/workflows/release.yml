@@ -1,8 +1,8 @@
 name: Release
 
 on:
+  workflow_dispatch: {}
   push:
-    branches: [main]
     tags: ['v[0-9]*']
 
 permissions:
@@ -38,6 +38,10 @@ jobs:
               prerelease=true
             fi
           else
+            if [[ "$GITHUB_REF_NAME" != main ]]; then
+              echo "::error::a release is cut from main, not from $GITHUB_REF_NAME"
+              exit 1
+            fi
             latest=$(git ls-remote --tags --refs origin 'v*' | awk '{print $2}' \
               | sed -n 's|^refs/tags/v\([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\)$|\1|p' | sort -V | tail -n 1)
             version=$crate_version

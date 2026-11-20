@@ -74,8 +74,19 @@ cargo xtask check          # what CI runs: fmt, clippy, the project lints, cargo
 cargo xtask install-hooks  # pre-commit and commit-msg hooks
 ```
 
-The repository is Rust only and holds code, not commentary: no comments, and no Markdown other than this file. What a
+The repository is Rust only and holds code, not commentary: no comments, and no Markdown other than this file and `SECURITY.md`. What a
 change does and why belongs in its commit message and pull request.
+
+## Release
+
+A merge to `main` publishes nothing. A release is cut on purpose, from `main`:
+
+```sh
+gh workflow run Release --ref main   # tag the head of main as the next patch version and publish it as a pre-release
+gh workflow run Promote              # mark the newest pre-release as the stable release
+```
+
+Pushing a tag `vX.Y.Z` that matches the `cli` crate version publishes exactly that version instead.
 
 ## License
 
