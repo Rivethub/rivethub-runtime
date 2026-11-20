@@ -48,6 +48,56 @@ Historical summary conversion waits five minutes before a second pass after exha
 This gives model contention time to clear on a short queue. Set
 `RIVETHUB_SUMMARY_CONVERSION_SECOND_PASS_DELAY_MINUTES` on the worker to choose a delay from 1 to 1440 minutes.
 
+## Run rh inside another application
+
+A host application that starts its own node and shows the web app reads the node's state from these commands. Each
+prints one JSON document on stdout. The field names are stable: a release may add fields and does not rename or remove
+one.
+
+| Command | Prints | Exit |
+|---|---|---|
+| `rh local --ensure --json` | `outcome` (`started`, `already_running` or `failed`), `origin`, `port`, `pid`, `node`, `version` | 0, or 1 with `reason` `port_in_use`, `not_ready` or `error` |
+| `rh status --json` | `running`, `version`, `cli_version`, `origin`, `health_error`, `web`, `tls` | 0 when the document was printed, running or not; 1 when the configuration cannot be read |
+| `rh open --json` | `outcome` `minted` with `origin`, `url`, `code`, `expires_at`; or `outcome` `failed` with `reason` and `error` | 0; 12 when the node runs and has no web app (`reason` `no_web_app`); 1 otherwise (`not_running` or `error`) |
+| `rh tls fingerprint --json` | `cert`, `ca`, `sha256`, `spki_sha256`, `not_after` | 0; 1 when the node serves plain HTTP |
+| `rh auth token-path --json` | `path` of the local owner token | 0 |
+
+`rh open` without `--json` uses the same exit codes.
+
+**Home and configuration.** Set `RIVETHUB_HOME` to an absolute directory to give the node a home of its own. The
+state directory is `RIVETHUB_STATE_DIR` when set, then `RIVETHUB_HOME`, then `~/.rivethub`. It holds the database, the
+owner token, the logs and the web app. The configuration file is the first of these that exists: the path in
+`RIVETHUB_CONFIG`, then `config.yaml` or `config.yml` in the home, then `config.yaml` in the working directory.
+`rh local` writes a standalone `config.yaml` into the home when there is none. Every command reads the same home, so
+run them all with the same `RIVETHUB_HOME`.
+
+`health_error` is `null` when the node answered its health check, and otherwise says why it did not.
+
+**Origin.** The origin is the scheme, `gateway.host` and `gateway.port` of the configuration, and `rh status --json`
+prints it whether or not the node runs. `rh local --port <n>` sets the port. The node never moves to another port:
+when the port is taken, `rh local --ensure` fails with `port_in_use`. The origin changes only when the configuration
+or `--port` changes, so compare `origin` with the one you stored before you reuse a browser session.
+
+**Web app.** The node serves the directory in `RIVETHUB_STATIC_DIR` or `gateway.static_dir` when either is set, and
+the environment variable wins. Otherwise it serves `web/current` in the state directory, a link to `web/<version>`,
+which holds `index.html` and the `web-manifest.json` of that build. Only `rh update` writes that directory.
+`rh update --web-only` finds a build on GitHub. `rh update --web-only --from <archive> --sha256 <hex>` installs an
+archive you already hold and makes no network request. It reads `web-manifest.json` from beside the archive, or from
+`--manifest`, and refuses an archive whose SHA-256 differs from `--sha256` or a build that needs a newer `rh`. In
+`rh status --json`, `web.source` is `managed`, `explicit` or `none`, and `web.compatible` says whether this `rh` is at
+least the build's `minRhVersion`. It is `null` for an explicit directory.
+
+**Signing in.** `url` from `rh open --json` signs a browser in once, within `expires_at`. To land on a page other
+than the start page, build the URL as `<origin>/login?next=<path>#code=<code>` with the path percent-encoded. The login
+page follows `next` only when it is a path on the same origin.
+
+**TLS.** A node bound to loopback serves plain HTTP unless `gateway.tls_cert` and `gateway.tls_key` (or
+`RIVETHUB_TLS_CERT` and `RIVETHUB_TLS_KEY`) name a certificate, and `tls` in `rh status --json` is then `null`. With a
+certificate, `sha256` is the SHA-256 of the leaf certificate and `spki_sha256` is the SHA-256 of its public key. The
+node reads the certificate file when it starts. A replaced file changes what these commands print at once and what
+the node serves after its next restart. Read the fingerprint again after each restart of the node and after
+`not_after`. A renewal that keeps the key changes `sha256` and keeps `spki_sha256`.
+
 ## Layout
 
 | Path | What it holds |
