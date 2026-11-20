@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use jiff::SignedDuration;
 use jiff::Timestamp;
 use kernel::memory::summary_backend::SummaryArtifact;
@@ -206,7 +208,9 @@ fn read_status(conn: &Connection) -> Result<ConversionProgress, SqliteError> {
         progress.delivery_rows_waiting_for_release,
         progress.delivery_rows_not_covered,
     ) = conn
-        .query_row(DELIVERY_BACKLOG, [], |row| Ok((row.get(0)?, row.get(1)?)))
+        .query_row(DELIVERY_BACKLOG.as_str(), [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
         .map_err(error)?;
     progress.current = conn
         .query_row(
@@ -270,7 +274,7 @@ impl SummaryConversion for SqliteStore {
                 ),
                 ConversionControl::Release { conversation } => {
                     let id = conversation.to_string();
-                    tx.execute(RELEASE, [&id]).map_err(error)?;
+                    tx.execute(RELEASE.as_str(), [&id]).map_err(error)?;
                     tx.execute(COMPLETE_EMPTY_DELIVERIES, params![id, WIKI_PIPELINE_VERSION, ENTITY_PIPELINE_VERSION])
                 }
             }.map_err(error)?;
@@ -531,7 +535,12 @@ impl SummaryConversion for SqliteStore {
     }
 }
 
-const RELEASE: &str = "WITH part_order AS (
+const RELEASE_ANCHOR_ELIGIBLE: &str = "(s.kind = 'part' OR (s.kind = 'session' AND NOT EXISTS (
+    SELECT 1 FROM ros_summaries part WHERE part.parent_id = s.id AND part.kind = 'part')))";
+
+static RELEASE: LazyLock<String> = LazyLock::new(|| {
+    format!(
+    "WITH part_order AS (
     SELECT part.id, max(root_link.ordinal) AS last_position, min(root_link.ordinal) AS first_position
     FROM ros_summaries part JOIN ros_summary_sources link ON link.summary_id = part.id
     JOIN ros_summary_sources root_link ON root_link.summary_id = part.parent_id
@@ -544,13 +553,13 @@ const RELEASE: &str = "WITH part_order AS (
     ) AS rank
     FROM ros_summaries s JOIN ros_summary_sources src ON src.summary_id = s.id
     LEFT JOIN part_order p ON p.id = s.id
-    WHERE s.conversation_id = ?1 AND s.kind IN ('session','part')
-      AND (s.kind = 'part' OR NOT EXISTS (SELECT 1 FROM ros_summaries part
-           WHERE part.parent_id = s.id AND part.kind = 'part'))
+    WHERE s.conversation_id = ?1 AND {RELEASE_ANCHOR_ELIGIBLE}
 )
 UPDATE ros_summary_deliveries AS d SET anchor_id = a.id, historical_backlog = 0
 FROM anchors a WHERE d.conversation_id = ?1 AND d.message_id = a.message_id
-  AND d.historical_backlog AND a.rank = 1";
+  AND d.historical_backlog AND a.rank = 1"
+    )
+});
 
 const COMPLETE_EMPTY_DELIVERIES: &str = "UPDATE ros_summary_deliveries AS d
 SET completed_version = CASE d.consumer WHEN 'entity' THEN ?3 ELSE ?2 END, historical_backlog = 0
@@ -561,7 +570,9 @@ WHERE d.conversation_id = ?1 AND d.historical_backlog
   AND (EXISTS (SELECT 1 FROM ros_summaries WHERE conversation_id = ?1 AND kind = 'session')
        OR EXISTS (SELECT 1 FROM rh_summary_conversion_items WHERE conversation_id = ?1 AND state = 'complete'))";
 
-const DELIVERY_BACKLOG: &str = "SELECT count(*) - count(*) FILTER (WHERE not_covered),
+static DELIVERY_BACKLOG: LazyLock<String> = LazyLock::new(|| {
+    format!(
+    "SELECT count(*) - count(*) FILTER (WHERE not_covered),
        count(*) FILTER (WHERE not_covered)
 FROM (
     SELECT (
@@ -571,9 +582,11 @@ FROM (
         AND NOT EXISTS (
             SELECT 1 FROM ros_summary_sources src JOIN ros_summaries s ON s.id = src.summary_id
             WHERE src.message_id = d.message_id AND s.conversation_id = d.conversation_id
-              AND s.kind IN ('session', 'part')
+              AND {RELEASE_ANCHOR_ELIGIBLE}
         )
     ) AS not_covered
     FROM ros_summary_deliveries d JOIN ros_messages m ON m.id = d.message_id AND m.conversation_id = d.conversation_id
     WHERE d.historical_backlog
-) backlog";
+) backlog"
+    )
+});

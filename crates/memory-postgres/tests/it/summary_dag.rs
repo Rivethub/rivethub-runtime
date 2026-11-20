@@ -319,6 +319,36 @@ async fn top_down_archive_resolves_ranges_and_keeps_filtered_copy_closed(
     Ok(())
 }
 
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn split_session_source_without_part_is_not_covered(pool: PgPool) -> TestResult {
+    use kernel::memory::summary_conversion::{ConversionControl, SummaryConversion};
+    use kernel::tenancy::Scope;
+    use tokio_util::sync::CancellationToken;
+
+    let fixture = std::fs::read_to_string(testkit::recording("summary-archive/top-down.txt"))?;
+    let store = PostgresMemory::new(pool.clone());
+    store
+        .import_memory_dump(&fixture, false, &CancellationToken::new())
+        .await?;
+    let deliveries = "INSERT INTO rh_summary_deliveries
+        (conversation_id, consumer, message_id, historical_backlog) VALUES
+        ('00000000-0000-4000-8000-000000000001', 'wiki', '00000000-0000-4000-8000-000000000101', true),
+        ('00000000-0000-4000-8000-000000000001', 'wiki', '00000000-0000-4000-8000-000000000102', true)";
+    sqlx::query(deliveries).execute(&pool).await?;
+
+    let before = Scope::Maintenance.run(store.status()).await?;
+    assert_eq!(before.delivery_rows_not_covered, 1);
+    assert_eq!(before.delivery_rows_waiting_for_release, 1);
+
+    let conversation = uuid::Uuid::parse_str("00000000-0000-4000-8000-000000000001")?;
+    let after = Scope::Maintenance
+        .run(store.control(ConversionControl::Release { conversation }))
+        .await?;
+    assert_eq!(after.delivery_rows_not_covered, 1);
+    assert_eq!(after.delivery_rows_waiting_for_release, 0);
+    Ok(())
+}
+
 async fn assert_mixed_tree(
     memory: &PostgresMemory,
     owner: &SummaryOwner,

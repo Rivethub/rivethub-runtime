@@ -364,6 +364,36 @@ async fn top_down_archive_keeps_the_full_filtered_tree_without_postgres_passages
     Ok(())
 }
 
+#[tokio::test]
+async fn split_session_source_without_part_is_not_covered() -> TestResult {
+    use kernel::memory::summary_conversion::{ConversionControl, SummaryConversion};
+    use tokio_util::sync::CancellationToken;
+
+    let source = fresh_store()?;
+    let store = &source.store;
+    let fixture = testkit::recording("summary-archive/top-down.txt");
+    store
+        .import_pg_dump(fixture, CancellationToken::new())
+        .await?;
+    let deliveries = "INSERT INTO ros_summary_deliveries
+        (conversation_id, consumer, message_id, historical_backlog) VALUES
+        ('00000000-0000-4000-8000-000000000001', 'wiki', '00000000-0000-4000-8000-000000000101', true),
+        ('00000000-0000-4000-8000-000000000001', 'wiki', '00000000-0000-4000-8000-000000000102', true)";
+    execute(store, deliveries).await?;
+
+    let before = store.status().await?;
+    assert_eq!(before.delivery_rows_not_covered, 1);
+    assert_eq!(before.delivery_rows_waiting_for_release, 1);
+
+    let conversation = uuid::Uuid::parse_str("00000000-0000-4000-8000-000000000001")?;
+    let after = store
+        .control(ConversionControl::Release { conversation })
+        .await?;
+    assert_eq!(after.delivery_rows_not_covered, 1);
+    assert_eq!(after.delivery_rows_waiting_for_release, 0);
+    Ok(())
+}
+
 async fn assert_mixed_tree(
     store: &SqliteStore,
     owner: &SummaryOwner,
