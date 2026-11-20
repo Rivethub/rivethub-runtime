@@ -7,6 +7,7 @@ pub mod db;
 pub mod doctor;
 mod error;
 mod exit;
+mod facts;
 mod harness;
 mod listener;
 mod local;
@@ -118,11 +119,7 @@ pub async fn dispatch(cli: Cli, env: &Environment, shutdown: &CancellationToken)
     match result {
         Ok(dispatch) => dispatch,
         Err(error) => {
-            let exit = if let Error::State(config::StateError::AlreadyRunning { .. }) = &error {
-                Exit::AlreadyRunning
-            } else {
-                Exit::Failure
-            };
+            let exit = error.exit();
             Dispatch::Complete(Report::error(&error, exit))
         }
     }
@@ -155,10 +152,8 @@ async fn command_dispatch(
                 wait_seconds: wait,
             };
             if ensure {
-                return Ok(Dispatch::Complete(local::render(
-                    local::ensure(env, request).await,
-                    json,
-                )));
+                let ensured = local::ensure(env, request).await;
+                return Ok(Dispatch::Complete(local::render(ensured, json)));
             }
             return run_local(env, request, shutdown).await;
         }
@@ -181,8 +176,9 @@ async fn command_dispatch(
         Command::Config { command } => configuration::run(command, env).await,
         Command::Doctor { json } => doctor::run(env, json).await,
         Command::Auth { command } => auth::run(command, env).await,
-        Command::Open { no_browser } => open::run(env, no_browser).await,
-        Command::Status => Ok(status::run(env).await),
+        Command::Open { no_browser, json } => open::run(env, no_browser, json).await,
+        Command::Status { json } => facts::status(env, json).await,
+        Command::Tls { command } => facts::tls_command(command, env).await,
         Command::Stop => process::stop(env).await,
         Command::Service { command } => service::Scope::for_uid(nix::unistd::geteuid().as_raw())
             .run(command, env, shutdown)

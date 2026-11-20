@@ -11,8 +11,10 @@ use url::Url;
 
 use super::{Channel, UpdateError, files, release};
 
+mod active;
 mod local;
 
+pub use active::{Active, active};
 pub(super) use local::Local;
 
 pub(super) const RELEASES: &str = "https://api.github.com/repos/Rivethub/rivethub-app/releases";

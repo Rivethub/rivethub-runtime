@@ -22,6 +22,7 @@ use crate::{Error, Exit, Report, configuration, db};
 pub use error::UpdateError;
 use node::Restart;
 use release::Staged;
+pub use web::{Active as ActiveWeb, active as active_web};
 
 #[derive(
     Debug,

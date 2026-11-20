@@ -129,6 +129,11 @@ async fn web_line(env: &Environment, config: &Config) -> String {
     "Web: none\n".to_owned()
 }
 
+pub(crate) async fn probe(env: &Environment, config: &Config) -> Result<HealthzResponse, Error> {
+    let Endpoint { url, client } = endpoint(env, config).await?;
+    Ok(fetch(&client, url).await?.response)
+}
+
 async fn fetch(client: &reqwest::Client, url: url::Url) -> Result<Health, Error> {
     Ok(client
         .get(url)
@@ -224,14 +229,17 @@ pub(crate) async fn gateway_as(
     gateway_with(env, config, timeout, Redirects::Follow, owner_uid).await
 }
 
-struct GatewayTarget {
-    source: BindSource,
-    url: url::Url,
-    ca: Option<std::path::PathBuf>,
+pub(crate) struct GatewayTarget {
+    pub(crate) source: BindSource,
+    pub(crate) url: url::Url,
+    pub(crate) ca: Option<std::path::PathBuf>,
     pin: Option<(String, SocketAddr)>,
 }
 
-async fn gateway_target(env: &Environment, config: &Config) -> Result<GatewayTarget, Error> {
+pub(crate) async fn gateway_target(
+    env: &Environment,
+    config: &Config,
+) -> Result<GatewayTarget, Error> {
     let hostname = host_name()?;
     let node = config::resolve_node_name(config, env, &hostname)?;
     let section = config.gateway.clone();

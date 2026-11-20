@@ -129,7 +129,7 @@ async fn open_on_a_node_with_no_web_app_says_so_and_prints_no_link() -> TestResu
         &format!("gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
     );
     let report = run(&["open", "--no-browser"], &env).await;
-    assert_eq!(report.exit, Exit::Failure, "{}", report.stderr);
+    assert_eq!(report.exit, Exit::NoWebApp, "{}", report.stderr);
     assert_eq!(report.stdout, "");
     assert!(
         !report.stdout.contains("http") && !report.stderr.contains("http"),

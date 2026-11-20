@@ -81,6 +81,10 @@ pub enum Error {
         "This node is running, and it has no web app installed.\nAgents read memory over MCP. The app is in preview."
     )]
     NoWebApp,
+    #[error("the gateway minted a login code with a lifetime that is not a time")]
+    LoginCodeExpiry,
+    #[error("this node serves plain HTTP at {origin}, so it has no certificate to pin")]
+    NoTls { origin: String },
     #[error("{NO_MODEL_NOTE}")]
     NoModel,
     #[error("invalid gateway URL: {0}")]
@@ -337,4 +341,16 @@ pub enum Error {
         path: String,
         source: std::io::Error,
     },
+}
+
+impl Error {
+    pub(crate) fn exit(&self) -> crate::Exit {
+        if matches!(self, Self::State(config::StateError::AlreadyRunning { .. })) {
+            crate::Exit::AlreadyRunning
+        } else if matches!(self, Self::NoWebApp) {
+            crate::Exit::NoWebApp
+        } else {
+            crate::Exit::Failure
+        }
+    }
 }

@@ -9,6 +9,7 @@ mod capture_hook;
 mod cleanup_guard;
 mod contract;
 mod db;
+mod facts;
 mod harness_connect;
 mod local;
 mod local_config;
