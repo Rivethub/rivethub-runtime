@@ -12,7 +12,7 @@ use super::update_support::{
 };
 
 #[derive(Clone, Copy)]
-enum Contents {
+pub(super) enum Contents {
     Site,
     MissingIndex,
     Link,
@@ -20,7 +20,11 @@ enum Contents {
     Oversize,
 }
 
-fn build(version: &'static str, minimum: &'static str, contents: Contents) -> Result<WebRelease> {
+pub(super) fn build(
+    version: &'static str,
+    minimum: &'static str,
+    contents: Contents,
+) -> Result<WebRelease> {
     let mut tar = tar::Builder::new(flate2::write::GzEncoder::new(
         Vec::new(),
         flate2::Compression::default(),
@@ -68,11 +72,11 @@ fn build(version: &'static str, minimum: &'static str, contents: Contents) -> Re
     })
 }
 
-fn web_root(fixture: &Fixture) -> PathBuf {
+pub(super) fn web_root(fixture: &Fixture) -> PathBuf {
     fixture.home.path().join(".rivethub/web")
 }
 
-fn assert_active(fixture: &Fixture, version: &str) -> Result {
+pub(super) fn assert_active(fixture: &Fixture, version: &str) -> Result {
     let current = web_root(fixture).join("current");
     assert_eq!(fs::read_link(&current)?, Path::new(version));
     assert_eq!(fs::read_to_string(current.join("index.html"))?, version);

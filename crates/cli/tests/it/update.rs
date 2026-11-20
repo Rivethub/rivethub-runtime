@@ -5,6 +5,8 @@
 
 #[path = "update/cloud.rs"]
 mod cloud;
+#[path = "update/local.rs"]
+mod local;
 #[path = "update/source.rs"]
 mod source;
 #[path = "update_support/mod.rs"]

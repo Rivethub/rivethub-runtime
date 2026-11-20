@@ -60,6 +60,14 @@ pub enum UpdateError {
         "web {0} is incompatible with rh {1} on the {2} channel and no replacement was published"
     )]
     WebCompatibility(semver::Version, semver::Version, super::Channel),
+    #[error("--from needs --sha256 with the archive's SHA-256 as 64 hex characters")]
+    WebPin,
+    #[error("web {} needs rh {} or newer and this is rh {}", .0.web, .0.needs, .0.runtime)]
+    WebNeedsRuntime(Box<NeedsRuntime>),
+    #[error(
+        "an explicit static_dir is configured, so an installed web app would not be served; unset it to install with --from"
+    )]
+    WebExplicit,
     #[error("release checksum manifest is invalid")]
     Manifest,
     #[error("SHA-256 verification failed for {0}")]
@@ -92,4 +100,11 @@ pub enum UpdateError {
         "this install is not signed in to rivethub.cloud, so it cannot take updates from there. Sign in from the app (Settings > Account), or run rh update without --source to take the release from GitHub, which needs no account"
     )]
     NotSignedIn,
+}
+
+#[derive(Debug)]
+pub struct NeedsRuntime {
+    pub web: semver::Version,
+    pub needs: semver::Version,
+    pub runtime: semver::Version,
 }
