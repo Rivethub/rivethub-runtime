@@ -187,6 +187,7 @@ async fn conversion(
     store: &(impl SummaryStore + MemoryStore + ModelCallStore),
     historical: Uuid,
     old: Uuid,
+    elapse_second_pass_delay: impl AsyncFn(Uuid) -> TestResult,
 ) -> TestResult {
     let provider = Provider::new();
     let permits = Semaphore::new(3);
@@ -214,7 +215,15 @@ async fn conversion(
         preemption_charge > 0,
         "the interrupted call incurred a debit"
     );
-    verify_timeout_retry(store, capability, &provider, &permits).await?;
+    verify_timeout_retry(
+        store,
+        capability,
+        historical,
+        &provider,
+        &permits,
+        elapse_second_pass_delay,
+    )
+    .await?;
     capability
         .control(ConversionControl::Retry {
             conversation: historical,
@@ -290,14 +299,19 @@ async fn verify_historical_usage(
 async fn verify_timeout_retry(
     store: &dyn SummaryStore,
     capability: &dyn SummaryConversion,
+    historical: Uuid,
     provider: &Provider,
     permits: &Semaphore,
+    elapse_second_pass_delay: impl AsyncFn(Uuid) -> TestResult,
 ) -> TestResult {
     let settings = config::Environment::from_vars([
         ("RIVETHUB_SUMMARY_FIRST_TOKEN_TIMEOUT_MS", "100"),
         ("RIVETHUB_SUMMARY_INTER_TOKEN_TIMEOUT_MS", "100"),
     ]);
     for attempt in 1..=6 {
+        if attempt == 4 {
+            elapse_second_pass_delay(historical).await?;
+        }
         provider.chat_gate.store(true, SeqCst);
         provider.midstream.store(attempt == 2, SeqCst);
         tokio::time::timeout(
@@ -305,7 +319,7 @@ async fn verify_timeout_retry(
             tick_with(store, provider, permits, &settings),
         )
         .await??;
-        provider.entered.notified().await;
+        tokio::time::timeout(Duration::from_secs(2), provider.entered.notified()).await?;
         let status = capability.status().await?;
         assert_eq!(status.reserved, 0);
         assert_eq!(status.pending, i64::from(attempt < 6));
@@ -322,6 +336,7 @@ async fn verify_timeout_retry(
 async fn empty_replies(
     store: &(impl SummaryStore + MemoryStore),
     historical: impl AsyncFn(Uuid, Timestamp) -> TestResult,
+    elapse_second_pass_delay: impl AsyncFn(Uuid) -> TestResult,
 ) -> TestResult {
     let base = Timestamp::now() - wire::time::elapsed_days(3);
     let rows = (1..=8)
@@ -380,7 +395,15 @@ async fn empty_replies(
     .await?;
     historical(next, base - jiff::SignedDuration::from_secs(1)).await?;
     queue.control(start).await?;
-    verify_empty_exhaustion(store, queue, deferred, next, &permits).await
+    verify_empty_exhaustion(
+        store,
+        queue,
+        deferred,
+        next,
+        &permits,
+        elapse_second_pass_delay,
+    )
+    .await
 }
 
 async fn verify_empty_exhaustion(
@@ -389,6 +412,7 @@ async fn verify_empty_exhaustion(
     deferred: Uuid,
     next: Uuid,
     permits: &Semaphore,
+    elapse_second_pass_delay: impl AsyncFn(Uuid) -> TestResult,
 ) -> TestResult {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -411,6 +435,18 @@ async fn verify_empty_exhaustion(
     let lease = queue.claim(QUIET).await?.ok_or("next candidate")?;
     assert_eq!(lease.conversation, next);
     queue.finish(lease, ConversionOutcome::Complete).await?;
+    assert!(
+        queue.claim(QUIET).await?.is_none(),
+        "second pass claimed before its delay"
+    );
+    elapse_second_pass_delay(deferred).await?;
+    let lease = queue
+        .claim(QUIET)
+        .await?
+        .ok_or("second pass after its delay")?;
+    assert_eq!(lease.conversation, deferred);
+    assert!(lease.second_pass);
+    queue.finish(lease, ConversionOutcome::Yield).await?;
     for expected_failed in [0, 0, 1] {
         tick(store, &provider, permits).await?;
         assert_eq!(queue.status().await?.failed, expected_failed);
@@ -433,20 +469,48 @@ async fn verify_empty_exhaustion(
     Ok(())
 }
 
+fn elapse_sqlite_second_pass(path: &std::path::Path, id: Uuid) -> TestResult {
+    let changed = rusqlite::Connection::open(path)?.execute(
+        "UPDATE rh_summary_conversion_items SET next_at = second_pass_at
+         WHERE conversation_id = ?1
+           AND abs((julianday(next_at) - julianday(second_pass_at)) * 1440 - 5) < 0.001",
+        [id.to_string()],
+    )?;
+    assert_eq!(changed, 1, "second pass should wait five minutes");
+    Ok(())
+}
+
+async fn elapse_postgres_second_pass(pool: &sqlx::PgPool, id: Uuid) -> TestResult {
+    let changed = sqlx::query(
+        "UPDATE rh_summary_conversion_items SET next_at = second_pass_at
+         WHERE conversation_id = $1 AND next_at = second_pass_at + interval '5 minutes'",
+    )
+    .bind(id)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    assert_eq!(changed, 1, "second pass should wait five minutes");
+    Ok(())
+}
+
 #[tokio::test]
 async fn top_down_conversion_empty_replies_sqlite() -> TestResult {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("s.sqlite");
     migrate::sqlite(&path)?;
     let store = memory_sqlite::SqliteStore::open(&path)?.with_summary_index_key([7; 32]);
-    empty_replies(&store, async |id, at| {
-        rusqlite::Connection::open(&path)?.execute(
-            "UPDATE rh_summary_state SET historical_only = 1, unsettled_since = NULL,
+    empty_replies(
+        &store,
+        async |id, at| {
+            rusqlite::Connection::open(&path)?.execute(
+                "UPDATE rh_summary_state SET historical_only = 1, unsettled_since = NULL,
                  settled_at = ?2, last_input_at = ?2 WHERE conversation_id = ?1",
-            (id.to_string(), at.rfc3339_offset()),
-        )?;
-        Ok(())
-    })
+                (id.to_string(), at.rfc3339_offset()),
+            )?;
+            Ok(())
+        },
+        async |id| elapse_sqlite_second_pass(&path, id),
+    )
     .await
 }
 
@@ -457,17 +521,21 @@ async fn top_down_conversion_empty_replies_postgres(pool: sqlx::PgPool) -> TestR
         .await?;
     let store = memory_postgres::PostgresMemory::new(scoped).with_summary_index_key([7; 32]);
     Scope::Maintenance
-        .run(empty_replies(&store, async |id, at| {
-            sqlx::query(
-                "UPDATE rh_summary_state SET historical_only = true, unsettled_since = NULL,
+        .run(empty_replies(
+            &store,
+            async |id, at| {
+                sqlx::query(
+                    "UPDATE rh_summary_state SET historical_only = true, unsettled_since = NULL,
                  settled_at = $2, last_input_at = $2 WHERE conversation_id = $1",
-            )
-            .bind(id)
-            .bind(memory_postgres::time::PgTimestamp::from(at))
-            .execute(&pool)
-            .await?;
-            Ok(())
-        }))
+                )
+                .bind(id)
+                .bind(memory_postgres::time::PgTimestamp::from(at))
+                .execute(&pool)
+                .await?;
+                Ok(())
+            },
+            async |id| elapse_postgres_second_pass(&pool, id).await,
+        ))
         .await
 }
 
@@ -707,7 +775,10 @@ async fn top_down_conversion_sqlite() -> TestResult {
         1
     );
     assert_eq!(std::fs::read(&path)?, before);
-    conversion(&store, historical, old).await?;
+    conversion(&store, historical, old, async |id| {
+        elapse_sqlite_second_pass(&path, id)
+    })
+    .await?;
     let conn = rusqlite::Connection::open(&path)?;
     let receipts: Option<i32> = conn.query_row(
         "SELECT completed_version FROM ros_summary_deliveries
@@ -751,7 +822,7 @@ async fn top_down_conversion_postgres(pool: sqlx::PgPool) -> TestResult {
         assert_eq!(report.tables.get("rh_entity_extractions").ok_or("missing rh_entity_extractions disposition")?.remapped, 1);
         assert_eq!(report.tables.get("rh_summary_sources").ok_or("missing rh_summary_sources disposition")?.deleted, 1);
         assert!(!store.summary_conversion().ok_or("conversion")?.status().await?.enabled);
-        conversion(&store, historical, old).await?;
+        conversion(&store, historical, old, async |id| elapse_postgres_second_pass(&pool, id).await).await?;
         let receipts: Vec<(String, i32)> = sqlx::query_as(
             "SELECT consumer, completed_version FROM rh_summary_deliveries
              WHERE conversation_id = $1 ORDER BY consumer"

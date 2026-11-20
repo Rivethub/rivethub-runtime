@@ -328,17 +328,19 @@ impl SummaryConversion for SqliteStore {
                  LEFT JOIN rh_summary_capture_clock clock ON clock.conversation_id = i.conversation_id
                  CROSS JOIN rh_summary_conversion ctl
                  WHERE i.state IN ('pending','waiting_quiet')
-                   AND NOT EXISTS (SELECT 1 FROM rh_summary_conversion_items WHERE state = 'reserved')
+                       AND (i.second_pass_at IS NULL OR rh_instant(i.next_at) <= ?3)
+               AND NOT EXISTS (SELECT 1 FROM rh_summary_conversion_items WHERE state = 'reserved')
                    AND (s.settled_at IS NOT NULL OR rh_instant(coalesce(s.last_input_at, clock.captured_at, i.last_input_at)) <= ?1)
                    AND (i.estimated_tokens <= ?2 OR (ctl.include_giants AND NOT EXISTS (
                        SELECT 1 FROM rh_summary_conversion_items normal WHERE normal.estimated_tokens <= ?2
                          AND normal.state IN ('pending','waiting_quiet')
-                     AND (i.second_pass_at IS NOT NULL OR normal.second_pass_at IS NULL))))
+                         AND (normal.second_pass_at IS NULL
+                              OR (i.second_pass_at IS NOT NULL AND rh_instant(normal.next_at) <= ?3)))))
                    AND coalesce(s.historical_only, 1)
                    AND (s.summarized_through IS NULL OR s.summarized_through < s.input_revision)
                  ORDER BY (i.second_pass_at IS NOT NULL), i.second_pass_at, (i.estimated_tokens > ?2), max(rh_instant(i.last_input_at), rh_instant(coalesce(i.last_used_at, i.last_input_at))) DESC, i.conversation_id
                  LIMIT 1",
-                params![time::seek_key(cutoff), GIANT_TOKENS], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+                params![time::seek_key(cutoff), GIANT_TOKENS, time::seek_key(clock)], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
             ).optional().map_err(error)?;
             let lease = if let Some((id, last_input, input_changed, timeout_retries, second_pass)) = candidate {
                 if input_changed {
@@ -477,21 +479,22 @@ impl SummaryConversion for SqliteStore {
         outcome: ConversionOutcome,
     ) -> Result<(), SummaryStoreError> {
         self.with_conn(move |conn| {
-            let requeue = matches!(outcome, ConversionOutcome::Requeue);
+            let clock = Timestamp::now();
+            let (next_at, second_pass_at) = outcome.finish_times(clock);
             let (state, failure, retries) = outcome.status(lease);
             conn.execute(
                 "UPDATE rh_summary_conversion_items SET state = ?3, reservation_expires_at = NULL,
                          last_error = ?4, next_at = ?5, timeout_retries = ?6,
-                         second_pass_at = CASE WHEN ?7 THEN ?5 ELSE second_pass_at END
+                         second_pass_at = coalesce(?7, second_pass_at)
                          WHERE conversation_id = ?1 AND next_at = ?2 AND state = 'reserved'",
                 params![
                     lease.conversation.to_string(),
                     claim_stamp(lease.claimed_at),
                     state,
                     failure,
-                    claim_stamp(Timestamp::now()),
+                    claim_stamp(next_at),
                     retries,
-                    requeue
+                    second_pass_at.map(claim_stamp)
                 ],
             )
             .map_err(error)?;

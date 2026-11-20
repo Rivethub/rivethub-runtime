@@ -44,6 +44,10 @@ For `memory_search`, use a few specific keywords instead of a full sentence. Inc
 
 `rh --help` lists every command.
 
+Historical summary conversion waits five minutes before a second pass after exhausting its transient model retries.
+This gives model contention time to clear on a short queue. Set
+`RIVETHUB_SUMMARY_CONVERSION_SECOND_PASS_DELAY_MINUTES` on the worker to choose a delay from 1 to 1440 minutes.
+
 ## Layout
 
 | Path | What it holds |

@@ -109,18 +109,26 @@ pub struct ConversionLease {
 pub enum ConversionOutcome {
     Yield,
     RetryTransient,
-    Requeue,
+    Requeue { delay: SignedDuration },
     Complete,
     Fail(String),
 }
 
 impl ConversionOutcome {
     #[must_use]
+    pub fn finish_times(&self, clock: Timestamp) -> (Timestamp, Option<Timestamp>) {
+        match self {
+            Self::Requeue { delay } => (bounded_deadline(clock, *delay), Some(clock)),
+            Self::Yield | Self::RetryTransient | Self::Complete | Self::Fail(_) => (clock, None),
+        }
+    }
+
+    #[must_use]
     pub fn status(self, lease: ConversionLease) -> (&'static str, Option<String>, i32) {
         match self {
             Self::Yield => ("pending", None, lease.timeout_retries),
             Self::RetryTransient => ("pending", None, lease.timeout_retries.saturating_add(1)),
-            Self::Requeue => ("pending", None, 0),
+            Self::Requeue { .. } => ("pending", None, 0),
             Self::Complete => ("complete", None, 0),
             Self::Fail(error) => ("failed", Some(error), 0),
         }

@@ -19,6 +19,7 @@ pub struct SummarySettings {
     pub inter_token_timeout: Duration,
     pub request_timeout: Duration,
     pub conversion_timeout_retries: i32,
+    pub conversion_second_pass_delay: SignedDuration,
     pub conversion_lease: SignedDuration,
     pub conversion_heartbeat: Duration,
 }
@@ -42,6 +43,7 @@ impl SummarySettings {
             inter_token_timeout: Duration::from_secs(60),
             request_timeout: Duration::from_mins(30),
             conversion_timeout_retries: 2,
+            conversion_second_pass_delay: SignedDuration::from_mins(5),
             conversion_lease: kernel::memory::summary_conversion::LEASE,
             conversion_heartbeat: Duration::from_secs(20),
         })
@@ -66,7 +68,14 @@ impl SummarySettings {
         Ok(())
     }
 
-    pub(crate) fn validate_lease(&self) -> Result<(), WorkerError> {
+    pub(crate) fn validate_conversion(&self) -> Result<(), WorkerError> {
+        if self.conversion_second_pass_delay < SignedDuration::from_mins(1)
+            || self.conversion_second_pass_delay > SignedDuration::from_hours(24)
+        {
+            return Err(invalid(
+                "summary conversion second pass delay must be between 1 and 1440 minutes",
+            ));
+        }
         let expiry = Duration::try_from(self.conversion_lease)
             .map_err(|_| invalid("summary conversion lease must be positive"))?;
         if self.conversion_heartbeat.is_zero()

@@ -29,7 +29,7 @@ pub async fn handle_conversion_tick(
 ) -> Result<(), WorkerError> {
     let settings = env.summary.settings;
     settings.validate_timeouts()?;
-    settings.validate_lease()?;
+    settings.validate_conversion()?;
     let Some(lease) = store
         .claim_with_expiry(settings.inactivity, settings.conversion_lease)
         .await?
@@ -58,7 +58,9 @@ pub async fn handle_conversion_tick(
             ConversionOutcome::RetryTransient
         }
         Err(WorkerError::ModelTimeout { .. } | WorkerError::EmptySummary) if !lease.second_pass => {
-            ConversionOutcome::Requeue
+            ConversionOutcome::Requeue {
+                delay: settings.conversion_second_pass_delay,
+            }
         }
         Err(error) => ConversionOutcome::Fail(failure_reason(&error)),
     };
