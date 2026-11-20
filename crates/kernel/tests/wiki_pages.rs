@@ -135,3 +135,75 @@ fn malformed_pages_are_typed_errors_and_slugs_cannot_name_paths() {
         }
     }
 }
+
+#[test]
+fn top_down_citation_kinds_survive_a_wiki_page_round_trip() -> TestResult {
+    let markdown = "---
+title: Spring inspection
+slug: spring
+---
+
+## Citations
+
+| Date | Kind | Summary | Note |
+|------|------|---------|------|
+| 2026-10-10 | session | `00000000-0000-4000-8000-000000000001` | Inspection |
+| 2026-10-10 | part | `00000000-0000-4000-8000-000000000002` | Measurements |
+| 2026-10-10 | section | `00000000-0000-4000-8000-000000000003` | Tension |
+";
+    let page = parse_wiki_page(markdown)?;
+    assert_eq!(
+        page.citations
+            .iter()
+            .filter_map(|citation| citation.kind)
+            .map(|kind| kind.to_string())
+            .collect::<Vec<_>>(),
+        ["session", "part", "section"]
+    );
+    assert_eq!(parse_wiki_page(&serialize_wiki_page(&page)?)?, page);
+    Ok(())
+}
+
+#[test]
+fn free_text_citation_reads_new_kinds_only_after_a_date() -> TestResult {
+    let markdown = "---
+title: Spring inspection
+slug: spring
+---
+
+## Citations
+
+- `00000000-0000-4000-8000-000000000001` the session where we measured part of the spring
+- `00000000-0000-4000-8000-000000000002` 2026-10-10 we measured part of the spring
+- `00000000-0000-4000-8000-000000000003` measured on 2026-10-10 section of the spring
+- `00000000-0000-4000-8000-000000000004` BRANCH noted in the session
+- `00000000-0000-4000-8000-000000000005` 2026-10-10 section notes the root cause
+- `00000000-0000-4000-8000-000000000006` 2026-10-10 session discusses a branch
+- `00000000-0000-4000-8000-000000000007` leaf measurements from 2026-10-10 part of the spring
+- `00000000-0000-4000-8000-000000000008` branch measurements from 2026-10-10 root of the spring
+";
+    let page = parse_wiki_page(markdown)?;
+    let kinds: Vec<_> = page
+        .citations
+        .iter()
+        .map(|citation| citation.kind.map(|kind| kind.to_string()))
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            None,
+            None,
+            Some("section".to_owned()),
+            Some("branch".to_owned()),
+            Some("section".to_owned()),
+            Some("session".to_owned()),
+            Some("part".to_owned()),
+            Some("branch".to_owned()),
+        ]
+    );
+    assert!(
+        serialize_wiki_page(&page)?
+            .contains("|  | leaf | `00000000-0000-4000-8000-000000000001` |")
+    );
+    Ok(())
+}

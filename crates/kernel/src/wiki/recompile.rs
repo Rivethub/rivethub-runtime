@@ -32,6 +32,7 @@ pub struct RecompileSource {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceSummary {
+    pub input: Option<crate::wiki::builder::WikiSummary>,
     pub topic: Option<String>,
     pub at: Timestamp,
     pub content: String,
@@ -39,6 +40,7 @@ pub struct SourceSummary {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Recompiled {
+    pub inputs: Vec<crate::wiki::builder::WikiSummary>,
     pub base: WikiPage,
     pub page: WikiPage,
     pub archived: Vec<Archived>,
@@ -92,6 +94,11 @@ pub async fn recompile(
     store
         .store_recompiled(
             Recompiled {
+                inputs: source
+                    .summaries
+                    .into_iter()
+                    .filter_map(|summary| summary.input)
+                    .collect(),
                 base: source.page,
                 page,
                 archived,

@@ -66,6 +66,17 @@ pub trait EntityStore: Send + Sync {
         now: Timestamp,
     ) -> Result<(), EntityStoreError>;
 
+    async fn finish_entity_delivery(
+        &self,
+        leaves: &[EntityLeaf],
+        slugs: &[String],
+        git_sha: Option<&str>,
+        now: Timestamp,
+    ) -> Result<(), EntityStoreError> {
+        let ids: Vec<_> = leaves.iter().map(|leaf| leaf.id).collect();
+        self.finish_entities(&ids, slugs, git_sha, now).await
+    }
+
     async fn fail_entity(
         &self,
         summary_id: Uuid,

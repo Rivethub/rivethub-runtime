@@ -47,7 +47,7 @@ async fn every_row_takes_the_owner_of_its_store(pool: PgPool) -> TestResult {
     .execute(&pool)
     .await?;
 
-    POSTGRES.run(&pool).await?;
+    migrate::postgres_pool(&pool).await?;
 
     let alice = vec![Some("alice".to_owned())];
     for table in [
@@ -100,7 +100,7 @@ async fn a_store_without_a_single_owner_must_be_named(pool: PgPool) -> TestResul
     )
     .execute(&pool)
     .await?;
-    let Err(refused) = POSTGRES.run(&pool).await else {
+    let Err(refused) = migrate::postgres_pool(&pool).await else {
         return Err("two owners and an unowned conversation must refuse".into());
     };
     assert!(refused.to_string().contains("rh.store_owner"), "{refused}");

@@ -62,4 +62,10 @@ pub struct TranscriptMetadata<'a> {
     pub hook_event: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recovered: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assistant_uuid: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ordinal: Option<usize>,
 }

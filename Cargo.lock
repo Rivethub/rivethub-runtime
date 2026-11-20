@@ -2695,6 +2695,7 @@ name = "kernel"
 version = "0.8.3"
 dependencies = [
  "async-trait",
+ "hex",
  "jiff 1.0.1",
  "parking_lot",
  "regex",
@@ -3839,6 +3840,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "serde_with",
  "serde_yaml_ng",
  "sha2 0.10.9",
  "sqlx",

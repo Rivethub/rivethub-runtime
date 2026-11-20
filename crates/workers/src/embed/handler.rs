@@ -3,6 +3,7 @@ use std::time::Duration;
 use kernel::memory::EmbedTable;
 use kernel::memory::EmbedTarget;
 use kernel::memory::EmbeddingStore;
+use kernel::memory::EmbeddingStoreError;
 use kernel::memory::StoredChunk;
 use kernel::memory::StoredEmbedding;
 use kernel::model::Embedding;
@@ -58,7 +59,7 @@ pub async fn handle_embed(
         return Ok(());
     }
     if let Some(reason) = classify_unembeddable(&text) {
-        targets.mark_unembeddable(&target, reason).await?;
+        ignore_expired(targets.mark_unembeddable(&target, reason).await)?;
         return Ok(());
     }
     if settings.width == 0 {
@@ -77,10 +78,13 @@ pub async fn handle_embed(
     let width = usize::try_from(settings.width).map_err(|_| WorkerError::Width)?;
     let vectors: Vec<Vec<f32>> = embeddings.into_iter().map(|row| row.vector).collect();
     let Some(vector) = mean_pool(&vectors, width)? else {
-        return null_vector(targets, &target, settings).await;
+        return match null_vector(targets, &target, settings).await {
+            Err(WorkerError::Target(EmbeddingStoreError::SummaryReference(_))) => Ok(()),
+            result => result,
+        };
     };
     let stored = stored_embedding(&target, &text, vector, &pieces, &vectors, settings)?;
-    targets.write(stored).await?;
+    ignore_expired(targets.write(stored).await)?;
     Ok(())
 }
 
@@ -182,5 +186,12 @@ fn cancelled(cancel: &CancellationToken) -> Result<(), WorkerError> {
         Err(WorkerError::Cancelled)
     } else {
         Ok(())
+    }
+}
+
+fn ignore_expired(result: Result<(), EmbeddingStoreError>) -> Result<(), EmbeddingStoreError> {
+    match result {
+        Err(EmbeddingStoreError::SummaryReference(_)) => Ok(()),
+        result => result,
     }
 }

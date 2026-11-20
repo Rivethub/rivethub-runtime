@@ -65,6 +65,7 @@ enum Content {
         text: String,
     },
     Tool {
+        id: Option<String>,
         name: String,
         state: ToolState,
     },
@@ -241,7 +242,14 @@ fn assistant(row: Row<'_>, content: Vec<Content>) -> Result<Vec<Mapped>, Transcr
                 Role::Assistant,
                 reply_text(row.mode, &text),
             ))?,
-            Content::Tool { name, state } => tool(row, position, name, state)?,
+            Content::Tool { id, name, state } => {
+                tool(row, position, name, state)?.with_metadata(|metadata| {
+                    if let Some(id) = id.filter(|id| !id.is_empty()) {
+                        metadata.insert("tool_use_id", id)?;
+                    }
+                    Ok(())
+                })?
+            }
             Content::Reasoning { text } => thinking(row, position, &text)?,
             Content::Other => Mapped::Skip(unknown(position, "unknown opencode content")),
         });

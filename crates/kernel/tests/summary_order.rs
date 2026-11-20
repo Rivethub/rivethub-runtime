@@ -1,0 +1,252 @@
+#![cfg(test)]
+use jiff::Timestamp;
+
+use kernel::memory::MemoryBrowseOrder;
+use kernel::memory::summary_order::{MessagePosition, order_messages};
+use values::JsonObject;
+use values::Role;
+
+struct Row {
+    id: u8,
+    stamp: Timestamp,
+    role: Role,
+    metadata: JsonObject,
+}
+
+fn row(id: u8, stamp: i64, role: Role, metadata: &str) -> Row {
+    Row {
+        id,
+        stamp: Timestamp::new(stamp, 0).unwrap(),
+        role,
+        metadata: serde_json::from_str(metadata).unwrap(),
+    }
+}
+
+fn ordered(mut rows: Vec<Row>) -> Vec<u8> {
+    rows.sort_by_key(|row| (row.stamp, row.id));
+    order_messages(rows, MemoryBrowseOrder::Asc, |row| {
+        MessagePosition::new(row.stamp, row.role, Some(&row.metadata))
+    })
+    .into_iter()
+    .map(|row| row.id)
+    .collect()
+}
+
+#[test]
+fn merges_timestamp_fallback_with_line_precedence_and_correlated_turn() {
+    let rows = vec![
+        row(
+            1,
+            30,
+            Role::Assistant,
+            r#"{"session_jsonl_line": 0, "uuid": "turn-a"}"#,
+        ),
+        row(2, 10, Role::User, r#"{"session_jsonl_line": 2}"#),
+        row(3, 90, Role::Tool, r#"{"uuid": "turn-a"}"#),
+        row(4, 20, Role::User, r#"{"session_jsonl_line": -1}"#),
+        row(5, 40, Role::User, r#"{"session_jsonl_line": "3"}"#),
+    ];
+    assert_eq!(ordered(rows), [4, 1, 3, 2, 5]);
+}
+
+#[test]
+fn compares_only_stream_heads_across_paths() {
+    let rows = vec![
+        row(
+            1,
+            30,
+            Role::User,
+            r#"{"session_jsonl_path": "a", "session_jsonl_line": 1}"#,
+        ),
+        row(
+            2,
+            10,
+            Role::User,
+            r#"{"session_jsonl_path": "a", "session_jsonl_line": 2}"#,
+        ),
+        row(
+            3,
+            15,
+            Role::User,
+            r#"{"session_jsonl_path": "b", "session_jsonl_line": 8}"#,
+        ),
+        row(
+            4,
+            40,
+            Role::User,
+            r#"{"session_jsonl_path": "b", "session_jsonl_line": 9}"#,
+        ),
+    ];
+    assert_eq!(ordered(rows), [3, 1, 2, 4]);
+}
+
+#[test]
+fn same_line_prefers_subordinal_then_assistant_and_keeps_call_cluster() {
+    let rows = vec![
+        row(
+            1,
+            30,
+            Role::Assistant,
+            r#"{"session_jsonl_line": 2, "ordinal": 1}"#,
+        ),
+        row(
+            2,
+            10,
+            Role::Tool,
+            r#"{"session_jsonl_line": 2, "ordinal": 1, "event_id": "s:tool:x"}"#,
+        ),
+        row(3, 90, Role::Tool, r#"{"event_id": "s:tool:x"}"#),
+        row(
+            4,
+            40,
+            Role::Tool,
+            r#"{"session_jsonl_line": 2, "ordinal": 0}"#,
+        ),
+        row(5, 50, Role::Tool, r#"{"event_id": "other:tool:x"}"#),
+    ];
+    assert_eq!(ordered(rows), [4, 1, 2, 3, 5]);
+}
+
+#[test]
+fn ambiguous_turn_uses_timestamp_unless_the_path_identifies_it() {
+    let rows = vec![
+        row(
+            1,
+            30,
+            Role::Assistant,
+            r#"{"session_jsonl_path": "a", "session_jsonl_line": 1, "uuid": "turn-a"}"#,
+        ),
+        row(
+            2,
+            40,
+            Role::Assistant,
+            r#"{"session_jsonl_path": "b", "session_jsonl_line": 1, "uuid": "turn-a"}"#,
+        ),
+        row(3, 20, Role::Tool, r#"{"assistant_uuid": "turn-a"}"#),
+        row(
+            4,
+            90,
+            Role::Tool,
+            r#"{"session_jsonl_path": "a", "assistant_uuid": "turn-a"}"#,
+        ),
+    ];
+    assert_eq!(ordered(rows), [3, 1, 4, 2]);
+}
+
+#[test]
+fn all_unlined_preserves_legacy_order_for_every_small_timestamp_assignment() {
+    for assignment in 0..81 {
+        let rows: Vec<_> = (0_u8..4)
+            .rev()
+            .map(|id| {
+                let stamp = i64::from(assignment / 3_i32.pow(u32::from(id)) % 3);
+                row(id, stamp, Role::Tool, r#"{"event_id": "s:tool:x"}"#)
+            })
+            .collect();
+        let mut legacy: Vec<_> = rows.iter().map(|row| (row.stamp, row.id)).collect();
+        legacy.sort_unstable();
+        assert_eq!(
+            ordered(rows),
+            legacy.into_iter().map(|(_, id)| id).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn an_ambiguous_event_does_not_fall_through_to_another_id_kind() {
+    let rows = vec![
+        row(
+            1,
+            30,
+            Role::Tool,
+            r#"{"session_jsonl_line":1,"event_id":"s:tool:x","tool_use_id":"other"}"#,
+        ),
+        row(
+            2,
+            40,
+            Role::Tool,
+            r#"{"session_jsonl_line":2,"event_id":"s:tool:x"}"#,
+        ),
+        row(
+            3,
+            20,
+            Role::Tool,
+            r#"{"event_id":"s:tool:x","tool_use_id":"x"}"#,
+        ),
+    ];
+    assert_eq!(ordered(rows), [3, 1, 2]);
+}
+
+#[test]
+fn keeps_all_identical_positions_and_rows_attached_to_one_anchor() {
+    let mut rows = vec![
+        row(
+            2,
+            30,
+            Role::Assistant,
+            r#"{"session_jsonl_line":0,"uuid":"turn"}"#,
+        ),
+        row(1, 30, Role::Assistant, r#"{"session_jsonl_line":0}"#),
+        row(3, 10, Role::User, r#"{"session_jsonl_line":1}"#),
+    ];
+    rows.extend(
+        (4..100)
+            .rev()
+            .map(|id| row(id, 90, Role::Tool, r#"{"assistant_uuid":"turn"}"#)),
+    );
+    let expected: Vec<_> = [1, 2].into_iter().chain(4..100).chain([3]).collect();
+    assert_eq!(ordered(rows), expected);
+}
+
+#[test]
+fn a_replayed_line_takes_precedence_over_the_kept_hook_sequence() {
+    let path = "session.jsonl";
+    let user = row(1, 30, Role::User, &lined(path, 0, r#""uuid":"ask""#));
+    let assistant = row(
+        2,
+        20,
+        Role::Assistant,
+        &lined(path, 1, r#""uuid":"answer""#),
+    );
+    let reply = row(4, 10, Role::Assistant, &lined(path, 3, r#""uuid":"reply""#));
+    let kept_hook = row(
+        3,
+        50,
+        Role::Tool,
+        &format!(
+            r#"{{"session_jsonl_path":"{path}","tool_use_id":"toolu_synthetic_read","event_id":"claude-code:s:tool:toolu_synthetic_read","hook_producer":"producer-a","hook_sequence":1,"session_jsonl_line":2,"ordinal":1,"assistant_uuid":"answer"}}"#
+        ),
+    );
+    assert_eq!(
+        ordered(vec![user, assistant, kept_hook, reply]),
+        [1, 2, 3, 4],
+        "the kept hook row should take the line the dropped transcript copy carried"
+    );
+}
+
+fn lined(path: &str, line: u64, extra: &str) -> String {
+    format!(r#"{{"session_jsonl_path":"{path}","session_jsonl_line":{line},{extra}}}"#)
+}
+
+#[test]
+fn out_of_range_cursor_timestamps_are_errors() {
+    use kernel::memory::MessageCursor;
+    use uuid::Uuid;
+
+    use values::time::TimestampFormat as _;
+
+    let min = Timestamp::MIN.epoch_micros();
+    let max = Timestamp::MAX.epoch_micros();
+    for micros in [min, max] {
+        let encoded = format!("{micros}.{}", Uuid::nil());
+        assert_eq!(MessageCursor::decode(&encoded).unwrap().encode(), encoded);
+    }
+    for micros in [i64::MIN, min - 1, max + 1, i64::MAX] {
+        let encoded = format!("{micros}.{}", Uuid::nil());
+        let error = MessageCursor::decode(&encoded).expect_err("out-of-range cursor time");
+        assert_eq!(
+            error.to_string(),
+            format!("cursor {encoded:?} is not one this server issued")
+        );
+    }
+}

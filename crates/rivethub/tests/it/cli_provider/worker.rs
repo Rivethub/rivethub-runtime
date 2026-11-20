@@ -18,7 +18,7 @@ struct Payload {
 
 #[tokio::test]
 #[expect(clippy::too_many_lines)]
-async fn composed_summarizer_runs_cli_model_without_embedder() -> TestResult {
+async fn composed_summarizer_settles_obsolete_cli_job_without_embedder() -> TestResult {
     let db = crate::pgdb::TestDb::migrated().await?;
     let pool = db.pool();
     crate::pgdb::install_queue(&pool).await?;
@@ -61,7 +61,7 @@ async fn composed_summarizer_runs_cli_model_without_embedder() -> TestResult {
             max_attempts: None,
         })
         .await?;
-    let (events, expected) = recorded()?;
+    let (events, _) = recorded()?;
     let harness = Arc::new(harness::Harness::new(events));
     let factory =
         rivethub::models::ModelFactory::default().with_harness("p".into(), harness.clone());
@@ -127,19 +127,8 @@ async fn composed_summarizer_runs_cli_model_without_embedder() -> TestResult {
         .conversation(id.parse()?)
         .await?
         .ok_or("conversation")?;
-    assert_eq!(window.leaves.len(), 1);
-    assert_eq!(window.leaves.first().ok_or("leaf")?.content, expected);
-    assert_eq!(
-        harness
-            .requests
-            .lock()
-            .await
-            .first()
-            .ok_or("model request")?
-            .model
-            .as_deref(),
-        Some("agent-model")
-    );
+    assert_eq!(window.leaves, []);
+    assert!(harness.requests.lock().await.is_empty());
     store.close().await?;
     Ok(())
 }

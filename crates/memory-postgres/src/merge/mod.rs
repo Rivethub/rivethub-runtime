@@ -28,6 +28,8 @@ pub struct MergeReport {
     pub staged: BTreeMap<String, u64>,
     pub inserted: BTreeMap<String, u64>,
     pub kept_family: Vec<String>,
+    pub dropped_summary_trees: Vec<DroppedSummaryTree>,
+    pub dropped_legacy_summaries: u64,
     pub replaced: Vec<String>,
     pub moved_conversations: u64,
     pub mapped_type_topics: u64,
@@ -37,6 +39,15 @@ pub struct MergeReport {
     pub embeddings_cleared: bool,
     pub committed: bool,
     pub millis: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct DroppedSummaryTree {
+    pub conversation: Uuid,
+    pub session_key: String,
+    pub incoming_session: Uuid,
+    pub destination_session: Option<Uuid>,
 }
 
 impl PostgresMemory {
@@ -62,9 +73,13 @@ impl PostgresMemory {
             .map_err(|error| Error::operation("merge", error))?;
         let mut reading = source
             .pool
-            .acquire()
+            .begin()
             .await
             .map_err(|error| Error::operation("merge source", error))?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *reading)
+            .await
+            .map_err(|error| Error::operation("merge source snapshot", error))?;
         stage::same_schema(&mut reading, &mut tx).await?;
         let mut report = MergeReport {
             source: key.clone(),
@@ -79,13 +94,22 @@ impl PostgresMemory {
             report.staged.insert(table.name().to_owned(), rows);
             columns.push((table, staged));
         }
-        drop(reading);
+        reading
+            .rollback()
+            .await
+            .map_err(|error| Error::operation("merge source snapshot", error))?;
         report.embeddings_cleared = stage::align_embeddings(source, self, &mut tx).await?;
+        report.embeddings_cleared |=
+            stage::mark_summary_repairs(&mut tx, self.summary_index_key.as_ref()).await?;
+        crate::summary_replace::lock_store_for_merge(&mut tx)
+            .await
+            .map_err(|error| Error::operation("merge summary fence", error))?;
         transform::run(&mut tx, request, &mut report).await?;
         for (table, staged) in &columns {
-            let rows = transform::insert(&mut tx, table.name(), staged).await?;
+            let rows = transform::insert(&mut tx, *table, staged).await?;
             report.inserted.insert(table.name().to_owned(), rows);
         }
+        crate::dump::validate_summary_graph(&mut tx).await?;
         report.runs = record(&mut tx, &key, request, &report).await?;
         report.committed = !request.dry_run;
         if request.dry_run {
@@ -128,7 +152,7 @@ async fn record(
          SELECT $1, 'topic', source_id::text, target_id::text FROM merge_topic_map
          UNION ALL SELECT $1, 'wiki-page', old, new FROM merge_slug_map
          UNION ALL SELECT $1, 'replaced-conversation', target_id::text, source_id::text
-           FROM merge_dupes WHERE source_messages > target_messages
+           FROM merge_dupes WHERE source_wins
          ON CONFLICT (source, kind, source_id) DO UPDATE SET target_id = EXCLUDED.target_id",
     )
     .bind(key)

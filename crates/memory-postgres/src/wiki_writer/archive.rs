@@ -38,7 +38,7 @@ pub(super) async fn bound(
         reject_symlink(&path).await?;
         let text = tokio::fs::read_to_string(&path).await?;
         sizes.push((part, text.len()));
-        stored.push_str(&text);
+        stored.push_str(&super::references::archive(text)?);
     }
     let mut archived = unarchived(archived, page, &stored);
     let inline = head(root).await;

@@ -58,6 +58,11 @@ async fn memory_help_and_unknown_words_exit_clean() {
         assert_eq!(report.exit, Exit::Ok, "{parts:?}");
         assert_eq!(report.stderr, "");
         assert!(report.stdout.contains("queue-status"));
+        assert!(
+            report
+                .stdout
+                .contains(wire::gateway::memory::SEARCH_QUERY_GUIDANCE)
+        );
         assert!(!report.stdout.contains("doctor"));
     }
 }
@@ -876,4 +881,483 @@ async fn config_url_is_used_when_the_environment_is_unset(pool: PgPool) {
     );
     let report = run(&["memory", "queue-status"], &environment).await;
     assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+}
+
+#[tokio::test]
+async fn memory_settle_reports_the_persisted_revision() -> Result<(), Box<dyn std::error::Error>> {
+    use kernel::memory::SummaryStore as _;
+    use testkit::settlement::{batch, message};
+
+    let (home, environment) = env(&[]);
+    let path = home.path().join("settle.sqlite");
+    migrate::sqlite(&path)?;
+    let store = memory_sqlite::SqliteStore::open(&path)?;
+    let owner = kernel::owner::Owner::new(wire::gateway::users::DEFAULT_OWNER_ID.to_owned())?;
+    let key = "cli:invented-session";
+    let captured = store
+        .capture(
+            batch(key, vec![message("entry", "2026-01-01T00:00:00Z")?]),
+            &owner,
+            None,
+            jiff::Timestamp::now(),
+        )
+        .await?;
+    let id = captured.conversation_id.parse()?;
+    let db = path.to_str().ok_or("sqlite path")?;
+    let first = memory(
+        &["settle", key, "--sqlite", db, "--json"],
+        &environment,
+        false,
+    )
+    .await;
+    assert_eq!(first.exit, Exit::Ok, "{}", first.stderr);
+    let result: kernel::memory::settlement::SettleResult = serde_json::from_str(&first.stdout)?;
+    assert_eq!(
+        result.status,
+        kernel::memory::settlement::SettleStatus::Settled
+    );
+    assert_eq!(result.input_revision, 1);
+    let second = memory(&["settle", key, "--sqlite", db], &environment, false).await;
+    assert_eq!(second.exit, Exit::Ok);
+    assert!(second.stdout.contains("revision 1 already settled"));
+    assert!(store.summary_eligible(id, 1).await?);
+    let missing = memory(
+        &["settle", "cli:unknown", "--sqlite", db],
+        &environment,
+        false,
+    )
+    .await;
+    assert_eq!(missing.exit, Exit::Failure);
+    Ok(())
+}
+
+#[tokio::test]
+async fn resummarize_arms_one_historical_opening_once() {
+    #[derive(serde::Deserialize)]
+    struct ArmReport {
+        armed: bool,
+    }
+
+    let directory = tempfile::tempdir().expect("directory");
+    let database = migrated(directory.path());
+    let conn = rusqlite::Connection::open(&database).unwrap();
+    conn.execute_batch(
+        "INSERT INTO ros_conversations (id, session_key, agent, channel, created_at, updated_at)
+         VALUES ('00000000-0000-0000-0000-000000000001','cli:historical','fixture','cli','2026-10-10T00:00:00Z','2026-10-10T00:00:00Z'),
+                ('00000000-0000-0000-0000-000000000002','cli:trashed','fixture','cli','2026-10-10T00:00:00Z','2026-10-10T00:00:00Z');
+         INSERT INTO rh_summary_openings (conversation_id, content, historical_pending)
+         SELECT id, 'Invented equipment review', 1 FROM ros_conversations;
+         INSERT INTO rh_session_trash (session_key, trashed_at) VALUES ('cli:trashed','2026-01-01Z');",
+    ).unwrap();
+    let (_home, environment) = env(&[]);
+    let arm = async |id, json| {
+        let mut args = vec![
+            "memory",
+            "resummarize",
+            "arm-opening",
+            id,
+            "--sqlite",
+            database.to_str().unwrap(),
+        ];
+        if json {
+            args.push("--json");
+        }
+        run(&args, &environment).await
+    };
+    let armed = arm("00000000-0000-0000-0000-000000000001", false).await;
+    assert_eq!(armed.exit, Exit::Ok, "{}", armed.stderr);
+    assert!(armed.stdout.contains("Opening armed"), "{}", armed.stdout);
+    let refused = arm("00000000-0000-0000-0000-000000000002", false).await;
+    assert_eq!(refused.exit, Exit::Failure);
+    assert!(
+        refused
+            .stderr
+            .contains("cannot be filed because it is in the trash")
+    );
+    assert_eq!(
+        scalar(
+            &database,
+            "SELECT count(*) FROM rh_summary_openings WHERE filing_armed AND title_armed"
+        ),
+        1
+    );
+    assert_eq!(
+        scalar(
+            &database,
+            "SELECT count(*) FROM rh_summary_openings WHERE historical_pending"
+        ),
+        1
+    );
+    conn.execute_batch("UPDATE rh_summary_openings SET filing_armed = 0, title_armed = 0")
+        .unwrap();
+    let retry = arm("00000000-0000-0000-0000-000000000001", true).await;
+    assert_eq!(retry.exit, Exit::Ok, "{}", retry.stderr);
+    let result: ArmReport = serde_json::from_str(&retry.stdout).unwrap();
+    assert!(result.armed);
+    assert_eq!(
+        scalar(
+            &database,
+            "SELECT count(*) FROM rh_summary_openings WHERE filing_armed OR title_armed"
+        ),
+        0
+    );
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn cross_store_summary_import_reports_and_repairs_vector_loss(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use kernel::memory::{MemoryExport, SummaryStore};
+    use memory_postgres::PostgresMemory;
+    use std::sync::Arc;
+
+    let key = [0xab; 32];
+    let pg = Arc::new(PostgresMemory::new(pool.clone()).with_summary_index_key(key));
+    let original = std::fs::read_to_string(testkit::recording("summary-archive/top-down.txt"))?;
+    let cancel = CancellationToken::new();
+    pg.import_memory_dump(&original, false, &cancel).await?;
+    let part = uuid::uuid!("00000000-0000-4000-8000-000000000021");
+    repair_imported_summary(pg.as_ref(), part).await?;
+    let exporter = cli::memory::MemoryExporter::postgres(pg, url_of(&pool));
+    let dump = tempfile::NamedTempFile::new()?;
+    std::fs::write(
+        dump.path(),
+        gunzip(&exporter.export(None, cancel.clone()).await?),
+    )?;
+    let directory = tempfile::tempdir()?;
+    let sqlite =
+        memory_sqlite::SqliteStore::open(migrated(directory.path()))?.with_summary_index_key(key);
+    let imported = sqlite
+        .import_pg_dump(dump.path().to_path_buf(), cancel.clone())
+        .await?;
+    let ids = sqlite.repair_candidates(16).await?;
+    assert_eq!(imported.summary_records_needing_reembedding, 2);
+    assert_eq!(imported.summary_records_losing_passage_vectors, 1);
+    assert_eq!(ids.len(), 2);
+    for id in ids {
+        repair_imported_summary(&sqlite, id).await?;
+    }
+    assert_eq!(sqlite.repair_candidates(16).await?, Vec::<Uuid>::new());
+    let origin = kernel::memory::DumpOrigin {
+        source: kernel::memory::DumpSource::Local,
+        host: "fixture".to_owned(),
+    };
+    let pooled = sqlite.export_pg_dump(None, origin, cancel.clone()).await?;
+    let second = import_fixture_database(&pool).await?;
+    let pg = PostgresMemory::new(second).with_summary_index_key(key);
+    let imported = pg
+        .import_memory_dump(std::str::from_utf8(&pooled)?, false, &cancel)
+        .await?;
+    assert_eq!(imported.summary_records_needing_reembedding, 2);
+    let ids = pg.repair_candidates(16).await?;
+    assert_eq!(ids.len(), 2);
+    for id in ids {
+        repair_imported_summary(&pg, id).await?;
+    }
+    assert_eq!(pg.repair_candidates(16).await?, Vec::<Uuid>::new());
+    Ok(())
+}
+
+const RELEASE_CONVERSATION: Uuid = uuid::uuid!("00000000-0000-4000-8000-000000000001");
+
+async fn seed_release_fixture(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
+    let original = std::fs::read_to_string(testkit::recording("summary-archive/top-down.txt"))?;
+    memory_postgres::PostgresMemory::new(pool.clone())
+        .import_memory_dump(&original, false, &CancellationToken::new())
+        .await?;
+    sqlx::query(
+        r#"INSERT INTO rh_messages
+           (conversation_id, agent, channel, role, tool_result, tool_args, created_at, owner_user_id)
+         VALUES ($1, 'fixture', 'cli', 'tool', 'Pressure is steady.', NULL, '2026-10-10T12:05:00Z', 'alice'),
+                ($1, 'fixture', 'cli', 'tool', NULL, '{"unit":"bar"}', '2026-10-10T12:06:00Z', 'alice')"#,
+    )
+    .bind(RELEASE_CONVERSATION)
+    .execute(pool)
+    .await?;
+    sqlx::raw_sql(
+        "UPDATE rh_summary_deliveries SET anchor_id = NULL, historical_backlog = true
+         WHERE anchor_id IS NOT NULL;
+         INSERT INTO rh_summary_deliveries (conversation_id, consumer, message_id, historical_backlog)
+         SELECT m.conversation_id, consumers.name, m.id, true
+         FROM rh_messages m CROSS JOIN (VALUES ('entity'), ('wiki')) AS consumers(name)
+         WHERE m.role = 'tool';",
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn release_fixture(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
+    use kernel::memory::summary_conversion::{ConversionControl, SummaryConversion};
+
+    memory_postgres::PostgresMemory::new(pool.clone())
+        .control(ConversionControl::Release {
+            conversation: RELEASE_CONVERSATION,
+        })
+        .await?;
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn released_summary_deliveries_round_trip_into_both_stores(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use kernel::memory::MemoryExport;
+    use memory_postgres::PostgresMemory;
+    use memory_sqlite::import::ImportTable;
+    use std::sync::Arc;
+
+    seed_release_fixture(&pool).await?;
+    release_fixture(&pool).await?;
+    let cancel = CancellationToken::new();
+    let pg = Arc::new(PostgresMemory::new(pool.clone()));
+    let exporter = cli::memory::MemoryExporter::postgres(pg, url_of(&pool));
+    let dump_text = gunzip(&exporter.export(None, cancel.clone()).await?);
+    let dump = tempfile::NamedTempFile::new()?;
+    std::fs::write(dump.path(), &dump_text)?;
+
+    let target = PostgresMemory::new(import_fixture_database(&pool).await?);
+    let directory = tempfile::tempdir()?;
+    let sqlite = memory_sqlite::SqliteStore::open(migrated(directory.path()))?;
+    let (pg, sqlite) = tokio::join!(
+        target.import_memory_dump(&dump_text, false, &cancel),
+        sqlite.import_pg_dump(dump.path().to_path_buf(), cancel.clone()),
+    );
+    assert!(
+        pg.is_ok() && sqlite.is_ok(),
+        "PostgreSQL {pg:?}, SQLite {sqlite:?}"
+    );
+    assert_eq!(pg?.rows.get("summary_deliveries"), Some(&6));
+    assert_eq!(sqlite?.rows.get(&ImportTable::SummaryDeliveries), Some(&6));
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn merge_store_accepts_released_destination_with_uncovered_deliveries(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use kernel::owner::Owner;
+    use memory_postgres::{PostgresMemory, merge::MergeRequest};
+
+    seed_release_fixture(&pool).await?;
+    release_fixture(&pool).await?;
+    let source = import_fixture_database(&pool).await?;
+    sqlx::query(
+        "INSERT INTO rh_conversations (session_key, agent, channel, owner_user_id)
+         VALUES ('cli:spare-tray', 'fixture', 'cli', 'alice')",
+    )
+    .execute(&source)
+    .await?;
+    let destination = PostgresMemory::new(pool.clone());
+    let report = destination
+        .merge_store(
+            &PostgresMemory::new(source),
+            &MergeRequest {
+                owner: Owner::new("alice".to_owned())?,
+                moves: std::collections::BTreeMap::new(),
+                dry_run: false,
+            },
+            &CancellationToken::new(),
+        )
+        .await?;
+    assert!(report.committed);
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM rh_summary_deliveries WHERE historical_backlog")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(remaining, 4);
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn resummarize_status_distinguishes_uncovered_deliveries_from_waiting_for_release(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct DeliveryBacklog {
+        delivery_rows_waiting_for_release: i64,
+        delivery_rows_not_covered: i64,
+    }
+
+    seed_release_fixture(&pool).await?;
+    let (_home, environment) = env(&[("RIVETHUB_PG_URL", &url_of(&pool))]);
+    for waiting in [1, 0] {
+        let text = run(&["memory", "resummarize", "status"], &environment).await;
+        assert_eq!(text.exit, Exit::Ok, "{}", text.stderr);
+        assert!(
+            text.stdout.contains(&format!(
+                "{waiting} delivery rows waiting for release, 4 not covered by summaries"
+            )),
+            "{}",
+            text.stdout
+        );
+        let json = run(&["memory", "resummarize", "status", "--json"], &environment).await;
+        assert_eq!(json.exit, Exit::Ok, "{}", json.stderr);
+        let progress: DeliveryBacklog = serde_json::from_str(&json.stdout)?;
+        assert_eq!(progress.delivery_rows_waiting_for_release, waiting);
+        assert_eq!(progress.delivery_rows_not_covered, 4);
+        release_fixture(&pool).await?;
+    }
+    Ok(())
+}
+
+async fn repair_imported_summary(
+    store: &dyn kernel::memory::SummaryStore,
+    id: Uuid,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use kernel::memory::summary_backend::{SummaryIndex, SummaryPassage};
+    let input = store
+        .repair_input(id)
+        .await?
+        .ok_or("missing repair input")?;
+    let start = input.sources.first().ok_or("missing sources")?.1;
+    let end = input.sources.last().ok_or("missing sources")?.1;
+    let vector = vec![0.5; 1024];
+    let index = SummaryIndex {
+        passages: vec![SummaryPassage {
+            content: input.content.clone(),
+            chars: 0..i32::try_from(input.content.chars().count())?,
+            earliest_at: start.min(end),
+            latest_at: start.max(end),
+            vector: vector.clone(),
+        }],
+        pooled: vector,
+    };
+    store.repair_index(input, index).await?;
+    Ok(())
+}
+
+async fn import_fixture_database(pool: &PgPool) -> Result<PgPool, Box<dyn std::error::Error>> {
+    let name: String =
+        sqlx::query_scalar("SELECT 'rh_import_' || left(md5(current_database()), 16)")
+            .fetch_one(pool)
+            .await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE IF EXISTS {name}"
+    )))
+    .execute(pool)
+    .await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
+        .execute(pool)
+        .await?;
+    let options = pool.connect_options().as_ref().clone().database(&name);
+    let target = sqlx::postgres::PgPoolOptions::new()
+        .connect_with(options)
+        .await?;
+    migrate::postgres_pool(&target).await?;
+    Ok(target)
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn starting_and_resuming_conversion_reset_an_idle_bucket_on_both_stores(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use kernel::memory::summary_conversion::{ConversionControl, SummaryConversion};
+
+    let pg = memory_postgres::PostgresMemory::new(pool.clone());
+    let directory = tempfile::tempdir()?;
+    let path = migrated(directory.path());
+    let sqlite = memory_sqlite::SqliteStore::open(&path)?;
+    let conn = rusqlite::Connection::open(&path)?;
+    for action in [
+        ConversionControl::Start {
+            rate: Some(200_000),
+            include_giants: false,
+        },
+        ConversionControl::Resume {
+            include_giants: false,
+        },
+    ] {
+        sqlx::query("UPDATE rh_summary_conversion SET bucket_at = '1970-01-01 00:00:00+00'")
+            .execute(&pool)
+            .await?;
+        conn.execute_batch("UPDATE rh_summary_conversion SET bucket_at = '1970-01-01T00:00:00Z'")?;
+        pg.control(action).await?;
+        sqlite.control(action).await?;
+        let pg_reset: bool = sqlx::query_scalar(
+            "SELECT bucket_at >= clock_timestamp() - interval '30 seconds' FROM rh_summary_conversion",
+        ).fetch_one(&pool).await?;
+        assert!(pg_reset);
+        assert_eq!(
+            scalar(
+                &path,
+                "SELECT julianday(bucket_at) >= julianday('now', '-30 seconds') FROM rh_summary_conversion"
+            ),
+            1
+        );
+    }
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn conversion_status_counts_debits_without_provider_usage_on_both_stores(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use kernel::memory::summary_conversion::{
+        ConversionCharge, ConversionControl, ConversionUsage, SummaryConversion,
+    };
+
+    sqlx::raw_sql(
+        "INSERT INTO rh_conversations (session_key, agent, channel, owner_user_id)
+         VALUES ('cli:ledger', 'fixture', 'cli', 'alice');
+         INSERT INTO rh_messages (conversation_id, agent, channel, role, content, created_at, owner_user_id)
+         SELECT id, 'fixture', 'cli', 'user', 'Measure the spring.', '2024-01-01', 'alice'
+         FROM rh_conversations;",
+    )
+    .execute(&pool)
+    .await?;
+    let pg = memory_postgres::PostgresMemory::new(pool);
+    let directory = tempfile::tempdir()?;
+    let path = migrated(directory.path());
+    let sqlite = memory_sqlite::SqliteStore::open(&path)?;
+    rusqlite::Connection::open(path)?.execute_batch(
+        "INSERT INTO ros_conversations (id, session_key, agent, channel, created_at, updated_at)
+         VALUES ('00000000-0000-4000-8000-000000000001', 'cli:ledger', 'fixture', 'cli',
+                 '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');
+         INSERT INTO ros_messages (id, conversation_id, agent, channel, role, content, created_at)
+         VALUES ('00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001',
+                 'fixture', 'cli', 'user', 'Measure the spring.', '2024-01-01T00:00:00Z');",
+    )?;
+
+    let mut totals = Vec::new();
+    for store in [&pg as &dyn SummaryConversion, &sqlite] {
+        store
+            .control(ConversionControl::Start {
+                rate: Some(1000),
+                include_giants: false,
+            })
+            .await?;
+        let inactivity = jiff::SignedDuration::from_hours(24);
+        assert!(store.claim(inactivity).await?.is_none(), "inventory pass");
+        let lease = store.claim(inactivity).await?.ok_or("fixture lease")?;
+        for estimate in [100, 50] {
+            assert!(
+                store
+                    .admit(
+                        lease,
+                        Some(ConversionCharge {
+                            estimate,
+                            capacity: 1000
+                        })
+                    )
+                    .await?
+            );
+        }
+        store
+            .report(ConversionUsage {
+                estimate: 50,
+                input: 40,
+                output: 5,
+            })
+            .await?;
+        let progress = store.status().await?;
+        totals.push((
+            progress.charged_tokens,
+            progress.provider_input_tokens,
+            progress.provider_output_tokens,
+        ));
+    }
+    assert_eq!(totals, [(140, 40, 5); 2]);
+    Ok(())
 }

@@ -2410,13 +2410,14 @@
         "channel": "cli",
         "channel_id": null,
         "bot_identity": null,
-        "title": null,
+        "title": "how do we deploy the AcmeKit service to staging",
         "settings": "{}",
         "active": 1,
         "task_id": null,
         "created_at": "2026-10-10T12:00:00.000Z",
         "updated_at": "2026-10-10T12:00:00.000Z",
-        "owner_user_id": null
+        "owner_user_id": null,
+        "title_from_capture": 0
       },
       {
         "id": "00000000-0000-4000-8000-000000000021",

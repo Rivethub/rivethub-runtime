@@ -40,7 +40,13 @@ rh update                          # install the latest release
 and Hermes. After that, sessions are captured as you work, and each connected tool can search them through the
 `memory_search`, `memory_browse` and related MCP tools.
 
+For `memory_search`, use a few specific keywords instead of a full sentence. Include names, identifiers, error text, or the subject, such as `build cache timeout`. If nothing matches, try a second set of keywords.
+
 `rh --help` lists every command.
+
+Historical summary conversion waits five minutes before a second pass after exhausting its transient model retries.
+This gives model contention time to clear on a short queue. Set
+`RIVETHUB_SUMMARY_CONVERSION_SECOND_PASS_DELAY_MINUTES` on the worker to choose a delay from 1 to 1440 minutes.
 
 ## Layout
 

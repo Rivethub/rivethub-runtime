@@ -35,6 +35,7 @@ pub struct ExtractEntities {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntityLeaf {
+    pub delivery: Option<crate::wiki::builder::SummaryDelivery>,
     pub id: Uuid,
     pub conversation_id: Option<Uuid>,
     pub content: String,
@@ -447,6 +448,8 @@ pub struct BindRequest {
 
 #[derive(Debug, Error)]
 pub enum EntityStoreError {
+    #[error(transparent)]
+    Reference(#[from] crate::memory::summary_reference::SummaryReferenceError),
     #[error("wiki directory is not configured")]
     DirectoryMissing,
     #[error("entity page write failed: {0}")]
@@ -475,4 +478,11 @@ pub struct MentionNote {
     pub session_at: Timestamp,
     pub session_id: Uuid,
     pub owner: String,
+}
+
+impl EntityStoreError {
+    #[must_use]
+    pub const fn obsolete_input(&self) -> bool {
+        matches!(self, Self::Reference(_) | Self::Missing(_))
+    }
 }

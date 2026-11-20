@@ -49,6 +49,8 @@ pub enum ModelChunk {
     Done,
 }
 
+pub type ModelObserver<'a> = dyn Fn(&ModelChunk) + Send + Sync + 'a;
+
 pub type ModelStreamItem = Result<ModelChunk, ModelProviderError>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,7 +78,23 @@ pub struct LlmResponse {
 
 #[async_trait]
 pub trait ModelProvider: Send + Sync {
+    async fn count_tokens(
+        &self,
+        _model: &str,
+        _text: &str,
+    ) -> Result<Option<usize>, ModelProviderError> {
+        Ok(None)
+    }
+
     async fn chat(&self, request: ModelRequest) -> Result<LlmResponse, ModelProviderError>;
+
+    async fn chat_observed(
+        &self,
+        request: ModelRequest,
+        _observe: &ModelObserver<'_>,
+    ) -> Result<LlmResponse, ModelProviderError> {
+        self.chat(request).await
+    }
 
     async fn stream(
         &self,

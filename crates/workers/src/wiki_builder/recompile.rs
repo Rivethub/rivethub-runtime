@@ -33,7 +33,10 @@ pub async fn handle_recompile_wiki(
     let report = tokio::select! {
         biased;
         () = env.cancel.cancelled() => return Err(WorkerError::Cancelled),
-        result = recompile(env.store, &merger, &job, env.now) => result?,
+        result = recompile(env.store, &merger, &job, env.now) => match result {
+            Err(error) if error.obsolete_input() => return Ok(()),
+            result => result?,
+        },
     };
     let Some(report) = report else {
         tracing::info!("recompile-wiki {}: no page file", job.slug.as_ref());

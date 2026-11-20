@@ -76,6 +76,7 @@ fn summary(
     text: &str,
 ) -> Result<kernel::wiki::recompile::SourceSummary, jiff::Error> {
     Ok(kernel::wiki::recompile::SourceSummary {
+        input: None,
         topic: topic.map(str::to_owned),
         at: at.parse()?,
         content: text.to_owned(),

@@ -1,10 +1,6 @@
-use kernel::memory::ConversationHead;
 use kernel::memory::TitleAnswer;
 use kernel::memory::fit_title;
-use kernel::memory::names_session;
-use kernel::memory::summary_title;
 use kernel::memory::title_schema;
-use kernel::memory::wants_model_title;
 use kernel::model::ModelOptions;
 use kernel::model::ModelProvider;
 use kernel::model::ModelRequest;
@@ -18,7 +14,6 @@ use super::llm::llm_error;
 use crate::error::WorkerError;
 
 pub const TITLE_SYSTEM_PROMPT: &str = "You title a person's work sessions. Read the session's summary and answer with a short title, 3 to 7 words and never more than 8, that names the work: the task done, the thing changed or the question answered. Use the summary's own names for projects, PRs, hosts and tools. Never describe the session itself: no harness, agent or channel names, ids, dates or times, and no words like session, batch, conversation or summary. Sentence case, no final period. Answer with JSON: {\"title\": \"<the title>\"}.";
-pub const TITLE_LEAVES: i64 = 3;
 const TITLE_INPUT_CHARS: usize = 8_000;
 const TITLE_MAX_TOKENS: u32 = 256;
 
@@ -66,43 +61,44 @@ impl TitleCall<'_> {
     }
 }
 
-pub(super) async fn title_first_leaf(
+pub(crate) async fn handle_opening_title(
     env: &SummarizeEnv<'_>,
-    head: &ConversationHead,
-    leaf: &str,
+    id: uuid::Uuid,
 ) -> Result<(), WorkerError> {
-    let after = ConversationHead {
-        title: after_leaf(head.title.as_deref(), leaf),
-        ..head.clone()
+    let Some(opening) = env.store.opening_title(id).await? else {
+        return Ok(());
     };
-    if !wants_model_title(&after) {
+    if !opening.armed {
         return Ok(());
     }
-    let call = TitleCall {
-        provider: env.provider,
-        model: &env.settings.model,
-        cancel: env.cancel,
+    let suggested = if opening.wants_model() {
+        let call = TitleCall {
+            provider: env.provider,
+            model: &env.settings.model,
+            cancel: env.cancel,
+        };
+        match call.name(&[&opening.content]).await? {
+            Named::Title(title) => Some(title),
+            Named::Unfit(_) => None,
+        }
+    } else {
+        None
     };
-    match call.name(&[leaf]).await {
-        Ok(Named::Title(title)) => {
-            if env.store.retitle(head.id, &title).await? {
-                tracing::info!("titled {}: {title}", head.id);
-            }
-        }
-        Ok(Named::Unfit(answer)) => {
-            tracing::info!("kept the title of {}: unfit answer {answer:?}", head.id);
-        }
-        Err(WorkerError::Cancelled) => return Err(WorkerError::Cancelled),
-        Err(error) => tracing::warn!("could not title {}: {error}", head.id),
-    }
+    env.store
+        .finish_opening_title(&opening, suggested.as_deref())
+        .await?;
     Ok(())
 }
 
-fn after_leaf(current: Option<&str>, leaf: &str) -> Option<String> {
-    match current {
-        Some(title) if names_session(title) => Some(title.to_owned()),
-        _ => summary_title(leaf).or_else(|| current.map(str::to_owned)),
+pub(crate) async fn handle_enqueue_openings(env: &SummarizeEnv<'_>) -> Result<(), WorkerError> {
+    let jobs = kernel::tenancy::Scope::Maintenance
+        .run(env.store.undelivered_openings())
+        .await?;
+    for job in jobs {
+        super::llm::cancelled(env)?;
+        env.queue.enqueue(job).await.map_err(WorkerError::queue)?;
     }
+    Ok(())
 }
 
 fn input(summaries: &[&str]) -> String {

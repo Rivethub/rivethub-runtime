@@ -6,6 +6,7 @@ pub(super) fn predicate(table: ImportTable, mark: &str) -> String {
         ImportTable::Messages => messages(mark),
         ImportTable::Summaries => summaries(mark),
         ImportTable::SummarySources => summary_sources(mark),
+        ImportTable::SummaryDeliveries => deliveries(mark),
         ImportTable::Tags => tags(mark),
         ImportTable::TagTaxonomy => taxonomy(mark),
         ImportTable::WikiTopics => topics(mark),
@@ -21,13 +22,16 @@ pub(super) fn predicate(table: ImportTable, mark: &str) -> String {
 fn summary_touch(mark: &str) -> String {
     format!(
         "created_at >= {mark} OR earliest_at >= {mark} OR latest_at >= {mark} \
-         OR id IN (SELECT summary_id FROM ros_wiki_extractions WHERE extracted_at >= {mark})"
+         OR id IN (SELECT summary_id FROM ros_wiki_extractions WHERE extracted_at >= {mark}) \
+         OR (pipeline_version = 7 AND id IN (SELECT summary_id FROM ros_wiki_citations WHERE cited_at >= {mark}))"
     )
 }
 
 fn summaries(mark: &str) -> String {
     format!(
-        "{touch} OR id IN (\
+        "({touch}) OR (pipeline_version = 7 AND conversation_id IN (\
+            SELECT conversation_id FROM ros_summaries WHERE pipeline_version = 7 AND ({touch}))) \
+         OR id IN (\
             WITH RECURSIVE chain(id) AS (\
                 SELECT parent_id FROM ros_summaries \
                  WHERE parent_id IS NOT NULL AND ({touch}) \
@@ -44,8 +48,10 @@ fn messages(mark: &str) -> String {
     format!(
         "created_at >= {mark} OR id IN (\
             SELECT message_id FROM ros_summary_sources \
-             WHERE summary_id IN (SELECT id FROM ros_summaries WHERE {summaries}))",
-        summaries = summaries(mark)
+             WHERE summary_id IN (SELECT id FROM ros_summaries WHERE {summaries})) \
+         OR id IN (SELECT message_id FROM ros_summary_deliveries WHERE {deliveries})",
+        summaries = summaries(mark),
+        deliveries = deliveries(mark)
     )
 }
 
@@ -69,6 +75,14 @@ fn summary_sources(mark: &str) -> String {
     format!(
         "summary_id IN (SELECT id FROM ros_summaries WHERE {summaries})",
         summaries = summaries(mark)
+    )
+}
+
+fn deliveries(mark: &str) -> String {
+    format!(
+        "conversation_id IN (SELECT conversation_id FROM ros_summaries
+                             WHERE pipeline_version = 7 AND ({}))",
+        summaries(mark)
     )
 }
 

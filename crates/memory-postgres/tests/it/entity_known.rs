@@ -168,6 +168,7 @@ async fn commit(
         history: Vec::new(),
     };
     let leaf = leaf(name, start);
+    crate::common::seed_entity_leaf(memory.pool(), &leaf).await?;
     memory
         .commit(
             std::slice::from_ref(&leaf),
@@ -226,6 +227,7 @@ fn named<'a>(known: &'a [KnownEntity], name: &str) -> Option<&'a KnownEntity> {
 
 fn leaf(content: &str, start: &str) -> EntityLeaf {
     EntityLeaf {
+        delivery: None,
         id: Uuid::new_v4(),
         conversation_id: None,
         content: content.to_owned(),

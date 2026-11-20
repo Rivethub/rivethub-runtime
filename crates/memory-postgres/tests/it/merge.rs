@@ -60,7 +60,7 @@ async fn capture(
     Ok(())
 }
 
-async fn source_database(family: &PgPool) -> Result<PgPool, Box<dyn std::error::Error>> {
+pub(super) async fn source_database(family: &PgPool) -> Result<PgPool, Box<dyn std::error::Error>> {
     let source: String =
         sqlx::query_scalar("SELECT 'rh_merge_' || substr(md5(current_database()), 1, 16)")
             .fetch_one(family)
@@ -202,5 +202,841 @@ async fn a_second_store_merges_in_private_under_its_owner(pool: PgPool) -> TestR
     sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE \"{name}\"")))
         .execute(&pool)
         .await?;
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_archive_merge_preserves_receipts_passages_and_the_winning_tree(
+    pool: PgPool,
+) -> TestResult {
+    use kernel::memory::{MemoryStore as _, SummaryKind, SummaryOwner};
+
+    let source_pool = source_database(&pool).await?;
+    let family = PostgresMemory::new(pool.clone()).with_summary_index_key([0xab; 32]);
+    let source = PostgresMemory::new(source_pool.clone()).with_summary_index_key([0xab; 32]);
+    let fixture = std::fs::read_to_string(testkit::recording("summary-archive/top-down.txt"))?;
+    let cancel = CancellationToken::new();
+    source.import_memory_dump(&fixture, false, &cancel).await?;
+    capture(&family, "alice", &[("cli:top-down", 1)]).await?;
+    sqlx::query(
+        "INSERT INTO rh_summaries (conversation_id, content, owner_user_id)
+         SELECT id, 'Destination notes', owner_user_id FROM rh_conversations WHERE session_key = 'cli:top-down'",
+    ).execute(&pool).await?;
+    let request = MergeRequest {
+        owner: Owner::new("alice".to_owned())?,
+        moves: BTreeMap::new(),
+        dry_run: false,
+    };
+    let deferred = family.merge_store(&source, &request, &cancel).await?;
+    assert_eq!(deferred.kept_family, ["cli:top-down"]);
+    assert_eq!(deferred.inserted.get("rh_summary_passages"), Some(&0));
+
+    sqlx::raw_sql(
+        "INSERT INTO rh_summary_passages (id, record_id, ordinal, char_start, char_end, content,
+             earliest_at, latest_at, index_key)
+         SELECT gen_random_uuid(), id, 0, 0, length(content), content, earliest_at, latest_at, input_key
+         FROM rh_summaries WHERE kind = 'session';
+         UPDATE rh_summary_passages SET embedding = array_fill(0.5::real, array[1024])::halfvec;
+         UPDATE rh_summaries SET index_needs_repair = false;",
+    ).execute(&source_pool).await?;
+    let ready = family.merge_store(&source, &request, &cancel).await?;
+    assert_eq!(ready.replaced, ["cli:top-down"]);
+    assert_eq!(ready.dropped_legacy_summaries, 3);
+    assert_eq!(ready.inserted.get("rh_summary_passages"), Some(&2));
+    assert_eq!(ready.inserted.get("rh_summary_deliveries"), Some(&2));
+    let dag = family
+        .summary_dag(&SummaryOwner::Session("cli:top-down".to_owned()))
+        .await?;
+    assert_eq!(dag.summaries.len(), 4);
+    assert!(
+        dag.summaries
+            .iter()
+            .any(|node| node.kind == SummaryKind::Section)
+    );
+    let repeated = family.merge_store(&source, &request, &cancel).await?;
+    assert_eq!(repeated.inserted.get("rh_summaries"), Some(&0));
+    Ok(())
+}
+
+fn one_indexed_summary(node: Uuid, text: &str, specification: u8) -> String {
+    let vector = format!("[{}0]", "0,".repeat(1023));
+    let fingerprint = format!("{specification:02x}").repeat(32);
+    let chars = text.chars().count();
+    let conversation = Uuid::from_u128(0xc1);
+    let message = Uuid::from_u128(0xc2);
+    let passage = Uuid::from_u128(node.as_u128() + 100);
+    format!(
+        "COPY public.ros_conversations (id, session_key, agent, channel, owner_user_id) FROM stdin;
+{conversation}\tcli:keep\tfixture\tcli\talice
+\\.
+COPY public.ros_messages (id, conversation_id, agent, channel, role, content, created_at, owner_user_id) FROM stdin;
+{message}\t{conversation}\tfixture\tcli\tuser\tMeasure the spring.\t2024-01-01\talice
+\\.
+COPY public.ros_summaries (id, conversation_id, kind, depth, content, owner_user_id, message_count, earliest_at, latest_at, pipeline_version, summary_ordinal, source_first, source_last, input_key) FROM stdin;
+{node}\t{conversation}\tsession\t2\t{text}\talice\t1\t2024-01-01\t2024-01-01\t7\t0\t1\t1\t\\\\x{}
+\\.
+COPY public.ros_summary_sources (summary_id, message_id, ordinal) FROM stdin;
+{node}\t{message}\t1
+\\.
+COPY public.ros_summary_passages (id, record_id, ordinal, char_start, char_end, content, earliest_at, latest_at, index_key, embedding) FROM stdin;
+{passage}\t{node}\t0\t0\t{chars}\t{text}\t2024-01-01\t2024-01-01\t\\\\x{fingerprint}\t{vector}
+\\.
+-- PostgreSQL database dump complete\n",
+        "ab".repeat(32)
+    )
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_foreign_model_passage_is_cleared_during_import(pool: PgPool) -> TestResult {
+    let store = PostgresMemory::new(pool.clone()).with_summary_index_key([0xab; 32]);
+    let root = Uuid::from_u128(0xc5);
+    let dump = one_indexed_summary(root, "Alpha beta gamma.", 0xcd);
+    let report = store
+        .import_memory_dump(&dump, false, &CancellationToken::new())
+        .await?;
+    assert_eq!(report.summary_records_needing_reembedding, 1);
+    let result: (bool, bool, bool) = sqlx::query_as(
+        "SELECT rh_summary_record_indexed(s.id), s.index_needs_repair, p.embedding IS NULL
+         FROM rh_summaries s JOIN rh_summary_passages p ON p.record_id = s.id WHERE s.id = $1",
+    )
+    .bind(root)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(result, (false, true, true));
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_reports_a_complete_incoming_tree_with_a_different_id(pool: PgPool) -> TestResult {
+    assert_keeps_destination_tree(pool, false).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_reports_an_incoming_tree_over_a_legacy_destination(pool: PgPool) -> TestResult {
+    assert_keeps_destination_tree(pool, true).await
+}
+
+async fn assert_keeps_destination_tree(pool: PgPool, legacy: bool) -> TestResult {
+    let source_pool = source_database(&pool).await?;
+    let family = PostgresMemory::new(pool.clone()).with_summary_index_key([0xab; 32]);
+    let source = PostgresMemory::new(source_pool.clone()).with_summary_index_key([0xab; 32]);
+    let existing = Uuid::from_u128(0xa1);
+    let incoming = Uuid::from_u128(0xa2);
+    let cancel = CancellationToken::new();
+    family
+        .import_memory_dump(
+            &one_indexed_summary(existing, "Destination session", 0xab),
+            false,
+            &cancel,
+        )
+        .await?;
+    if legacy {
+        sqlx::raw_sql("DELETE FROM rh_summary_passages; UPDATE rh_summaries SET kind = 'leaf', pipeline_version = 6")
+            .execute(&pool)
+            .await?;
+    }
+    source
+        .import_memory_dump(
+            &one_indexed_summary(incoming, "Incoming finished session", 0xab),
+            false,
+            &cancel,
+        )
+        .await?;
+    if legacy {
+        sqlx::raw_sql(
+            "SET LOCAL rivet.defer_embed_enqueue = 'on';
+             INSERT INTO rh_summaries (conversation_id, content, owner_user_id)
+             SELECT id, 'Invented stale source leaf', owner_user_id FROM rh_conversations",
+        )
+        .execute(&source_pool)
+        .await?;
+    }
+    let ready: bool = sqlx::query_scalar("SELECT rh_summary_record_indexed($1)")
+        .bind(incoming)
+        .fetch_one(&source_pool)
+        .await?;
+    assert!(ready);
+    let report = family
+        .merge_store(
+            &source,
+            &MergeRequest {
+                owner: Owner::new("alice".to_owned())?,
+                moves: BTreeMap::new(),
+                dry_run: false,
+            },
+            &cancel,
+        )
+        .await?;
+    assert_eq!(
+        report.dropped_summary_trees,
+        [memory_postgres::merge::DroppedSummaryTree {
+            conversation: Uuid::from_u128(0xc1),
+            session_key: "cli:keep".to_owned(),
+            incoming_session: incoming,
+            destination_session: (!legacy).then_some(existing),
+        }]
+    );
+    assert_eq!(report.dropped_legacy_summaries, u64::from(legacy));
+    let summary: (Uuid, String) = sqlx::query_as("SELECT id, content FROM rh_summaries")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(summary, (existing, "Destination session".to_owned()));
+    assert_eq!(report.inserted.get("rh_summary_passages"), Some(&0));
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn incremental_merge_reopens_a_summarized_session_once(pool: PgPool) -> TestResult {
+    use jiff::Timestamp;
+    use kernel::memory::settlement::SettleStatus;
+    use kernel::memory::{MemoryStore as _, SummaryStore as _};
+
+    let source_pool = source_database(&pool).await?;
+    let family = PostgresMemory::new(pool.clone()).with_summary_index_key([0xab; 32]);
+    let source = PostgresMemory::new(source_pool.clone()).with_summary_index_key([0xab; 32]);
+    let conversation = Uuid::from_u128(0xc1);
+    let root = Uuid::from_u128(0xa1);
+    let text = "The spring fits the brass housing.";
+    let dump = one_indexed_summary(root, text, 0xab);
+    let cancel = CancellationToken::new();
+    family.import_memory_dump(&dump, false, &cancel).await?;
+    source.import_memory_dump(&dump, false, &cancel).await?;
+    sqlx::query(
+        "INSERT INTO rh_summary_state (conversation_id, input_revision, last_input_at,
+            settled_at, summarized_through, failed_revision, historical_only)
+         VALUES ($1, 1, '2024-01-01', '2024-01-02', 1, 1, true)",
+    )
+    .bind(conversation)
+    .execute(&pool)
+    .await?;
+    let new_conversation = Uuid::from_u128(0xc4);
+    append_merge_messages(&source_pool, conversation, new_conversation).await?;
+
+    let mut request = MergeRequest {
+        owner: Owner::new("alice".to_owned())?,
+        moves: BTreeMap::new(),
+        dry_run: true,
+    };
+    let before = family
+        .summary_state(conversation)
+        .await?
+        .ok_or("original state")?;
+    let dry_run = family.merge_store(&source, &request, &cancel).await?;
+    assert!(!dry_run.committed);
+    assert_eq!(dry_run.inserted.get("rh_messages"), Some(&2));
+    assert_eq!(
+        family.summary_state(conversation).await?,
+        Some(before.clone())
+    );
+    let messages: i64 = sqlx::query_scalar("SELECT count(*) FROM rh_messages")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(messages, 1);
+
+    request.dry_run = false;
+    let merged = family.merge_store(&source, &request, &cancel).await?;
+    assert_eq!(merged.inserted.get("rh_messages"), Some(&2));
+    let after = family
+        .summary_state(conversation)
+        .await?
+        .ok_or("reopened state")?;
+    assert_eq!(after.input_revision, before.input_revision + 1);
+    assert_eq!(after.summarized_through, before.summarized_through);
+    assert!(after.last_input_at > before.last_input_at);
+    assert_eq!(after.unsettled_since, Some(after.last_input_at));
+    assert_eq!(after.settled_at, None);
+    assert_eq!(after.failed_revision, None);
+    assert!(!after.historical_only);
+
+    assert_merged_tree_searchable(&family, root, text).await?;
+    let again = family.merge_store(&source, &request, &cancel).await?;
+    assert_eq!(again.inserted.get("rh_messages"), Some(&0));
+    assert_eq!(
+        family.summary_state(conversation).await?,
+        Some(after.clone())
+    );
+
+    let settled = family
+        .mark_summary_settled("cli:keep", &request.owner)
+        .await?
+        .ok_or("manual settlement")?;
+    assert_eq!(settled.status, SettleStatus::Settled);
+    assert_eq!(
+        family.live_candidates(Uuid::nil(), 10).await?,
+        [(conversation, after.input_revision)]
+    );
+
+    assert_eq!(family.summary_state(new_conversation).await?, None);
+    let now = Timestamp::now();
+    family.expire_summary_page(None, now, now, 10).await?;
+    let historical = family
+        .summary_state(new_conversation)
+        .await?
+        .ok_or("historical state")?;
+    assert!(historical.historical_only);
+    assert_eq!(historical.input_revision, 0);
+    assert!(historical.settled_at.is_some());
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn merge_replacement_stays_live_and_settles(pool: PgPool) -> TestResult {
+    use jiff::{SignedDuration, Timestamp};
+    use kernel::memory::SummaryStore as _;
+
+    let source_pool = source_database(&pool).await?;
+    let family = PostgresMemory::new(pool.clone());
+    let source = PostgresMemory::new(source_pool.clone());
+    capture(&family, "alice", &[(BOTH_SMALLER, 1)]).await?;
+    capture(&source, "alice", &[(BOTH_SMALLER, 4)]).await?;
+    let session = "SELECT id FROM rh_conversations WHERE session_key = $1";
+    let original: Uuid = sqlx::query_scalar(session)
+        .bind(BOTH_SMALLER)
+        .fetch_one(&pool)
+        .await?;
+    let replacement: Uuid = sqlx::query_scalar(session)
+        .bind(BOTH_SMALLER)
+        .fetch_one(&source_pool)
+        .await?;
+    assert_ne!(original, replacement);
+    let before = family
+        .summary_state(original)
+        .await?
+        .ok_or("live capture")?;
+    assert_eq!(before.input_revision, 1);
+    assert_eq!(before.settled_at, None);
+    assert!(!before.historical_only);
+
+    let cancel = CancellationToken::new();
+    let mut request = MergeRequest {
+        owner: Owner::new("alice".to_owned())?,
+        moves: BTreeMap::new(),
+        dry_run: true,
+    };
+    let preview = family.merge_store(&source, &request, &cancel).await?;
+    assert!(!preview.committed);
+    assert_eq!(preview.replaced, [BOTH_SMALLER]);
+    assert_eq!(family.summary_state(original).await?, Some(before));
+    assert_eq!(family.summary_state(replacement).await?, None);
+
+    request.dry_run = false;
+    let merged = family.merge_store(&source, &request, &cancel).await?;
+    assert_eq!(merged.replaced, [BOTH_SMALLER]);
+    assert_eq!(merged.inserted.get("rh_messages"), Some(&4));
+    assert_eq!(family.summary_state(original).await?, None);
+    let state = family
+        .summary_state(replacement)
+        .await?
+        .ok_or("missing live state on replacement")?;
+    assert_eq!(state.input_revision, 1);
+    assert_eq!(state.unsettled_since, Some(state.last_input_at));
+    assert_eq!(state.settled_at, None);
+    assert!(!state.historical_only);
+
+    let rerun = family.merge_store(&source, &request, &cancel).await?;
+    assert_eq!(rerun.inserted.get("rh_messages"), Some(&0));
+    assert_eq!(family.summary_state(replacement).await?, Some(state));
+
+    let now = Timestamp::now().checked_add(SignedDuration::from_hours(48))?;
+    family.expire_summary_page(None, now, now, 10).await?;
+    assert_eq!(
+        family.live_candidates(Uuid::nil(), 10).await?,
+        [(replacement, 1)]
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn merge_samples_after_manual_settle_commits(pool: PgPool) -> TestResult {
+    merge_settle_order(pool, true).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn manual_settle_waits_for_merge_and_settles_replacement(pool: PgPool) -> TestResult {
+    merge_settle_order(pool, false).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn merge_keeps_a_late_capture_live_after_manual_settle(pool: PgPool) -> TestResult {
+    use kernel::memory::{MemoryStore as _, SummaryStore as _, settlement::SettleStatus};
+    use std::time::Duration;
+
+    const LATE_IMPORT: &str = r#"import:["fixture-node","late-session"]"#;
+
+    let source = PostgresMemory::new(source_database(&pool).await?);
+    let family = PostgresMemory::new(pool.clone());
+    let owner = Owner::new("alice".to_owned())?;
+    let options = CaptureOptions::owned_by(&owner);
+    let session = wire::capture::owned_import_key(owner.as_str(), LATE_IMPORT)?
+        .ok_or("owned import session key")?;
+    let replacement: Uuid = source
+        .capture_batch(&batch(LATE_IMPORT, 4), &options)
+        .await?
+        .conversation_id
+        .parse()?;
+    capture(&source, "alice", &[(BOTH_LARGER, 1)]).await?;
+    capture(&family, "alice", &[(BOTH_LARGER, 1)]).await?;
+    pause_merge_plan(&pool).await?;
+    let mut before_sample = pool.begin().await?;
+    let capture_blocker: i32 =
+        sqlx::query_scalar("SELECT pg_backend_pid() FROM pg_advisory_xact_lock(176, 4)")
+            .fetch_one(&mut *before_sample)
+            .await?;
+    sqlx::query("SELECT id FROM rh_conversations WHERE session_key = $1 FOR UPDATE")
+        .bind(BOTH_LARGER)
+        .execute(&mut *before_sample)
+        .await?;
+    let mut after_sample = pool.begin().await?;
+    let settle_blocker: i32 =
+        sqlx::query_scalar("SELECT pg_backend_pid() FROM pg_advisory_xact_lock(176, 5)")
+            .fetch_one(&mut *after_sample)
+            .await?;
+    let request = MergeRequest {
+        owner: owner.clone(),
+        moves: BTreeMap::new(),
+        dry_run: false,
+    };
+    let cancel = CancellationToken::new();
+    let (merged, original) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::try_join!(
+            async {
+                Ok::<_, Box<dyn std::error::Error>>(
+                    family.merge_store(&source, &request, &cancel).await?,
+                )
+            },
+            async {
+                merge_settle_waiter(&pool, capture_blocker).await?;
+                let original: Uuid = family
+                    .capture_batch(&batch(LATE_IMPORT, 1), &options)
+                    .await?
+                    .conversation_id
+                    .parse()?;
+                let state = family
+                    .summary_state(original)
+                    .await?
+                    .ok_or("late capture")?;
+                assert!(state.historical_only);
+                before_sample.commit().await?;
+
+                merge_settle_waiter(&pool, settle_blocker).await?;
+                let settled = family
+                    .mark_summary_settled(&session, &owner)
+                    .await?
+                    .ok_or("manual settle lost the late capture")?;
+                assert_eq!(settled.status, SettleStatus::Settled);
+                assert_eq!(settled.conversation_id, original);
+                after_sample.commit().await?;
+                Ok(original)
+            },
+        )
+    })
+    .await
+    .map_err(|_| "late capture, manual settle and merge did not finish in order")??;
+
+    assert_eq!(merged.replaced, [session]);
+    assert_ne!(replacement, original);
+    let state = family.summary_state(replacement).await?;
+    assert!(
+        state.is_some_and(|state| !state.historical_only),
+        "replacement lost live state from the late capture"
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn merge_aborts_when_a_late_destination_gains_messages(pool: PgPool) -> TestResult {
+    merge_with_late_append(pool, false).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn merge_dry_run_aborts_when_a_late_destination_gains_messages(pool: PgPool) -> TestResult {
+    merge_with_late_append(pool, true).await
+}
+
+async fn merge_with_late_append(pool: PgPool, dry_run: bool) -> TestResult {
+    use std::time::Duration;
+
+    const LATE_CONTENT: &str = "Water the basil before noon.";
+
+    let source = PostgresMemory::new(source_database(&pool).await?);
+    let family = PostgresMemory::new(pool.clone());
+    let session = BOTH_LARGER;
+    capture(
+        &source,
+        "alice",
+        &[(session, 2), (BOTH_SMALLER, 1), (CLEO_ONLY, 1)],
+    )
+    .await?;
+    capture(&family, "alice", &[(BOTH_SMALLER, 1)]).await?;
+    pause_merge_plan(&pool).await?;
+    let mut before_plan = pool.begin().await?;
+    let before_blocker: i32 =
+        sqlx::query_scalar("SELECT pg_backend_pid() FROM pg_advisory_xact_lock(176, 4)")
+            .fetch_one(&mut *before_plan)
+            .await?;
+    sqlx::query("SELECT id FROM rh_conversations WHERE session_key = $1 FOR UPDATE")
+        .bind(BOTH_SMALLER)
+        .execute(&mut *before_plan)
+        .await?;
+    let mut after_plan = pool.begin().await?;
+    let after_blocker: i32 =
+        sqlx::query_scalar("SELECT pg_backend_pid() FROM pg_advisory_xact_lock(176, 5)")
+            .fetch_one(&mut *after_plan)
+            .await?;
+    let mut request = MergeRequest {
+        owner: Owner::new("alice".to_owned())?,
+        moves: BTreeMap::new(),
+        dry_run,
+    };
+    let cancel = CancellationToken::new();
+    let options = CaptureOptions::owned_by(&request.owner);
+    let (merged, (destination, before)) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::try_join!(
+            async { Ok(family.merge_store(&source, &request, &cancel).await) },
+            async {
+                merge_settle_waiter(&pool, before_blocker).await?;
+                let destination = family.capture_batch(&batch(session, 1), &options).await?;
+                let destination: Uuid = destination.conversation_id.parse()?;
+                before_plan.commit().await?;
+
+                merge_settle_waiter(&pool, after_blocker).await?;
+                let mut late = batch(session, 2);
+                let last = late.messages.last_mut().ok_or("late message fixture")?;
+                LATE_CONTENT.clone_into(&mut last.content);
+                let captured = family.capture_batch(&late, &options).await?;
+                assert_eq!(captured.conversation_id, destination.to_string());
+                assert_eq!(captured.inserted, 1);
+                let before = destination_messages(&pool, destination).await?;
+                after_plan.commit().await?;
+                Ok::<_, Box<dyn std::error::Error>>((destination, before))
+            },
+        )
+    })
+    .await
+    .map_err(|_| "merge and late capture did not finish in order")??;
+    let Err(error) = merged else {
+        return Err(format!("merge accepted a stale replacement plan: {merged:?}").into());
+    };
+    assert!(
+        error.to_string().contains(&format!(
+            "destination session {session} changed during the merge. Rerunning is safe."
+        )),
+        "{error}"
+    );
+    assert_eq!(before.len(), 2);
+    assert!(before.iter().any(|(_, content)| content == LATE_CONTENT));
+    assert_eq!(destination_messages(&pool, destination).await?, before);
+
+    request.dry_run = false;
+    let rerun = family.merge_store(&source, &request, &cancel).await?;
+    assert!(rerun.committed);
+    assert_eq!(rerun.runs, 1);
+    assert_eq!(rerun.kept_family, [BOTH_SMALLER, session]);
+    assert_eq!(rerun.replaced, [] as [String; 0]);
+    assert_eq!(rerun.inserted.get("rh_messages").copied(), Some(1));
+    assert_eq!(destination_messages(&pool, destination).await?, before);
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn capture_waits_for_the_merge_plan_lock(pool: PgPool) -> TestResult {
+    use std::time::Duration;
+
+    let source = PostgresMemory::new(source_database(&pool).await?);
+    let family = PostgresMemory::new(pool.clone());
+    let session = BOTH_LARGER;
+    capture(&family, "alice", &[(session, 1)]).await?;
+    capture(&source, "alice", &[(session, 2)]).await?;
+    pause_merge_plan(&pool).await?;
+    let mut after_plan = pool.begin().await?;
+    let blocker: i32 =
+        sqlx::query_scalar("SELECT pg_backend_pid() FROM pg_advisory_xact_lock(176, 5)")
+            .fetch_one(&mut *after_plan)
+            .await?;
+    let request = MergeRequest {
+        owner: Owner::new("alice".to_owned())?,
+        moves: BTreeMap::new(),
+        dry_run: false,
+    };
+    let options = CaptureOptions::owned_by(&request.owner);
+    let cancel = CancellationToken::new();
+    let incoming = batch(session, 3);
+    let (merged, captured) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::try_join!(
+            async { Ok(family.merge_store(&source, &request, &cancel).await?) },
+            async {
+                let merging = merge_settle_waiter(&pool, blocker).await?;
+                let capturing = family.capture_batch(&incoming, &options);
+                tokio::pin!(capturing);
+                tokio::select! {
+                    result = &mut capturing => panic!("capture completed before merge released the plan lock: {result:?}"),
+                    waiter = merge_settle_waiter(&pool, merging) => { waiter?; }
+                }
+                after_plan.commit().await?;
+                Ok::<_, Box<dyn std::error::Error>>(capturing.await?)
+            },
+        )
+    })
+    .await
+    .map_err(|_| "merge and capture did not finish in order")??;
+
+    assert_eq!(merged.replaced, [session]);
+    assert_eq!(captured.inserted, 1);
+    let replacement = captured.conversation_id.parse()?;
+    let messages = destination_messages(&pool, replacement).await?;
+    assert_eq!(messages.len(), 3);
+    let late = incoming.messages.last().ok_or("waiting capture fixture")?;
+    assert!(messages.iter().any(|(_, content)| content == &late.content));
+    Ok(())
+}
+
+async fn destination_messages(
+    pool: &PgPool,
+    conversation: Uuid,
+) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT m.id, m.content FROM rh_conversations c
+         JOIN rh_messages m ON m.conversation_id = c.id WHERE c.id = $1 ORDER BY m.id",
+    )
+    .bind(conversation)
+    .fetch_all(pool)
+    .await
+}
+
+async fn pause_merge_plan(pool: &PgPool) -> Result<(), sqlx::Error> {
+    sqlx::raw_sql(
+        "CREATE FUNCTION pause_merge_plan() RETURNS event_trigger LANGUAGE plpgsql AS $$
+         BEGIN
+             IF TG_TAG = 'CREATE TABLE' AND to_regclass('pg_temp.merge_slug_map') IS NOT NULL
+                 AND to_regclass('pg_temp.merge_dupes') IS NULL
+                 AND current_query() NOT LIKE '%ORDER BY t.id FOR UPDATE OF t%' THEN
+                 PERFORM pg_advisory_xact_lock(176, 4);
+             ELSIF TG_TAG = 'CREATE TABLE AS' AND to_regclass('pg_temp.merge_dupes') IS NOT NULL
+                 AND to_regclass('pg_temp.merge_drop_family') IS NULL THEN
+                 PERFORM pg_advisory_xact_lock(176, 5);
+             END IF;
+         END; $$;
+         CREATE EVENT TRIGGER pause_merge_plan ON ddl_command_end
+         WHEN TAG IN ('CREATE TABLE', 'CREATE TABLE AS') EXECUTE FUNCTION pause_merge_plan();",
+    )
+    .execute(pool)
+    .await
+    .map(drop)
+}
+
+async fn merge_settle_order(pool: PgPool, settle_first: bool) -> TestResult {
+    use std::time::Duration;
+
+    use kernel::memory::{MemoryStore as _, SummaryStore as _, settlement::SettleStatus};
+
+    let source = PostgresMemory::new(source_database(&pool).await?);
+    let family = PostgresMemory::new(pool.clone());
+    capture(&family, "alice", &[(BOTH_SMALLER, 1)]).await?;
+    capture(&source, "alice", &[(BOTH_SMALLER, 4)]).await?;
+    let original = prepare_merge_settle_race(&pool, settle_first).await?;
+
+    let mut barrier = pool.begin().await?;
+    let blocker: i32 =
+        sqlx::query_scalar("SELECT pg_backend_pid() FROM pg_advisory_xact_lock(176, 3)")
+            .fetch_one(&mut *barrier)
+            .await?;
+    let request = MergeRequest {
+        owner: Owner::new("alice".to_owned())?,
+        moves: BTreeMap::new(),
+        dry_run: false,
+    };
+    let cancel = CancellationToken::new();
+    let (start_second, second_ready) = tokio::sync::oneshot::channel();
+    let (merge_ready, settle_ready) = if settle_first {
+        (Some(second_ready), None)
+    } else {
+        (None, Some(second_ready))
+    };
+    let merge = async {
+        if let Some(ready) = merge_ready {
+            ready.await?;
+        }
+        Ok::<_, Box<dyn std::error::Error>>(family.merge_store(&source, &request, &cancel).await?)
+    };
+    let settle = async {
+        if let Some(ready) = settle_ready {
+            ready.await?;
+        }
+        Ok::<_, Box<dyn std::error::Error>>(
+            family
+                .mark_summary_settled(BOTH_SMALLER, &request.owner)
+                .await?,
+        )
+    };
+    let (merged, settled, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::try_join!(merge, settle, async {
+            let first = merge_settle_waiter(&pool, blocker).await?;
+            start_second
+                .send(())
+                .map_err(|()| "second writer stopped")?;
+            merge_settle_waiter(&pool, first).await?;
+            barrier.commit().await?;
+            Ok::<_, Box<dyn std::error::Error>>(())
+        })
+    })
+    .await
+    .map_err(|_| "merge and manual settle did not wait in order and finish")??;
+
+    assert_eq!(merged.replaced, [BOTH_SMALLER]);
+    let settled = settled.ok_or("manual settle lost the session")?;
+    assert_eq!(settled.status, SettleStatus::Settled);
+    let replacement: Uuid =
+        sqlx::query_scalar("SELECT id FROM rh_conversations WHERE session_key = $1")
+            .bind(BOTH_SMALLER)
+            .fetch_one(&pool)
+            .await?;
+    let state = family
+        .summary_state(replacement)
+        .await?
+        .ok_or("replacement lost live state")?;
+    assert!(!state.historical_only);
+    if settle_first {
+        assert_eq!(settled.conversation_id, original);
+        assert_eq!(state.settled_at, None);
+    } else {
+        assert_eq!(settled.conversation_id, replacement);
+        assert_eq!(state.settled_at, settled.settled_at);
+        assert_eq!(
+            family.live_candidates(Uuid::nil(), 10).await?,
+            [(replacement, state.input_revision)]
+        );
+    }
+    Ok(())
+}
+
+async fn prepare_merge_settle_race(pool: &PgPool, settle_first: bool) -> Result<Uuid, sqlx::Error> {
+    let original = sqlx::query_scalar(
+        "UPDATE rh_summary_state SET historical_only = true RETURNING conversation_id",
+    )
+    .fetch_one(pool)
+    .await?;
+    sqlx::query(
+        "CREATE FUNCTION pause_merge_settle() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+             PERFORM pg_advisory_xact_lock(176, 3);
+             RETURN NULL;
+         END; $$",
+    )
+    .execute(pool)
+    .await?;
+    let trigger = if settle_first {
+        "CREATE TRIGGER pause_settle BEFORE UPDATE ON rh_summary_state
+         FOR EACH STATEMENT EXECUTE FUNCTION pause_merge_settle()"
+    } else {
+        "CREATE TRIGGER pause_merge BEFORE DELETE ON rh_tags
+         FOR EACH STATEMENT EXECUTE FUNCTION pause_merge_settle()"
+    };
+    sqlx::query(trigger).execute(pool).await?;
+    Ok(original)
+}
+
+async fn merge_settle_waiter(pool: &PgPool, blocker: i32) -> Result<i32, sqlx::Error> {
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(10));
+    loop {
+        interval.tick().await;
+        let waiter = sqlx::query_scalar(
+            "SELECT pid FROM pg_stat_activity
+             WHERE datname = current_database() AND wait_event_type = 'Lock'
+               AND $1 = ANY(pg_blocking_pids(pid))",
+        )
+        .bind(blocker)
+        .fetch_optional(pool)
+        .await?;
+        if let Some(waiter) = waiter {
+            return Ok(waiter);
+        }
+    }
+}
+
+async fn append_merge_messages(
+    source: &PgPool,
+    conversation: Uuid,
+    new_conversation: Uuid,
+) -> TestResult {
+    sqlx::query(
+        "INSERT INTO rh_conversations (id, session_key, agent, channel, owner_user_id)
+         VALUES ($1, 'cli:new', 'fixture', 'cli', 'alice')",
+    )
+    .bind(new_conversation)
+    .execute(source)
+    .await?;
+    sqlx::query(
+        "INSERT INTO rh_messages (id, conversation_id, agent, channel, role, content, created_at, owner_user_id)
+         VALUES ($1, $2, 'fixture', 'cli', 'user', 'The gasket needs replacing.', '2024-01-03', 'alice'),
+                ($3, $4, 'fixture', 'cli', 'user', 'Calibrate the new gauge.', '2024-01-04', 'alice')",
+    )
+    .bind(Uuid::from_u128(0xc3))
+    .bind(conversation)
+    .bind(Uuid::from_u128(0xc5))
+    .bind(new_conversation)
+    .execute(source)
+    .await?;
+
+    Ok(())
+}
+
+async fn assert_merged_tree_searchable(
+    store: &PostgresMemory,
+    root: Uuid,
+    text: &str,
+) -> TestResult {
+    use kernel::memory::{Limit, MemoryScope, MemoryStore as _, SearchMode, SearchQuery};
+
+    let root = root.to_string();
+    let search = store
+        .search(SearchQuery {
+            text: "brass housing".to_owned(),
+            mode: SearchMode::Fts,
+            scope: MemoryScope::Summaries,
+            since: None,
+            before: None,
+            window: None,
+            expand: None,
+            synthesize: None,
+            agent: None,
+            role: None,
+            exclude_roles: Vec::new(),
+            tool_name: None,
+            tag: None,
+            limit: Limit::clamped(Some(10), 10, 1..=50),
+        })
+        .await?;
+    assert!(
+        search
+            .results
+            .iter()
+            .any(|hit| hit.id == root && hit.content == text)
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn merge_accepts_a_store_with_eight_thousand_conversations(pool: PgPool) -> TestResult {
+    let source = PostgresMemory::new(source_database(&pool).await?);
+    let family = PostgresMemory::new(pool.clone());
+    sqlx::query(
+        "INSERT INTO rh_conversations (session_key, agent, owner_user_id)
+         SELECT 'cli:bulk-' || n, 'fixture', 'alice' FROM generate_series(1, 8000) n",
+    )
+    .execute(&pool)
+    .await?;
+    let report = family
+        .merge_store(
+            &source,
+            &MergeRequest {
+                owner: Owner::new("alice".to_owned())?,
+                moves: BTreeMap::new(),
+                dry_run: true,
+            },
+            &CancellationToken::new(),
+        )
+        .await?;
+    assert!(!report.committed);
+    assert_eq!(report.runs, 1);
     Ok(())
 }

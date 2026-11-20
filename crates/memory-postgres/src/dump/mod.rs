@@ -1,6 +1,7 @@
 mod filter;
 mod parse;
 mod relation;
+mod sql;
 
 use jiff::Timestamp;
 use std::collections::BTreeMap;
@@ -30,6 +31,7 @@ pub struct ImportedDump {
     pub source: Option<String>,
     pub host: Option<String>,
     pub rows: BTreeMap<String, u64>,
+    pub summary_records_needing_reembedding: u64,
 }
 
 impl PostgresMemory {
@@ -60,14 +62,21 @@ impl PostgresMemory {
     ) -> Result<ImportedDump, Error> {
         let parsed = parse::parse(dump)?;
         let mut conn = begin(&self.pool).await?;
-        let imported = import_tables(&mut conn, &parsed, cancellation).await;
+        let imported = import_tables(
+            &mut conn,
+            &parsed,
+            cancellation,
+            self.summary_index_key.as_ref(),
+        )
+        .await;
         match imported {
-            Ok(rows) => {
+            Ok((rows, summary_records_needing_reembedding)) => {
                 commit(&mut conn, !dry_run).await?;
                 Ok(ImportedDump {
                     source: parsed.source,
                     host: parsed.host,
                     rows,
+                    summary_records_needing_reembedding,
                 })
             }
             Err(error) => Err(rollback(&mut conn, error).await),
@@ -167,7 +176,8 @@ async fn import_tables(
     conn: &mut PgConnection,
     parsed: &parse::Parsed,
     cancellation: &CancellationToken,
-) -> Result<BTreeMap<String, u64>, Error> {
+    index_key: Option<&[u8; 32]>,
+) -> Result<(BTreeMap<String, u64>, u64), Error> {
     sqlx::query("SET LOCAL rivet.defer_embed_enqueue = 'on'")
         .execute(&mut *conn)
         .await
@@ -179,23 +189,141 @@ async fn import_tables(
     for relation in Relation::ALL {
         rows.insert(relation.table_name().to_owned(), 0);
     }
-    for block in &parsed.blocks {
+    let mut blocks: Vec<_> = parsed.blocks.iter().collect();
+    blocks.sort_by_key(|block| block.relation);
+    for block in blocks {
         cancelled(cancellation)?;
-        let count = copy_in(conn, block).await?;
+        let count = if block.relation == Relation::Summaries {
+            copy_summaries(conn, block).await?
+        } else {
+            copy_relation(conn, block).await?
+        };
         rows.insert(block.relation.table_name().to_owned(), count);
     }
-    Ok(rows)
+    validate_summary_graph(conn).await?;
+    mark_summary_index_repairs(conn, index_key).await?;
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM rh_summaries WHERE kind IN ('session','part') AND index_needs_repair",
+    )
+    .fetch_one(conn)
+    .await
+    .map_err(|source| Error::operation("count summary index repairs", source))?;
+    Ok((rows, u64::try_from(pending)?))
 }
 
-async fn copy_in(conn: &mut PgConnection, block: &parse::Block) -> Result<u64, Error> {
+pub(crate) async fn validate_summary_graph(conn: &mut PgConnection) -> Result<(), Error> {
+    let invalid: bool = sqlx::query_scalar(sql::SUMMARY_GRAPH)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(|source| Error::operation("validate summary graph", source))?;
+    if invalid {
+        return Err(Error::DumpMessage(
+            "incomplete or inconsistent top-down summary graph".into(),
+        ));
+    }
+    Ok(())
+}
+
+async fn mark_summary_index_repairs(
+    conn: &mut PgConnection,
+    key: Option<&[u8; 32]>,
+) -> Result<(), Error> {
+    let key = key.map(<[_; 32]>::as_slice);
+    for statement in [
+        "UPDATE rh_summary_passages SET embedding = NULL
+         WHERE embedding IS NOT NULL AND index_key IS DISTINCT FROM $1",
+        "UPDATE rh_summaries SET index_key = $1
+         WHERE kind IN ('session', 'part') AND index_key IS DISTINCT FROM $1",
+    ] {
+        sqlx::query(statement)
+            .bind(key)
+            .execute(&mut *conn)
+            .await
+            .map_err(|error| Error::operation("import summary embedding specification", error))?;
+    }
+    sqlx::query(
+        "UPDATE rh_summaries s SET index_needs_repair = true
+         WHERE s.kind IN ('session', 'part') AND NOT s.index_needs_repair
+           AND NOT rh_summary_record_indexed(s.id)",
+    )
+    .execute(conn)
+    .await
+    .map_err(|source| Error::operation("mark summary index repairs", source))?;
+    Ok(())
+}
+
+async fn copy_relation(conn: &mut PgConnection, block: &parse::Block) -> Result<u64, Error> {
+    let relation = block.relation.rh();
+    let stage = format!("dump_{relation}");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE TEMP TABLE {stage} (LIKE public.{relation} INCLUDING DEFAULTS) ON COMMIT DROP"
+    )))
+    .execute(&mut *conn)
+    .await
+    .map_err(|source| Error::operation("stage dump relation", source))?;
+    copy_in(conn, &stage, block).await?;
+    let columns = block.columns.join(", ");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO public.{relation} ({columns}) SELECT {columns} FROM {stage}"
+    )))
+    .execute(conn)
+    .await
+    .map(|done| done.rows_affected())
+    .map_err(|source| Error::operation("load dump relation", source))
+}
+
+async fn copy_summaries(conn: &mut PgConnection, block: &parse::Block) -> Result<u64, Error> {
+    sqlx::raw_sql(
+        "CREATE TEMP TABLE dump_summaries (LIKE rh_summaries INCLUDING DEFAULTS) ON COMMIT DROP;
+         ALTER TABLE dump_summaries ALTER COLUMN owner_user_id DROP NOT NULL,
+             ALTER COLUMN embedding TYPE text",
+    )
+    .execute(&mut *conn)
+    .await
+    .map_err(|source| Error::operation("stage dump summaries", source))?;
+    copy_in(conn, "dump_summaries", block).await?;
+
+    let mut columns: Vec<_> = block.columns.iter().map(String::as_str).collect();
+    for required in ["kind", "owner_user_id"] {
+        if !columns.contains(&required) {
+            columns.push(required);
+        }
+    }
+    let depth_kind = "CASE WHEN s.depth = 0 THEN 'leaf' WHEN s.depth = 1 THEN 'branch'
+                           WHEN s.depth >= 2 THEN 'root' END";
+    let expressions = columns
+        .iter()
+        .map(|column| match *column {
+            "kind" if !block.columns.iter().any(|name| name == "kind") => depth_kind.to_owned(),
+            "kind" => format!(
+                "CASE WHEN s.pipeline_version < 7 AND s.kind NOT IN
+                 ('leaf', 'branch', 'root', 'session', 'part', 'section')
+                 THEN {depth_kind} ELSE s.kind END"
+            ),
+            "owner_user_id" => "coalesce(s.owner_user_id, c.owner_user_id)".to_owned(),
+            "embedding" => {
+                "CASE WHEN s.pipeline_version < 7 THEN s.embedding::halfvec END".to_owned()
+            }
+            name => format!("s.{name}"),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO rh_summaries ({}) SELECT {expressions}
+         FROM dump_summaries s LEFT JOIN rh_conversations c ON c.id = s.conversation_id",
+        columns.join(", ")
+    )))
+    .execute(conn)
+    .await
+    .map(|done| done.rows_affected())
+    .map_err(|source| Error::operation("load dump summaries", source))
+}
+
+async fn copy_in(conn: &mut PgConnection, table: &str, block: &parse::Block) -> Result<u64, Error> {
     for column in &block.columns {
         ident(column)?;
     }
-    let sql = format!(
-        "COPY {} ({}) FROM STDIN",
-        block.relation.rh(),
-        block.columns.join(", ")
-    );
+    let sql = format!("COPY {table} ({}) FROM STDIN", block.columns.join(", "));
     let mut copy = conn
         .copy_in_raw(&sql)
         .await

@@ -1,3 +1,4 @@
+use crate::summary_replace::{self, FenceError};
 use async_trait::async_trait;
 use kernel::memory::EmbedTable;
 use kernel::memory::EmbedTarget;
@@ -7,6 +8,7 @@ use kernel::memory::LoadedTarget;
 use kernel::memory::StoredChunk;
 use kernel::memory::StoredEmbedding;
 use kernel::memory::Unembeddable;
+use kernel::memory::summary_reference::SummaryReferenceError;
 use pgvector::HalfVector;
 use sqlx::PgConnection;
 use sqlx::PgPool;
@@ -81,7 +83,7 @@ impl EmbeddingStore for PostgresMemory {
     async fn write(&self, stored: StoredEmbedding) -> Result<(), EmbeddingStoreError> {
         match stored.target.table {
             EmbedTable::Messages => write_message(&self.pool, stored).await,
-            EmbedTable::Summaries => write_uuid(&self.pool, SUMMARY_WRITE, stored).await,
+            EmbedTable::Summaries => write_summary(&self.pool, stored).await,
             EmbedTable::MessageChunks => write_uuid(&self.pool, CHUNK_WRITE, stored).await,
             EmbedTable::WikiTopics => write_wiki(&self.pool, stored).await,
         }
@@ -102,7 +104,19 @@ impl EmbeddingStore for PostgresMemory {
     ) -> Result<u32, EmbeddingStoreError> {
         let count = match target.table {
             EmbedTable::Messages => bump_uuid(&self.pool, MESSAGE_NULL, target, error).await?,
-            EmbedTable::Summaries => bump_uuid(&self.pool, SUMMARY_NULL, target, error).await?,
+            EmbedTable::Summaries => {
+                let (mut tx, id, _) = guard_summary(&self.pool, target).await?;
+                let count = sqlx::query_scalar(SUMMARY_NULL)
+                    .bind(id)
+                    .bind(error)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(|source| query_err("record null embedding", source))?;
+                tx.commit()
+                    .await
+                    .map_err(|source| query_err("commit summary embedding", source))?;
+                count
+            }
             EmbedTable::MessageChunks => bump_uuid(&self.pool, CHUNK_NULL, target, error).await?,
             EmbedTable::WikiTopics => bump_slug(&self.pool, target, error).await?,
         };
@@ -330,7 +344,19 @@ async fn mark_row(
 ) -> Result<(), EmbeddingStoreError> {
     match target.table {
         EmbedTable::Messages => mark_uuid(pool, MESSAGE_MARK, target, status, error).await,
-        EmbedTable::Summaries => mark_uuid(pool, SUMMARY_MARK, target, status, error).await,
+        EmbedTable::Summaries => {
+            let (mut tx, id, _) = guard_summary(pool, target).await?;
+            sqlx::query(SUMMARY_MARK)
+                .bind(id)
+                .bind(status)
+                .bind(error)
+                .execute(&mut *tx)
+                .await
+                .map_err(|source| query_err("mark summary embedding", source))?;
+            tx.commit()
+                .await
+                .map_err(|source| query_err("commit summary embedding", source))
+        }
         EmbedTable::MessageChunks => mark_uuid(pool, CHUNK_MARK, target, status, error).await,
         EmbedTable::WikiTopics => mark_slug(pool, target, status, error).await,
     }
@@ -417,4 +443,53 @@ async fn bump_slug(
     .await
     .map_err(|source| query_err("record null wiki embedding", source))?;
     count.ok_or_else(|| missing(&target.id))
+}
+
+async fn guard_summary<'a>(
+    pool: &'a PgPool,
+    target: &EmbedTarget,
+) -> Result<
+    (
+        sqlx::Transaction<'a, sqlx::Postgres>,
+        Uuid,
+        summary_replace::SummaryInput,
+    ),
+    EmbeddingStoreError,
+> {
+    let id = uuid_of(&target.id)?;
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|source| query_err("begin summary embedding", source))?;
+    let input = summary_replace::shared(&mut tx, &[id])
+        .await
+        .map_err(|error| match error {
+            FenceError::Reference(error) => EmbeddingStoreError::SummaryReference(error),
+            FenceError::Query(error) => query_err("lock summary embedding", error),
+        })?
+        .pop()
+        .ok_or(SummaryReferenceError::Gone(id))?;
+    if input.input_key.is_some() {
+        return Err(SummaryReferenceError::Stale(id).into());
+    }
+    Ok((tx, id, input))
+}
+
+async fn write_summary(pool: &PgPool, stored: StoredEmbedding) -> Result<(), EmbeddingStoreError> {
+    refuse_chunks(&stored)?;
+    let (mut tx, id, input) = guard_summary(pool, &stored.target).await?;
+    if kernel::memory::summary_reference::embedding_input_hash(&input.content)
+        != stored.content_hash
+    {
+        return Err(SummaryReferenceError::Stale(id).into());
+    }
+    sqlx::query(SUMMARY_WRITE)
+        .bind(id)
+        .bind(checked_vector(&stored.vector)?)
+        .execute(&mut *tx)
+        .await
+        .map_err(|source| query_err("write summary embedding", source))?;
+    tx.commit()
+        .await
+        .map_err(|source| query_err("commit summary embedding", source))
 }

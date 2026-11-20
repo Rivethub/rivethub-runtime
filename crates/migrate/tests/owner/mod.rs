@@ -7,9 +7,6 @@ pub(crate) async fn migrate_owned_by(
         .bind(owner)
         .execute(&mut *conn)
         .await?;
-    migrate::POSTGRES.run(&mut *conn).await?;
-    sqlx::query("RESET rh.store_owner")
-        .execute(&mut *conn)
-        .await?;
+    migrate::postgres_apply(conn).await?;
     Ok(())
 }

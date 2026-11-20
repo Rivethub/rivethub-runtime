@@ -335,6 +335,7 @@ impl MemoryStore for FakeMemoryStore {
             .map(|e| {
                 Ok(MemorySearchResult {
                     chunk: None,
+                    passage: None,
                     id: e
                         .id
                         .clone()

@@ -17,6 +17,7 @@ fn stamp() -> Timestamp {
 
 fn leaf() -> EntityLeaf {
     EntityLeaf {
+        delivery: None,
         id: Uuid::from_u128(4),
         conversation_id: Some(Uuid::from_u128(9)),
         content: "leaf".to_owned(),

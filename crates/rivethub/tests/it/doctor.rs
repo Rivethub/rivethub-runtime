@@ -62,12 +62,17 @@ async fn sqlite_doctor_checks_current_and_behind_without_migrating() {
         "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\n",
         path.display()
     ));
+    let required = migrate::sqlite_status(&path)
+        .expect("schema status")
+        .required;
     let (exit, report) = doctor(&env).await;
     assert_eq!(exit, Exit::Failure);
     assert_eq!(memory(&report).status, CheckStatus::Fail);
     assert_eq!(
         memory(&report).message,
-        "Schema 0 is not current; required 35, pending 35. Run rivethub-migrate explicitly."
+        format!(
+            "Schema 0 is not current; required {required}, pending {required}. Run rivethub-migrate explicitly."
+        )
     );
     assert!(!path.exists(), "doctor must not create missing stores");
     migrate::sqlite(&path).expect("test schema");
@@ -75,7 +80,10 @@ async fn sqlite_doctor_checks_current_and_behind_without_migrating() {
     let (exit, report) = doctor(&env).await;
     assert_eq!(exit, Exit::Ok, "{report:?}");
     assert_eq!(memory(&report).status, CheckStatus::Pass);
-    assert_eq!(memory(&report).message, "Schema 35 is current.");
+    assert_eq!(
+        memory(&report).message,
+        format!("Schema {required} is current.")
+    );
     assert!(
         report
             .checks
@@ -95,7 +103,10 @@ async fn sqlite_doctor_checks_current_and_behind_without_migrating() {
     assert_eq!(memory(&report).status, CheckStatus::Fail);
     assert_eq!(
         memory(&report).message,
-        "Schema 6 is not current; required 35, pending 29. Run rivethub-migrate explicitly."
+        format!(
+            "Schema 6 is not current; required {required}, pending {}. Run rivethub-migrate explicitly.",
+            required - 6
+        )
     );
     assert_eq!(std::fs::read(&path).expect("after old schema"), before);
 }

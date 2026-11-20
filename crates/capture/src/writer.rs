@@ -11,26 +11,24 @@ use wire::capture::CaptureMessage;
 use wire::capture::CaptureResult;
 
 use crate::redaction::Redaction;
-use crate::spool::CaptureSpool;
+use crate::spool::{CaptureSpool, EndChunk};
 
 const CONTENT_LIMIT: usize = 16_000;
 pub const DEFAULT_CHUNK_BYTES: usize = 768 * 1024;
 const DEFAULT_REPLAY_MAX: usize = 50;
 
-pub(crate) fn metadata_keep() -> &'static [&'static str] {
-    &[
-        "event_id",
-        "session_jsonl_path",
-        "session_jsonl_line",
-        "session_sqlite_path",
-        "session_sqlite_part_id",
-        "truncated",
-        "ordinal",
-        "native_event_id",
-        "source",
-        "metadata_elided",
-        "full_metadata_bytes",
-    ]
+pub(crate) fn keep_metadata_key(key: &str) -> bool {
+    wire::capture::is_transcript_position_key(key)
+        || [
+            "event_id",
+            "hook_producer",
+            "hook_sequence",
+            "truncated",
+            "source",
+            "metadata_elided",
+            "full_metadata_bytes",
+        ]
+        .contains(&key)
 }
 
 fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<u32> {
@@ -214,9 +212,27 @@ impl<T: CaptureTransport> CaptureWriter<T> {
         let prepared = prepare(batch, self.redaction.as_ref())?;
         let chunks = split_chunks(&prepared, self.max_chunk_bytes)?;
         let mut saved = Vec::with_capacity(chunks.len());
-        for chunk in &chunks {
+        let bundle = crate::session_observation(&prepared)
+            .is_some_and(|observation| observation.end_key.is_some())
+            .then(uuid::Uuid::now_v7);
+        for (index, chunk) in chunks.iter().enumerate() {
             let body = body_text(chunk)?;
-            let path = self.spool.spool(&body, now).await?;
+            let path = match bundle {
+                Some(bundle) => {
+                    self.spool
+                        .spool_end(
+                            &body,
+                            now,
+                            EndChunk {
+                                bundle,
+                                index,
+                                count: chunks.len(),
+                            },
+                        )
+                        .await?
+                }
+                None => self.spool.spool(&body, now).await?,
+            };
             saved.push((chunk, body, path));
         }
         self.warn_on_overflow().await;
@@ -230,13 +246,25 @@ impl<T: CaptureTransport> CaptureWriter<T> {
         {
             tracing::warn!("capture spool replay failed; the new batch is already saved: {error}");
         }
+        self.deliver_saved(saved, &kept, now).await
+    }
+
+    async fn deliver_saved(
+        &self,
+        saved: Vec<(&CaptureBatchRequest, String, PathBuf)>,
+        kept: &[PathBuf],
+        now: Timestamp,
+    ) -> Result<Totals, WriteError> {
         let mut totals = Totals::default();
         let mut rejected = None;
         for (index, (chunk, body, path)) in saved.into_iter().enumerate() {
+            let Some(body) = self.spool.delivery_body(&path, body, false).await? else {
+                continue;
+            };
             match self.transport.post(body).await {
                 Ok(result) => {
                     totals.add(&result);
-                    if let Err(error) = self.spool.discard(&path).await {
+                    if let Err(error) = self.spool.delivered(&path).await {
                         tracing::warn!(
                             "delivered batch {} was not removed: {error}",
                             path.display()
@@ -360,7 +388,7 @@ fn filter_metadata(
     original_bytes: usize,
 ) -> Result<JsonObject, serde_json::Error> {
     let mut kept = metadata.clone();
-    kept.retain(|key| metadata_keep().contains(&key) || is_full_length_key(key));
+    kept.retain(|key| keep_metadata_key(key) || is_full_length_key(key));
     kept.insert("metadata_elided", true)?;
     kept.insert("full_metadata_bytes", original_bytes)?;
     Ok(kept)
@@ -376,7 +404,22 @@ fn split_chunks(
     if let Some(settings) = &base.settings {
         let bytes = encoded(settings)?.len();
         if bytes > max_chunk_bytes {
-            base.settings = Some(elided_blob(bytes)?);
+            let mut kept = elided_blob(bytes)?;
+            if crate::session_observation(batch).is_some() {
+                for key in [
+                    "source",
+                    "last_event",
+                    "last_ingest_at",
+                    "last_event_id",
+                    "parent_session_id",
+                    "summary_end_suppressed",
+                ] {
+                    if let Some(value) = settings.get(key) {
+                        kept.insert(key, value)?;
+                    }
+                }
+            }
+            base.settings = Some(kept);
         }
     }
     let mut chunks: Vec<CaptureBatchRequest> = Vec::new();

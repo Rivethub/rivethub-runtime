@@ -40,10 +40,19 @@ mod session_activity;
 mod session_catalog;
 mod session_marks;
 mod session_messages;
+mod settlement;
 mod stats;
 mod stats_cache;
 mod store_impl;
+mod summary_backend;
+mod summary_conversion;
 mod summary_dag;
+mod summary_index;
+mod summary_opening;
+mod summary_rehearsal;
+mod summary_replace;
+#[doc(hidden)]
+pub use summary_replace::ReplaceSummaryError;
 mod summary_store;
 mod summary_watch;
 mod tags;
@@ -84,7 +93,7 @@ pub use queue::PostgresQueue;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
-pub const SCHEMA_VERSION: i64 = 75;
+pub const SCHEMA_VERSION: i64 = 80;
 pub(crate) const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug)]
@@ -94,6 +103,7 @@ pub struct PostgresMemory {
     wiki_owner: Option<kernel::owner::Owner>,
     pool: PgPool,
     embed: Option<embed::EmbedArm>,
+    summary_index_key: Option<[u8; 32]>,
     access: std::sync::Arc<access::AccessLog>,
     stats_cache: std::sync::Arc<stats_cache::StatsCache>,
     backfills: std::sync::Arc<backfills::Backfills>,
@@ -118,6 +128,7 @@ impl PostgresMemory {
             wiki_owner: None,
             pool,
             embed: None,
+            summary_index_key: None,
             access: std::sync::Arc::default(),
             stats_cache: std::sync::Arc::default(),
             backfills: std::sync::Arc::default(),
@@ -147,6 +158,12 @@ impl PostgresMemory {
     #[must_use]
     pub fn with_wiki_owner(mut self, owner: kernel::owner::Owner) -> Self {
         self.wiki_owner = Some(owner);
+        self
+    }
+
+    #[must_use]
+    pub fn with_summary_index_key(mut self, key: [u8; 32]) -> Self {
+        self.summary_index_key = Some(key);
         self
     }
 

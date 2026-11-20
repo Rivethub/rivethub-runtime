@@ -61,6 +61,7 @@ pub(crate) struct NewConversation<'a> {
     pub(crate) key: &'a ConversationKey,
     pub(crate) channel: Option<&'a str>,
     pub(crate) title: Option<&'a str>,
+    pub(crate) title_from_capture: bool,
     pub(crate) settings: Option<&'a str>,
     pub(crate) task_id: Option<&'a str>,
     pub(crate) owner: &'a str,
@@ -79,6 +80,7 @@ impl NewConversation<'_> {
             .set("agent", &self.key.agent)
             .set_supplied("channel", self.channel.as_ref())
             .set("title", &self.title)
+            .set("title_from_capture", &self.title_from_capture)
             .set_supplied("settings", self.settings.as_ref())
             .set("task_id", &self.task_id)
             .set("created_at", &created_at)

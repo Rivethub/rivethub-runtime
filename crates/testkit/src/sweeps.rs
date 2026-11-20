@@ -14,15 +14,15 @@ use crate::topics::same;
 const BACKLOG: usize = 3;
 
 pub async fn a_pending_sweep_is_queued_once(queue: &dyn JobQueue) -> Outcome {
-    let idle = JobName::Fixed(FixedJob::EnqueueIdle);
+    let opening = JobName::Fixed(FixedJob::EnqueueOpenings);
     let entry = WorkerRole::Summarizer
         .crontab(false)
         .into_iter()
-        .find(|entry| entry.task == idle)
-        .ok_or("the summarizer schedules no idle sweep")?;
+        .find(|entry| entry.task == opening)
+        .ok_or("the summarizer schedules no opening sweep")?;
     queue.enqueue(entry.job()).await?;
     queue.enqueue(entry.job()).await?;
-    let selector = ClaimSelector::matching(vec![idle]);
+    let selector = ClaimSelector::matching(vec![opening]);
     let claimed = queue.claim(&selector).await?.ok_or("no sweep is pending")?;
     queue.complete(claimed.id).await?;
     assert_eq!(queue.claim(&selector).await?, None);

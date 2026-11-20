@@ -116,8 +116,22 @@ fn lines(report: &MergeReport) -> String {
         report.dropped_aliases,
         report.prefixed_pages
     ));
+    for tree in &report.dropped_summary_trees {
+        out.push(format!(
+            "  {}: skipped incoming summary tree {}. Retry or summarize the destination again.",
+            tree.session_key, tree.incoming_session
+        ));
+    }
+    if report.dropped_legacy_summaries > 0 {
+        out.push(format!(
+            "  skipped {} incoming legacy summaries",
+            report.dropped_legacy_summaries
+        ));
+    }
     if report.embeddings_cleared {
-        out.push("  embeddings differ in size: merged rows wait to be embedded again".to_owned());
+        out.push(
+            "  incompatible embeddings cleared: affected rows wait to be embedded again".to_owned(),
+        );
     }
     out.push(String::new());
     out.join("\n")
@@ -134,6 +148,8 @@ struct MergeJson<'a> {
     added: &'a BTreeMap<String, u64>,
     kept_family: &'a [String],
     replaced: &'a [String],
+    dropped_summary_trees: &'a [memory_postgres::merge::DroppedSummaryTree],
+    dropped_legacy_summaries: u64,
     moved_conversations: u64,
     joined_type_topics: u64,
     renamed_topics: u64,
@@ -152,6 +168,8 @@ fn json(report: &MergeReport) -> Result<String, Error> {
         added: &report.inserted,
         kept_family: &report.kept_family,
         replaced: &report.replaced,
+        dropped_summary_trees: &report.dropped_summary_trees,
+        dropped_legacy_summaries: report.dropped_legacy_summaries,
         moved_conversations: report.moved_conversations,
         joined_type_topics: report.mapped_type_topics,
         renamed_topics: report.renamed_topics,

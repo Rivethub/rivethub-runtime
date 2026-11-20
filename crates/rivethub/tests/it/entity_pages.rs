@@ -180,6 +180,7 @@ async fn file_fleet(memory: &PostgresMemory) -> TestResult {
         history: Vec::new(),
     };
     let leaf = EntityLeaf {
+        delivery: None,
         id: Uuid::new_v4(),
         conversation_id: None,
         content: "The north fleet is based at the yard.".to_owned(),
@@ -187,6 +188,16 @@ async fn file_fleet(memory: &PostgresMemory) -> TestResult {
         end: at("2026-11-07T01:00:00Z"),
         owner: Some("owner".to_owned()),
     };
+    sqlx::query(
+        "INSERT INTO rh_summaries (id, content, owner_user_id, earliest_at, latest_at)
+         VALUES ($1, $2, 'owner', $3, $4)",
+    )
+    .bind(leaf.id)
+    .bind(&leaf.content)
+    .bind(memory_postgres::time::PgTimestamp::from(leaf.start))
+    .bind(memory_postgres::time::PgTimestamp::from(leaf.end))
+    .execute(memory.pool())
+    .await?;
     memory
         .commit(
             std::slice::from_ref(&leaf),

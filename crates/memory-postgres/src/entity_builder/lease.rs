@@ -1,5 +1,4 @@
 use jiff::Timestamp;
-use std::path::Path;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
@@ -21,7 +20,7 @@ use sqlx::Postgres;
 use sqlx::Transaction;
 use uuid::Uuid;
 
-use crate::wiki_writer::WikiRepository;
+use crate::wiki_writer::{LockedRepository, WikiRepository};
 
 use super::error::query_error;
 
@@ -95,16 +94,34 @@ impl EntityLease for PgLease {
             ))));
         }
         let conn = held(&mut self.conn)?;
-        let mut tx = conn.begin().await.map_err(query_error)?;
-        let view = load_view(&mut tx, self.id).await?;
-        let older = mark_is_ahead(&mut tx, view.id, body).await?;
-        write_rewrite(&mut tx, view.id, body, older).await?;
-        if let Some(line) = &body.history {
-            upsert_history(&mut tx, view.id, line, &body.owner).await?;
+        let mut repository = WikiRepository::new(self.directory.clone()).lock().await?;
+        let applied = async {
+            let mut tx = conn.begin().await.map_err(query_error)?;
+            let written = async {
+                let inputs: Vec<_> = std::iter::once(body.session_id)
+                    .chain(body.history.iter().map(|line| line.summary_id))
+                    .chain(body.facts.iter().map(|fact| fact.summary_id))
+                    .collect();
+                guard(&mut tx, &inputs, &body.owner).await?;
+                let view = load_view(&mut tx, self.id).await?;
+                let older = mark_is_ahead(&mut tx, view.id, body).await?;
+                write_rewrite(&mut tx, view.id, body, older).await?;
+                if let Some(line) = &body.history {
+                    upsert_history(&mut tx, view.id, line, &body.owner).await?;
+                }
+                let fresh = load_view(&mut tx, self.id).await?;
+                let prose = chosen_prose(&mut tx, &view, body, older).await?;
+                let git_sha = write_page(&mut tx, &mut repository, &fresh, &prose, now).await?;
+                Ok(PublishOutcome::Stored {
+                    git_sha,
+                    slug: fresh.slug,
+                })
+            }
+            .await;
+            finish_page_write(tx, written).await
         }
-        let fresh = load_view(&mut tx, self.id).await?;
-        let prose = chosen_prose(&mut tx, &view, body, older).await?;
-        commit_page(tx, &self.directory, &fresh, &prose, now).await
+        .await;
+        release_page(repository, applied).await
     }
 
     async fn record_mention(
@@ -118,32 +135,49 @@ impl EntityLease for PgLease {
             ))));
         }
         let conn = held(&mut self.conn)?;
-        let mut tx = conn.begin().await.map_err(query_error)?;
-        let view = load_view(&mut tx, self.id).await?;
-        if let Some(line) = &note.history {
-            upsert_history(&mut tx, view.id, line, &note.owner).await?;
-        }
-        advance_mark_at(
-            &mut tx,
-            view.id,
-            note.session_at,
-            note.session_id,
-            &note.owner,
-        )
-        .await?;
-        if note.history.is_none() {
-            tx.commit().await.map_err(query_error)?;
-            return Ok(None);
-        }
-        let fresh = load_view(&mut tx, self.id).await?;
-        let stored = load_page_prose(&mut tx, &fresh).await?;
-        let prose = EntityProse {
-            summary: stored.summary,
-            article: prose_article(&stored.article),
+        let mut repository = if note.history.is_some() {
+            Some(WikiRepository::new(self.directory.clone()).lock().await?)
+        } else {
+            None
         };
-        match commit_page(tx, &self.directory, &fresh, &prose, now).await? {
-            PublishOutcome::Stored { git_sha, .. } => Ok(Some(git_sha)),
-            PublishOutcome::Stale(_) => Ok(None),
+        let recorded = async {
+            let mut tx = conn.begin().await.map_err(query_error)?;
+            let written = async {
+                let inputs: Vec<_> = std::iter::once(note.session_id)
+                    .chain(note.history.iter().map(|line| line.summary_id))
+                    .collect();
+                guard(&mut tx, &inputs, &note.owner).await?;
+                let view = load_view(&mut tx, self.id).await?;
+                if let Some(line) = &note.history {
+                    upsert_history(&mut tx, view.id, line, &note.owner).await?;
+                }
+                advance_mark_at(
+                    &mut tx,
+                    view.id,
+                    note.session_at,
+                    note.session_id,
+                    &note.owner,
+                )
+                .await?;
+                let Some(repository) = repository.as_mut() else {
+                    return Ok(None);
+                };
+                let fresh = load_view(&mut tx, self.id).await?;
+                let stored = load_page_prose(&mut tx, &fresh).await?;
+                let prose = EntityProse {
+                    summary: stored.summary,
+                    article: prose_article(&stored.article),
+                };
+                let git_sha = write_page(&mut tx, repository, &fresh, &prose, now).await?;
+                Ok(Some(git_sha))
+            }
+            .await;
+            finish_page_write(tx, written).await
+        }
+        .await;
+        match repository {
+            Some(repository) => release_page(repository, recorded).await,
+            None => recorded,
         }
     }
 
@@ -225,30 +259,81 @@ impl PageText {
     }
 }
 
-pub(super) async fn commit_page(
-    mut tx: Transaction<'_, Postgres>,
-    directory: &Path,
+pub(super) async fn publish_current_page(
+    tx: &mut Transaction<'_, Postgres>,
+    repository: &mut LockedRepository,
     view: &EntityView,
     prose: &EntityProse,
     now: Timestamp,
 ) -> Result<PublishOutcome, EntityStoreError> {
+    let ids: Vec<_> = view.history.iter().map(|line| line.summary_id).collect();
+    crate::summary_replace::shared(tx, &ids)
+        .await
+        .map_err(super::error::fence_error)?;
+    let fresh = load_view(tx, view.id).await?;
+    if fresh.snapshot != view.snapshot {
+        return Ok(PublishOutcome::Stale(Box::new(fresh)));
+    }
+    let git_sha = write_page(tx, repository, &fresh, prose, now).await?;
+    Ok(PublishOutcome::Stored {
+        git_sha,
+        slug: fresh.slug,
+    })
+}
+
+async fn write_page(
+    tx: &mut Transaction<'_, Postgres>,
+    repository: &mut LockedRepository,
+    view: &EntityView,
+    prose: &EntityProse,
+    now: Timestamp,
+) -> Result<String, EntityStoreError> {
     let mut page = page_from(view, prose)?;
     let message = format!("entity {}", view.slug);
-    let (sha, released) = {
-        let mut repository = WikiRepository::new(directory.to_path_buf()).lock().await?;
-        let folded = repository.fold(&mut page, &[], &message, now).await?;
-        crate::wiki_builder::store_wiki_page(&mut tx, &page, &view.slug, None, &folded, now)
-            .await
-            .map_err(store_error)?;
-        super::bind::bind_page(&mut tx, view.id, &view.slug)
-            .await
-            .map_err(query_error)?;
+    let sha = repository.fold(&mut page, &[], &message, now).await?;
+    crate::wiki_builder::store_wiki_page(tx, &page, &view.slug, None, &sha, now)
+        .await
+        .map_err(store_error)?;
+    super::bind::bind_page(tx, view.id, &view.slug)
+        .await
+        .map_err(query_error)?;
+    Ok(sha)
+}
+
+pub(super) async fn finish_page_write<T>(
+    tx: Transaction<'_, Postgres>,
+    written: Result<T, EntityStoreError>,
+) -> Result<T, EntityStoreError> {
+    if written.is_ok() {
         tx.commit().await.map_err(query_error)?;
-        (folded, repository.release().await)
-    };
+    } else if let Err(error) = tx.rollback().await {
+        tracing::warn!(%error, "entity page transaction rollback failed");
+    }
+    written
+}
+
+pub(super) async fn release_page<T>(
+    repository: LockedRepository,
+    published: Result<T, EntityStoreError>,
+) -> Result<T, EntityStoreError> {
+    let released = repository.release().await;
+    let outcome = published?;
     released?;
-    Ok(PublishOutcome::Stored {
-        git_sha: sha,
-        slug: view.slug.clone(),
-    })
+    Ok(outcome)
+}
+
+async fn guard(
+    tx: &mut Transaction<'_, Postgres>,
+    ids: &[Uuid],
+    owner: &str,
+) -> Result<(), EntityStoreError> {
+    let inputs = crate::summary_replace::shared(tx, ids)
+        .await
+        .map_err(super::error::fence_error)?;
+    if let Some(input) = inputs.iter().find(|input| input.owner_user_id != owner) {
+        return Err(
+            kernel::memory::summary_reference::SummaryReferenceError::Stale(input.id).into(),
+        );
+    }
+    Ok(())
 }

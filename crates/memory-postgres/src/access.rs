@@ -145,6 +145,14 @@ async fn write(
     }
     if !summaries.is_empty() {
         let ids: Vec<Uuid> = summaries.iter().copied().collect();
+        let mut tx = pool
+            .begin()
+            .await
+            .map_err(|source| Error::operation("access begin", source))?;
+        let guarded = crate::summary_replace::shared_visible(&mut tx, &ids)
+            .await
+            .map_err(|error| Error::stored("summary access input", error))?;
+        let ids: Vec<_> = guarded.into_iter().map(|input| input.id).collect();
         sqlx::query!(
             "insert into rh_summary_access (summary_id, access_count, last_accessed_at)
              select s.id, s.access_count + 1, now() from rh_summaries s where s.id = any($1)
@@ -152,9 +160,12 @@ async fn write(
                 set access_count = rh_summary_access.access_count + 1, last_accessed_at = now()",
             &ids
         )
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(|source| Error::operation("access bump", source))?;
+        tx.commit()
+            .await
+            .map_err(|source| Error::operation("access commit", source))?;
     }
     Ok(())
 }

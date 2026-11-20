@@ -395,12 +395,13 @@ async fn messages_sharing_a_millisecond_export_in_capture_order() -> TestResult 
 }
 
 #[tokio::test]
-async fn messages_sharing_a_time_keep_capture_order_in_summaries_context_and_titles() -> TestResult
-{
+async fn messages_sharing_a_time_use_id_order_in_the_summary_window_and_title() -> TestResult {
     let store = fresh_store()?;
     let ines = Owner::new("ines".to_owned())?;
     let tied = instant("2026-10-14T09:00:00.123Z")?;
-    let steps: Vec<String> = (1..=8).map(|step| format!("step-{step}")).collect();
+    let steps: Vec<String> = (1..=8)
+        .map(|step| format!("Inspect invented sample {step}"))
+        .collect();
     let mut tied_batch = batch("claude-code:tied", "rivet", "claude-code");
     for step in &steps {
         let mut said = message(step, Role::User, step);
@@ -427,14 +428,23 @@ async fn messages_sharing_a_time_keep_capture_order_in_summaries_context_and_tit
         .iter()
         .map(|message| message.content.as_str())
         .collect();
-    assert_eq!(summarized, steps);
+    let mut by_id = window.messages.iter().collect::<Vec<_>>();
+    by_id.sort_unstable_by_key(|message| message.id);
+    assert_eq!(
+        summarized,
+        by_id
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(summarized.len(), steps.len());
 
     let page = store
         .store
         .list(&SessionQuery::new(SessionView::All))
         .await?;
     let row = page.items.first().ok_or("catalog row")?;
-    assert_eq!(row.title, "step-1");
+    assert_eq!(row.title, *summarized.first().ok_or("opening text")?);
     Ok(())
 }
 

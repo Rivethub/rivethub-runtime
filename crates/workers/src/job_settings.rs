@@ -88,11 +88,68 @@ pub fn tuned_summary(
     settings: crate::SummarySettings,
     env: &Environment,
 ) -> Result<crate::SummarySettings, WorkerError> {
-    let leaf = positive(env, "RIVETHUB_SUMMARY_LEAF_TOKENS")?.unwrap_or(settings.leaf_max_tokens);
-    let branch =
-        positive(env, "RIVETHUB_SUMMARY_BRANCH_TOKENS")?.unwrap_or(settings.branch_max_tokens);
-    let root = positive(env, "RIVETHUB_SUMMARY_ROOT_TOKENS")?.unwrap_or(settings.root_max_tokens);
-    settings.with_max_tokens(leaf, branch, root)
+    let mut settings = settings;
+    if let Some(context) = positive(env, "RIVETHUB_SUMMARY_CONTEXT_TOKENS")? {
+        settings.context_tokens = context;
+    }
+    if let Some(limit) = positive(env, "RIVETHUB_SUMMARY_MODEL_CONCURRENCY")? {
+        settings.model_concurrency = limit;
+    }
+    settings.live_limits()?;
+    if let Some(minutes) = positive(env, "RIVETHUB_SUMMARY_INACTIVITY_MINUTES")? {
+        settings.inactivity = jiff::SignedDuration::from_mins(i64::from(minutes));
+    }
+    tune_summary_requests(&mut settings, env)?;
+    tune_conversion(&mut settings, env)?;
+    Ok(settings)
+}
+
+fn tune_summary_requests(
+    settings: &mut crate::SummarySettings,
+    env: &Environment,
+) -> Result<(), WorkerError> {
+    for (name, timeout) in [
+        (
+            "RIVETHUB_SUMMARY_FIRST_TOKEN_TIMEOUT_MS",
+            &mut settings.first_token_timeout,
+        ),
+        (
+            "RIVETHUB_SUMMARY_INTER_TOKEN_TIMEOUT_MS",
+            &mut settings.inter_token_timeout,
+        ),
+        (
+            "RIVETHUB_SUMMARY_REQUEST_TIMEOUT_MS",
+            &mut settings.request_timeout,
+        ),
+    ] {
+        if let Some(ms) = positive(env, name)? {
+            *timeout = std::time::Duration::from_millis(u64::from(ms));
+        }
+    }
+    let name = "RIVETHUB_SUMMARY_CONVERSION_TIMEOUT_RETRIES";
+    if let Some(value) = number(env, name)? {
+        settings.conversion_timeout_retries =
+            i32::try_from(value).map_err(|_| WorkerError::JobSetting {
+                name: name.to_owned(),
+            })?;
+    }
+    settings.validate_timeouts()
+}
+
+fn tune_conversion(
+    settings: &mut crate::SummarySettings,
+    env: &Environment,
+) -> Result<(), WorkerError> {
+    if let Some(ms) = positive(env, "RIVETHUB_SUMMARY_CONVERSION_LEASE_MS")? {
+        settings.conversion_lease = jiff::SignedDuration::from_millis(i64::from(ms));
+    }
+    if let Some(ms) = positive(env, "RIVETHUB_SUMMARY_CONVERSION_HEARTBEAT_MS")? {
+        settings.conversion_heartbeat = std::time::Duration::from_millis(u64::from(ms));
+    }
+    if let Some(minutes) = positive(env, "RIVETHUB_SUMMARY_CONVERSION_SECOND_PASS_DELAY_MINUTES")? {
+        settings.conversion_second_pass_delay = jiff::SignedDuration::from_mins(i64::from(minutes));
+    }
+    settings.validate_conversion()
 }
 
 pub fn tuned_embed(

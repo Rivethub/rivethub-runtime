@@ -4453,6 +4453,7 @@
           "type": "string"
         },
         "createdAt": {
+          "default": null,
           "format": "date-time",
           "type": [
             "string",
@@ -4859,6 +4860,16 @@
             "null"
           ]
         },
+        "passage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SummaryPassage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "provenance": {
           "anyOf": [
             {
@@ -4883,6 +4894,12 @@
           "format": "double",
           "type": "number"
         },
+        "sections": {
+          "items": {
+            "$ref": "#/$defs/PassageSection"
+          },
+          "type": "array"
+        },
         "sessionId": {
           "type": [
             "string",
@@ -4891,6 +4908,12 @@
         },
         "source": {
           "$ref": "#/$defs/MemoryHitSource"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/MemoryEntry"
+          },
+          "type": "array"
         },
         "tags": {
           "items": {
@@ -5005,6 +5028,16 @@
         "id": {
           "type": "string"
         },
+        "passage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SummaryPassage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "relevanceScore": {
           "format": "double",
           "type": "number"
@@ -5078,6 +5111,7 @@
           ]
         },
         "query": {
+          "description": "Use a few specific keywords instead of a full sentence. Include names, identifiers, error text, or the subject, such as \"build cache timeout\". If nothing matches, try a second set of keywords.",
           "type": "string"
         },
         "role": {
@@ -5241,7 +5275,22 @@
           "minimum": 0,
           "type": "integer"
         },
+        "parts": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "roots": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sections": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sessions": {
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -5356,11 +5405,46 @@
             }
           ]
         },
+        "qualityFlags": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rangeVerified": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "sourceFirst": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "sourceLast": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "sourceMessageIds": {
           "items": {
             "type": "string"
           },
           "type": "array"
+        },
+        "summaryOrdinal": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "truncated": {
           "type": "boolean"
@@ -6103,6 +6187,37 @@
         "fontMono",
         "fontSize",
         "radius"
+      ],
+      "type": "object"
+    },
+    "PassageSection": {
+      "properties": {
+        "heading": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "rangeVerified": {
+          "type": "boolean"
+        },
+        "sourceFirst": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sourceLast": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "heading",
+        "sourceFirst",
+        "sourceLast",
+        "rangeVerified"
       ],
       "type": "object"
     },
@@ -9740,9 +9855,29 @@
       "enum": [
         "leaf",
         "branch",
-        "root"
+        "root",
+        "session",
+        "part",
+        "section"
       ],
       "type": "string"
+    },
+    "SummaryPassage": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "ordinal": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "ordinal"
+      ],
+      "type": "object"
     },
     "TagAddResult": {
       "properties": {

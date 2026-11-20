@@ -72,7 +72,7 @@
         "content": [
           {
             "type": "text",
-            "text": "No results found for query \"KIWI_CACHE_MISS_RATIO\".\n\nIf you expected a hit: retry with `mode=\"trigram\"` for literal tokens (IPs, hostnames, error strings), or vary the angle (service / host / subnet / role) and try two more queries before trusting the empty result. For time-bounded questions (\"today\", \"yesterday\", \"last week\"), prefer `memory_browse` with window= — search ANDs the query with any date filter and returns empty when FTS misses."
+            "text": "No results found for query \"KIWI_CACHE_MISS_RATIO\".\n\nUse a few specific keywords instead of a full sentence. Include names, identifiers, error text, or the subject, such as \"build cache timeout\". If nothing matches, try a second set of keywords. Try `mode=\"trigram\"` for literal tokens (IPs, hostnames, error strings). For time-bounded questions (\"today\", \"yesterday\", \"last week\"), prefer `memory_browse` with window= — search ANDs the query with any date filter and returns empty when FTS misses."
           }
         ]
       }
@@ -309,7 +309,7 @@
         "content": [
           {
             "type": "text",
-            "text": "No results found for query \"fractions\".\n\nIf you expected a hit: retry with `mode=\"trigram\"` for literal tokens (IPs, hostnames, error strings), or vary the angle (service / host / subnet / role) and try two more queries before trusting the empty result. For time-bounded questions (\"today\", \"yesterday\", \"last week\"), prefer `memory_browse` with window= — search ANDs the query with any date filter and returns empty when FTS misses."
+            "text": "No results found for query \"fractions\".\n\nUse a few specific keywords instead of a full sentence. Include names, identifiers, error text, or the subject, such as \"build cache timeout\". If nothing matches, try a second set of keywords. Try `mode=\"trigram\"` for literal tokens (IPs, hostnames, error strings). For time-bounded questions (\"today\", \"yesterday\", \"last week\"), prefer `memory_browse` with window= — search ANDs the query with any date filter and returns empty when FTS misses."
           }
         ]
       }
@@ -389,7 +389,7 @@
         "content": [
           {
             "type": "text",
-            "text": "No results found for query \"fractions\" with since=\"2026-09-01T00:00:00Z\", before=\"2026-09-03T00:00:00Z\".\n\nFor chronological browsing of a date window without a topic filter, call `memory_browse(since=\"2026-09-01T00:00:00Z\", before=\"2026-09-03T00:00:00Z\")` instead — that returns every message in the window, no FTS match required."
+            "text": "No results found for query \"fractions\" with since=\"2026-09-01T00:00:00Z\", before=\"2026-09-03T00:00:00Z\".\n\nUse a few specific keywords instead of a full sentence. Include names, identifiers, error text, or the subject, such as \"build cache timeout\". If nothing matches, try a second set of keywords. For chronological browsing of a date window without a topic filter, call `memory_browse(since=\"2026-09-01T00:00:00Z\", before=\"2026-09-03T00:00:00Z\")` instead — that returns every message in the window, no FTS match required."
           }
         ]
       }
@@ -408,7 +408,7 @@
         "content": [
           {
             "type": "text",
-            "text": "No results found for query \"kiwi\" with window=\"last_24h\".\n\nFor chronological browsing of a date window without a topic filter, call `memory_browse(window=\"last_24h\")` instead — that returns every message in the window, no FTS match required."
+            "text": "No results found for query \"kiwi\" with window=\"last_24h\".\n\nUse a few specific keywords instead of a full sentence. Include names, identifiers, error text, or the subject, such as \"build cache timeout\". If nothing matches, try a second set of keywords. For chronological browsing of a date window without a topic filter, call `memory_browse(window=\"last_24h\")` instead — that returns every message in the window, no FTS match required."
           }
         ]
       }
@@ -447,7 +447,7 @@
         "content": [
           {
             "type": "text",
-            "text": "No results found for query \"fractions\".\n\nIf you expected a hit: retry with `mode=\"trigram\"` for literal tokens (IPs, hostnames, error strings), or vary the angle (service / host / subnet / role) and try two more queries before trusting the empty result. For time-bounded questions (\"today\", \"yesterday\", \"last week\"), prefer `memory_browse` with window= — search ANDs the query with any date filter and returns empty when FTS misses."
+            "text": "No results found for query \"fractions\".\n\nUse a few specific keywords instead of a full sentence. Include names, identifiers, error text, or the subject, such as \"build cache timeout\". If nothing matches, try a second set of keywords. Try `mode=\"trigram\"` for literal tokens (IPs, hostnames, error strings). For time-bounded questions (\"today\", \"yesterday\", \"last week\"), prefer `memory_browse` with window= — search ANDs the query with any date filter and returns empty when FTS misses."
           }
         ]
       }
@@ -466,7 +466,7 @@
         "content": [
           {
             "type": "text",
-            "text": "No results found for query \"1½ cups\".\n\nIf you expected a hit: retry with `mode=\"trigram\"` for literal tokens (IPs, hostnames, error strings), or vary the angle (service / host / subnet / role) and try two more queries before trusting the empty result. For time-bounded questions (\"today\", \"yesterday\", \"last week\"), prefer `memory_browse` with window= — search ANDs the query with any date filter and returns empty when FTS misses."
+            "text": "No results found for query \"1½ cups\".\n\nUse a few specific keywords instead of a full sentence. Include names, identifiers, error text, or the subject, such as \"build cache timeout\". If nothing matches, try a second set of keywords. Try `mode=\"trigram\"` for literal tokens (IPs, hostnames, error strings). For time-bounded questions (\"today\", \"yesterday\", \"last week\"), prefer `memory_browse` with window= — search ANDs the query with any date filter and returns empty when FTS misses."
           }
         ]
       }
@@ -620,7 +620,7 @@
         "content": [
           {
             "type": "text",
-            "text": "No results found for query \"zebra crossing quartz\".\n\nIf you expected a hit: retry with `mode=\"trigram\"` for literal tokens (IPs, hostnames, error strings), or vary the angle (service / host / subnet / role) and try two more queries before trusting the empty result. For time-bounded questions (\"today\", \"yesterday\", \"last week\"), prefer `memory_browse` with window= — search ANDs the query with any date filter and returns empty when FTS misses."
+            "text": "No results found for query \"zebra crossing quartz\".\n\nUse a few specific keywords instead of a full sentence. Include names, identifiers, error text, or the subject, such as \"build cache timeout\". If nothing matches, try a second set of keywords. Try `mode=\"trigram\"` for literal tokens (IPs, hostnames, error strings). For time-bounded questions (\"today\", \"yesterday\", \"last week\"), prefer `memory_browse` with window= — search ANDs the query with any date filter and returns empty when FTS misses."
           }
         ]
       }
@@ -1244,13 +1244,13 @@
           "slug": "kiwi-build-cache"
         }
       },
-      "note": "small page: returned verbatim",
+      "note": "small page: projects current SQL citations",
       "kind": "result",
       "result": {
         "content": [
           {
             "type": "text",
-            "text": "---\ntitle: Kiwi build cache\nslug: kiwi-build-cache\naliases:\n  - kiwi sccache\n  - kiwi-build-cache bucket\ntags:\n  - kiwi\n  - ci\nlast_verified: 2026-09-03T02:00:00Z\n---\n\n## Summary\n\nKiwi CI uses sccache backed by the shared kiwi-build-cache bucket with a 20 GB local tier per runner. Miss ratio about 0.11; pipeline about 14 minutes.\n\n## Article\n\nThe Kiwi project moved its compiler cache off per-runner disks in September 2026. A baseline run showed a 0.83 miss ratio across 212 compile units; after the switch the ratio fell to 0.11.\n\n## See also\n\n- [[lighthouse-dashboard]]\n\n## History\n\n### 2026-09-02 — Cache moved to the shared bucket\n\n- baseline miss ratio 0.83, wall time 39m52s\n- after the switch: miss ratio 0.11, wall time 14m\n- per-runner cache volumes retired\n\n## Citations\n\n| Date | Kind | Summary | Note |\n|------|------|---------|------|\n| 2026-09-03 | leaf | `b0000000-0000-4000-8000-000000000001` | miss ratio before/after |\n| 2026-09-03 | root | `b0000000-0000-4000-8000-000000000003` | project overview |\n"
+            "text": "---\ntitle: Kiwi build cache\nslug: kiwi-build-cache\naliases:\n  - kiwi sccache\n  - kiwi-build-cache bucket\ntags:\n  - kiwi\n  - ci\nentities: []\nrelated:\n  - lighthouse-dashboard\nlast_verified: 2026-09-03T02:00:00Z\nsources: []\n---\n\n## Summary\n\nKiwi CI uses sccache backed by the shared kiwi-build-cache bucket with a 20 GB local tier per runner. Miss ratio about 0.11; pipeline about 14 minutes.\n\n## Article\n\nThe Kiwi project moved its compiler cache off per-runner disks in September 2026. A baseline run showed a 0.83 miss ratio across 212 compile units; after the switch the ratio fell to 0.11.\n\n\n## See also\n\n- [[lighthouse-dashboard]]\n\n\n## History\n\n### 2026-09-02 — Cache moved to the shared bucket\n\n- baseline miss ratio 0.83, wall time 39m52s\n- after the switch: miss ratio 0.11, wall time 14m\n- per-runner cache volumes retired\n\n## Citations\n\n| Date | Kind | Summary | Note |\n|------|------|---------|------|\n| 2026-09-03 | leaf | `b0000000-0000-4000-8000-000000000001` | miss ratio before/after |\n| 2026-09-03 | root | `b0000000-0000-4000-8000-000000000003` | project overview |\n\n"
           }
         ]
       }

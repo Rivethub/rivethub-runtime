@@ -1,8 +1,12 @@
+mod window;
+
+use crate::summary_backend as backend;
 use async_trait::async_trait;
 use jiff::Timestamp;
 use kernel::memory::ConversationHead;
 use kernel::memory::ConversationWindow;
 use kernel::memory::HEARTBEAT_SESSION_PREFIX;
+use kernel::memory::MemoryBrowseOrder;
 use kernel::memory::NewSummary;
 use kernel::memory::PendingConversation;
 use kernel::memory::Provenance;
@@ -15,18 +19,233 @@ use kernel::memory::SummaryWrite;
 use kernel::memory::ToolUse;
 use kernel::memory::WindowMessage;
 use kernel::memory::WrittenSummary;
+use kernel::memory::settlement::{SettlementPage, SummaryState};
+use kernel::memory::summary_backend::SummaryArtifact;
+use kernel::memory::summary_backend::{SummaryIndex, SummaryRepair};
+use kernel::memory::summary_backend::{SummaryIndexes, SummaryInput, SummaryRun};
+use kernel::memory::summary_opening::OpeningTitle;
+use kernel::memory::summary_order::{MessagePosition, order_messages};
+use kernel::memory::summary_reference::PreparedSummaryTree;
+use kernel::queue::Job;
 use rusqlite::OptionalExtension as _;
+use rusqlite::params;
 use rusqlite::params_from_iter;
 use rusqlite::types::Value;
 use uuid::Uuid;
-use wire::message::Role;
+use window::load_window;
 
 use crate::SqliteStore;
 use crate::error::SqliteError;
+use crate::message::{stored_role, transcript_metadata};
 use crate::time;
 
 #[async_trait]
 impl SummaryStore for SqliteStore {
+    fn summary_conversion(
+        &self,
+    ) -> Option<&dyn kernel::memory::summary_conversion::SummaryConversion> {
+        Some(self)
+    }
+
+    async fn record_summary_call(
+        &self,
+        conversation: Uuid,
+        call: &kernel::model_calls::ModelCall,
+    ) -> Result<(), kernel::memory::MemoryStoreError> {
+        self.record_conversation_call(conversation, call).await
+    }
+
+    async fn live_candidates(
+        &self,
+        after: Uuid,
+        limit: i64,
+    ) -> Result<Vec<(Uuid, i64)>, SummaryStoreError> {
+        self.with_conn(move |conn| backend::candidates(conn, after, limit))
+            .await
+            .map_err(store_err)
+    }
+
+    async fn live_input(&self, id: Uuid) -> Result<Option<SummaryInput>, SummaryStoreError> {
+        self.with_conn(move |conn| {
+            let tx = conn.transaction().map_err(backend::error)?;
+            let input = backend::input(&tx, id)?;
+            tx.commit().map_err(backend::error)?;
+            Ok(input)
+        })
+        .await
+        .map_err(store_err)
+    }
+
+    async fn live_run(&self, id: Uuid) -> Result<Option<SummaryRun>, SummaryStoreError> {
+        self.with_conn(move |conn| {
+            let row = conn
+                .query_row(
+                    "SELECT id, revision, manifest FROM rh_summary_runs WHERE conversation_id = ?1",
+                    [id.to_string()],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(backend::error)?;
+            row.map(|(id, revision, manifest)| {
+                Ok(SummaryRun {
+                    id: parse_id(&id)?,
+                    revision,
+                    manifest: workspace_json(&manifest)?,
+                })
+            })
+            .transpose()
+        })
+        .await
+        .map_err(store_err)
+    }
+
+    async fn freeze_live_run(
+        &self,
+        id: Uuid,
+        revision: i64,
+        root: Option<Uuid>,
+        manifest: SummaryArtifact,
+    ) -> Result<Uuid, SummaryStoreError> {
+        self.with_conn(move |conn| backend::freeze(conn, id, revision, root, &manifest))
+            .await
+            .map_err(store_err)
+    }
+
+    async fn live_checkpoint(
+        &self,
+        run: Uuid,
+        key: [u8; 32],
+    ) -> Result<Option<SummaryArtifact>, SummaryStoreError> {
+        self.with_conn(move |conn| {
+            conn.query_row("SELECT artifact FROM rh_summary_checkpoints WHERE run_id = ?1 AND artifact_key = ?2",
+                params![run.to_string(), key.as_slice()], |row| row.get::<_, String>(0))
+                .optional().map_err(backend::error)?.map(|value| workspace_json(&value)).transpose()
+        }).await.map_err(store_err)
+    }
+
+    async fn save_live_checkpoint(
+        &self,
+        run: Uuid,
+        revision: i64,
+        key: [u8; 32],
+        artifact: SummaryArtifact,
+    ) -> Result<(), SummaryStoreError> {
+        let exists = self
+            .with_conn(move |conn| {
+                let tx = crate::summary_replace::immediate(conn).map_err(backend::error)?;
+                let inserted = tx
+                    .execute(
+                        "INSERT INTO rh_summary_checkpoints (run_id, artifact_key, artifact)
+                 SELECT id, ?2, ?3 FROM rh_summary_runs WHERE id = ?1 AND revision = ?4
+                 ON CONFLICT DO NOTHING",
+                        params![
+                            run.to_string(),
+                            key.as_slice(),
+                            artifact.as_json(),
+                            revision
+                        ],
+                    )
+                    .map_err(backend::error)?;
+                let exists = inserted != 0 || tx.query_row(
+                "SELECT EXISTS (SELECT 1 FROM rh_summary_runs WHERE id = ?1 AND revision = ?2)",
+                params![run.to_string(), revision], |row| row.get(0),
+            ).map_err(backend::error)?;
+                tx.commit().map_err(backend::error)?;
+                Ok(exists)
+            })
+            .await
+            .map_err(store_err)?;
+        if exists {
+            Ok(())
+        } else {
+            Err(SummaryStoreError::StaleRun { id: run, revision })
+        }
+    }
+
+    async fn publish_live(
+        &self,
+        tree: PreparedSummaryTree,
+        indexes: SummaryIndexes,
+    ) -> Result<bool, SummaryStoreError> {
+        match self.replace_live_summary(tree, indexes).await {
+            Ok(()) => Ok(true),
+            Err(SqliteError::SummaryReference(_)) => Ok(false),
+            Err(error) => Err(store_err(error)),
+        }
+    }
+
+    async fn fail_live(&self, id: Uuid, revision: i64) -> Result<(), SummaryStoreError> {
+        self.with_conn(move |conn| {
+            conn.execute("UPDATE rh_summary_state SET failed_revision = ?2 WHERE conversation_id = ?1
+                AND input_revision = ?2 AND settled_at IS NOT NULL AND summarized_through IS NOT ?2",
+                params![id.to_string(), revision]).map_err(backend::error)?;
+            Ok(())
+        }).await.map_err(store_err)
+    }
+
+    fn live_index_key(&self) -> Option<[u8; 32]> {
+        self.summary_index_key
+    }
+
+    async fn summary_state(&self, id: Uuid) -> Result<Option<SummaryState>, SummaryStoreError> {
+        self.read_summary_state(id).await.map_err(store_err)
+    }
+
+    async fn summary_eligible(&self, id: Uuid, revision: i64) -> Result<bool, SummaryStoreError> {
+        self.eligible_summary(id, revision).await.map_err(store_err)
+    }
+
+    async fn expire_summary_page(
+        &self,
+        after: Option<Uuid>,
+        cutoff: Timestamp,
+        now: Timestamp,
+        limit: u32,
+    ) -> Result<SettlementPage, SummaryStoreError> {
+        self.expire_settlement(after, cutoff, now, limit)
+            .await
+            .map_err(store_err)
+    }
+
+    async fn repair_candidates(&self, limit: u32) -> Result<Vec<Uuid>, SummaryStoreError> {
+        let Some(key) = self.summary_index_key else {
+            return Ok(Vec::new());
+        };
+        self.with_conn(move |conn| crate::summary_index::marked_indexes(conn, key, limit))
+            .await
+            .map_err(store_err)
+    }
+
+    async fn repair_input(&self, id: Uuid) -> Result<Option<SummaryRepair>, SummaryStoreError> {
+        let Some(key) = self.summary_index_key else {
+            return Ok(None);
+        };
+        self.with_conn(move |conn| crate::summary_index::marked_index(conn, id, key))
+            .await
+            .map_err(store_err)
+    }
+
+    async fn repair_index(
+        &self,
+        expected: SummaryRepair,
+        index: SummaryIndex,
+    ) -> Result<(), SummaryStoreError> {
+        let Some(key) = self.summary_index_key else {
+            return Ok(());
+        };
+        self.with_conn(move |conn| {
+            crate::summary_index::replace_index(conn, key, &expected, &index)
+        })
+        .await
+        .map_err(store_err)
+    }
+
     async fn conversation(
         &self,
         id: Uuid,
@@ -43,6 +262,11 @@ impl SummaryStore for SqliteStore {
     }
 
     async fn write_summary(&self, summary: NewSummary) -> Result<SummaryWrite, SummaryStoreError> {
+        if summary.kind.is_top_down() {
+            return Err(SummaryStoreError::Kind {
+                kind: summary.kind.as_str().to_owned(),
+            });
+        }
         let (id, kind, depth) = (summary.id, summary.kind, summary.depth);
         let (written, session_key) = self
             .with_conn(move |conn| write_one(conn, &summary))
@@ -58,6 +282,38 @@ impl SummaryStore for SqliteStore {
             tracing::trace!("written summary has no listener");
         }
         Ok(written)
+    }
+
+    async fn opening_title(&self, id: Uuid) -> Result<Option<OpeningTitle>, SummaryStoreError> {
+        self.with_conn(move |conn| crate::title::load(conn, &id.to_string()))
+            .await
+            .map_err(store_err)
+    }
+
+    async fn finish_opening_title(
+        &self,
+        opening: &OpeningTitle,
+        title: Option<&str>,
+    ) -> Result<bool, SummaryStoreError> {
+        let opening = opening.clone();
+        let title = title.map(str::to_owned);
+        self.with_conn(move |conn| crate::title::finish(conn, &opening, title.as_deref()))
+            .await
+            .map_err(store_err)
+    }
+
+    async fn opening_filing(&self, id: Uuid) -> Result<Option<bool>, SummaryStoreError> {
+        Self::opening_filing(self, id).await.map_err(store_err)
+    }
+
+    async fn finish_opening_filing(&self, id: Uuid) -> Result<(), SummaryStoreError> {
+        Self::finish_opening_filing(self, id)
+            .await
+            .map_err(store_err)
+    }
+
+    async fn undelivered_openings(&self) -> Result<Vec<Job>, SummaryStoreError> {
+        Self::undelivered_openings(self).await.map_err(store_err)
     }
 
     async fn retitle(&self, id: Uuid, title: &str) -> Result<bool, SummaryStoreError> {
@@ -187,7 +443,6 @@ fn write_one(
     }
     let written = if summary.kind == SummaryKind::Leaf {
         let conversation = summary.conversation_id.to_string();
-        crate::title::title_from_first_leaf(&tx, &conversation)?;
         leaf_write(&tx, &conversation)?
     } else {
         SummaryWrite::Added
@@ -224,246 +479,7 @@ fn leaf_write(
     })
 }
 
-fn load_window(
-    conn: &rusqlite::Connection,
-    id: Uuid,
-) -> Result<Option<ConversationWindow>, SqliteError> {
-    let head = conn
-        .query_row(
-            "SELECT id, session_key, agent, channel, title FROM ros_conversations WHERE id = ?1",
-            params_from_iter([Value::Text(id.to_string())]),
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(SqliteError::query("load conversation"))?;
-    let Some((head_id, session_key, agent, channel, title)) = head else {
-        return Ok(None);
-    };
-    let messages = load_messages(conn, &id.to_string())?;
-    let latest = latest_message(conn, &id.to_string())?;
-    let provenance = provenance_of(conn, &id.to_string(), &session_key)?;
-    Ok(Some(ConversationWindow {
-        provenance,
-        conversation: ConversationHead {
-            id: parse_id(&head_id)?,
-            session_key,
-            agent,
-            channel,
-            title,
-        },
-        messages,
-        leaves: load_nodes(conn, &id.to_string(), SummaryKind::Leaf)?,
-        branches: load_nodes(conn, &id.to_string(), SummaryKind::Branch)?,
-        latest_message_at: latest,
-    }))
-}
-
-fn provenance_of(
-    conn: &rusqlite::Connection,
-    id: &str,
-    session_key: &str,
-) -> Result<Option<Provenance>, SqliteError> {
-    if !kernel::memory::is_imported(session_key) {
-        return Ok(None);
-    }
-    let settings: Option<String> = conn
-        .query_row(
-            "SELECT settings FROM ros_conversations WHERE id = ?1",
-            [id],
-            |row| row.get(0),
-        )
-        .map_err(SqliteError::query("load import origin"))?;
-    let settings = match settings {
-        Some(text) => serde_json::from_str(&text).map_err(|source| SqliteError::StoredJson {
-            column: "settings",
-            source,
-        })?,
-        None => wire::JsonObject::default(),
-    };
-    Ok(Some(Provenance::from_settings(&settings)))
-}
-
-fn load_messages(conn: &rusqlite::Connection, id: &str) -> Result<Vec<WindowMessage>, SqliteError> {
-    let mut statement = conn
-        .prepare(
-            "SELECT m.id, m.agent, m.role, m.content, m.created_at, \
-                    CASE WHEN m.role = 'tool' \
-                         THEN substr(CAST(coalesce(m.tool_args, '') AS BLOB), 1, ?2) END, \
-                    CASE WHEN m.role = 'tool' \
-                         THEN substr(CAST(coalesce(m.tool_result, '') AS BLOB), 1, ?3) END \
-               FROM ros_messages m \
-              WHERE m.conversation_id = ?1 \
-                AND NOT EXISTS (SELECT 1 FROM ros_summary_sources s WHERE s.message_id = m.id) \
-              ORDER BY m.created_at, m.rowid",
-        )
-        .map_err(SqliteError::query("load messages"))?;
-    let rows = statement
-        .query_map(
-            params_from_iter([
-                Value::Text(id.to_owned()),
-                prefix_bytes(ToolUse::INPUT_BYTES)?,
-                prefix_bytes(ToolUse::RESULT_BYTES)?,
-            ]),
-            |row| {
-                Ok((
-                    (
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, String>(4)?,
-                    ),
-                    (
-                        row.get::<_, Option<Vec<u8>>>(5)?,
-                        row.get::<_, Option<Vec<u8>>>(6)?,
-                    ),
-                ))
-            },
-        )
-        .map_err(SqliteError::query("load messages"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(SqliteError::query("load messages"))?;
-    rows.into_iter()
-        .map(
-            |((id, agent, role, content, created_at), (input, result))| {
-                Ok(WindowMessage {
-                    id: parse_id(&id)?,
-                    agent,
-                    role: role.parse::<Role>().map_err(|source| SqliteError::Query {
-                        operation: "message role",
-                        source: rusqlite::Error::FromSqlConversionFailure(
-                            2,
-                            rusqlite::types::Type::Text,
-                            Box::new(source),
-                        ),
-                    })?,
-                    content,
-                    tool: match (input, result) {
-                        (Some(input), Some(result)) => ToolUse::from_prefixes(&input, &result),
-                        _ => None,
-                    },
-                    created_at: time::stored(&created_at, "created_at")?,
-                })
-            },
-        )
-        .collect()
-}
-
-fn prefix_bytes(budget: usize) -> Result<Value, SqliteError> {
-    let bytes = i64::try_from(budget).map_err(SqliteError::Count)?;
-    Ok(Value::Integer(bytes.saturating_add(1)))
-}
-
-fn load_nodes(
-    conn: &rusqlite::Connection,
-    id: &str,
-    kind: SummaryKind,
-) -> Result<Vec<SummaryNode>, SqliteError> {
-    let mut statement = conn
-        .prepare(
-            "SELECT id, kind, content, message_count, earliest_at, latest_at, depth \
-               FROM ros_summaries \
-              WHERE conversation_id = ?1 AND parent_id IS NULL AND kind = ?2 \
-              ORDER BY earliest_at, id",
-        )
-        .map_err(SqliteError::query("load summary nodes"))?;
-    let rows = statement
-        .query_map(
-            params_from_iter([
-                Value::Text(id.to_owned()),
-                Value::Text(kind.as_str().to_owned()),
-            ]),
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, i64>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                    row.get::<_, Option<String>>(5)?,
-                    row.get::<_, i64>(6)?,
-                ))
-            },
-        )
-        .map_err(SqliteError::query("load summary nodes"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(SqliteError::query("load summary nodes"))?;
-    rows.into_iter()
-        .map(|(id, kind, content, count, earliest, latest, depth)| {
-            node(NodeParts {
-                id,
-                kind,
-                content,
-                count,
-                earliest,
-                latest,
-                depth,
-            })
-        })
-        .collect()
-}
-
-struct NodeParts {
-    id: String,
-    kind: String,
-    content: String,
-    count: i64,
-    earliest: Option<String>,
-    latest: Option<String>,
-    depth: i64,
-}
-
-fn node(parts: NodeParts) -> Result<SummaryNode, SqliteError> {
-    let kind = parts
-        .kind
-        .parse::<SummaryKind>()
-        .map_err(|error| SqliteError::Invalid {
-            message: format!(
-                "stored summary kind {} is not leaf, branch, or root: {error}",
-                parts.kind
-            ),
-        })?;
-    let Some(earliest) = parts.earliest else {
-        return Err(SqliteError::MissingHit { id: parts.id });
-    };
-    let Some(latest) = parts.latest else {
-        return Err(SqliteError::MissingHit { id: parts.id });
-    };
-    Ok(SummaryNode {
-        id: parse_id(&parts.id)?,
-        kind,
-        content: parts.content,
-        message_count: u32::try_from(parts.count).map_err(SqliteError::Count)?,
-        earliest_at: time::stored(&earliest, "earliest_at")?,
-        latest_at: time::stored(&latest, "latest_at")?,
-        depth: i32::try_from(parts.depth).map_err(SqliteError::Count)?,
-    })
-}
-
-fn latest_message(conn: &rusqlite::Connection, id: &str) -> Result<Option<Timestamp>, SqliteError> {
-    let text: Option<String> = conn
-        .query_row(
-            "SELECT max(created_at) FROM ros_messages WHERE conversation_id = ?1",
-            params_from_iter([Value::Text(id.to_owned())]),
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(SqliteError::query("latest message"))?;
-    match text {
-        Some(text) => Ok(Some(time::stored(&text, "created_at")?)),
-        None => Ok(None),
-    }
-}
-
-fn parse_id(id: &str) -> Result<Uuid, SqliteError> {
+pub(crate) fn parse_id(id: &str) -> Result<Uuid, SqliteError> {
     Uuid::parse_str(id).map_err(|source| SqliteError::Query {
         operation: "summary id",
         source: rusqlite::Error::FromSqlConversionFailure(
@@ -507,6 +523,13 @@ fn stored_kind(message: &str) -> Option<String> {
     let rest = message.strip_prefix("stored summary kind ")?;
     let kind = rest.strip_suffix(" is not leaf, branch, or root")?;
     Some(kind.to_owned())
+}
+
+fn workspace_json(value: &str) -> Result<SummaryArtifact, SqliteError> {
+    serde_json::from_str(value).map_err(|source| SqliteError::StoredJson {
+        column: "summary workspace",
+        source,
+    })
 }
 
 #[cfg(test)]

@@ -43,17 +43,24 @@ struct HeadRow {
 #[async_trait]
 impl FilingStore for PostgresMemory {
     async fn subject(&self, conversation: Uuid) -> Result<Option<Subject>, TopicError> {
-        let row = sqlx::query!(
-            r#"SELECT c.id, c.session_key, c.agent, c.channel, c.title,
-                      c.settings->>'cwd' AS cwd,
-                      (SELECT s.content FROM rh_summaries s
-                        WHERE s.conversation_id = c.id AND s.kind = 'leaf'
-                        ORDER BY s.earliest_at NULLS LAST, s.created_at
-                        LIMIT 1) AS summary
-                 FROM rh_conversations c
-                WHERE c.id = $1"#,
-            conversation
+        #[derive(sqlx::FromRow)]
+        struct SubjectRow {
+            id: Uuid,
+            session_key: String,
+            agent: String,
+            channel: String,
+            title: Option<String>,
+            cwd: Option<String>,
+            summary: Option<String>,
+        }
+        let row = sqlx::query_as::<_, SubjectRow>(
+            "SELECT c.id, c.session_key, c.agent, c.channel, c.title,
+                    c.settings->>'cwd' AS cwd, o.content AS summary
+               FROM rh_conversations c
+               LEFT JOIN rh_summary_openings o ON o.conversation_id = c.id
+              WHERE c.id = $1",
         )
+        .bind(conversation)
         .fetch_optional(&self.pool)
         .await
         .map_err(failed("filing subject"))?;
@@ -64,6 +71,7 @@ impl FilingStore for PostgresMemory {
                 agent: row.agent,
                 channel: row.channel,
                 title: row.title,
+                trashed: false,
             },
             cwd: row.cwd.filter(|cwd| !cwd.trim().is_empty()),
             summary: row.summary,
@@ -104,6 +112,7 @@ impl FilingStore for PostgresMemory {
             agent: row.agent,
             channel: row.channel,
             title: row.title,
+            trashed: false,
         }))
     }
 

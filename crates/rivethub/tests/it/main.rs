@@ -1,6 +1,7 @@
 pub mod process;
 
 mod append_imports;
+mod capture_settlement;
 mod cli;
 mod cli_provider;
 mod composed;
@@ -26,6 +27,7 @@ mod store_routes;
 mod team;
 mod team_recall;
 mod tls_fallback;
+mod top_down_summarizer;
 mod topics;
 mod users_registry;
 mod wiki;

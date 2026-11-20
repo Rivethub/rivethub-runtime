@@ -158,3 +158,25 @@ async fn excluded_roles_drop_messages_and_summary_hits_name_their_session() -> T
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn time_filters_compare_instants_at_the_requested_precision() -> TestResult {
+    let (_dir, store) = store(None)?;
+    seed(&store).await?;
+    crate::common::execute(
+        &store,
+        &format!(
+            "UPDATE ros_messages SET created_at = '2026-10-10T13:00:00.123100Z' WHERE id = '{USER}';
+             UPDATE ros_messages SET created_at = '2026-10-10T14:00:00.123900+01:00' WHERE id = '{ASSISTANT}';"
+        ),
+    )
+    .await?;
+    for mode in MODES {
+        let mut search = query(TEXT, mode);
+        search.scope = MemoryScope::Messages;
+        search.since = Some("2026-10-10T13:00:00.123100Z".parse()?);
+        search.before = Some("2026-10-10T13:00:00.123900Z".parse()?);
+        assert_eq!(hits(&store, search).await?, ids(&[USER]), "{mode}");
+    }
+    Ok(())
+}

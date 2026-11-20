@@ -10,7 +10,8 @@ SELECT id FROM rh_messages
    AND created_at <= $3";
 
 pub(super) const TRANSCRIPT_MESSAGES: &str = "\
-SELECT id, created_at, role, tool_name, content, tool_args, tool_result
+SELECT id, conversation_id, created_at, to_json(role) AS role, tool_name, content, tool_args, tool_result,
+       CASE WHEN jsonb_typeof(metadata) = 'object' THEN metadata END AS metadata
   FROM rh_messages
  WHERE id = ANY($1)
  ORDER BY created_at, id";
@@ -19,7 +20,7 @@ pub(super) const LEAF: &str = "\
 SELECT s.id, s.conversation_id, s.content,
        coalesce(s.earliest_at, s.created_at) AS start_at,
        coalesce(s.latest_at, s.earliest_at, s.created_at) AS end_at,
-       s.owner_user_id
+       s.owner_user_id, s.input_key
   FROM rh_summaries s WHERE s.id = $1";
 
 pub(super) const DONE: &str = "\
@@ -150,9 +151,9 @@ SELECT s.id, s.conversation_id, coalesce(s.earliest_at, s.created_at) AS session
   FROM rh_summaries s
   LEFT JOIN rh_conversations c ON c.id = s.conversation_id
   LEFT JOIN rh_entity_extractions e ON e.summary_id = s.id
- WHERE s.kind = 'leaf'
+ WHERE ((s.kind = 'leaf' AND (e.summary_id IS NULL OR e.status = 'failed' OR e.pipeline_version < $1))
+    OR EXISTS (SELECT 1 FROM rh_summary_deliveries d WHERE d.anchor_id = s.id AND d.consumer = 'entity'))
    AND (c.id IS NULL OR c.session_key NOT LIKE 'heartbeat:%')
-   AND (e.summary_id IS NULL OR e.status = 'failed' OR e.pipeline_version < $1)
    AND NOT EXISTS (
        SELECT 1 FROM graphile_worker._private_jobs j WHERE j.key = 'entity-ext-' || s.id::text)
    AND NOT EXISTS (

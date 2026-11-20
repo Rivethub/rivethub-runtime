@@ -6,6 +6,11 @@ pub(super) fn predicate(relation: &str, mark: &str) -> Result<String, Error> {
         "rh_messages" => messages(mark),
         "rh_summaries" => summaries(mark),
         "rh_summary_sources" => summary_sources(mark),
+        "rh_summary_passages" => format!(
+            "record_id IN (SELECT id FROM rh_summaries WHERE {})",
+            summaries(mark)
+        ),
+        "rh_summary_deliveries" => deliveries(mark),
         "rh_tags" => tags(mark),
         "rh_tag_taxonomy" => taxonomy(mark),
         "rh_wiki_topics" => topics(mark),
@@ -26,6 +31,8 @@ pub(super) fn order(relation: &str) -> Result<&'static str, Error> {
         "rh_conversations" | "rh_messages" | "rh_tags" => "id",
         "rh_summaries" => "depth DESC, id",
         "rh_summary_sources" => "summary_id, ordinal, message_id",
+        "rh_summary_passages" => "record_id, ordinal",
+        "rh_summary_deliveries" => "conversation_id, consumer, message_id",
         "rh_tag_taxonomy" => "key, value",
         "rh_wiki_topics" => "slug",
         "rh_wiki_provenance" => "topic_slug, source_kind, source_id",
@@ -44,13 +51,16 @@ pub(super) fn order(relation: &str) -> Result<&'static str, Error> {
 fn summary_touch(mark: &str) -> String {
     format!(
         "created_at >= {mark} OR earliest_at >= {mark} OR latest_at >= {mark} \
-         OR id IN (SELECT summary_id FROM rh_wiki_extractions WHERE extracted_at >= {mark})"
+         OR id IN (SELECT summary_id FROM rh_wiki_extractions WHERE extracted_at >= {mark}) \
+         OR (pipeline_version = 7 AND id IN (SELECT summary_id FROM rh_wiki_citations WHERE cited_at >= {mark}))"
     )
 }
 
 fn summaries(mark: &str) -> String {
     format!(
-        "{touch} OR id IN (\
+        "({touch}) OR (pipeline_version = 7 AND conversation_id IN (\
+            SELECT conversation_id FROM rh_summaries WHERE pipeline_version = 7 AND ({touch}))) \
+         OR id IN (\
             WITH RECURSIVE chain(id) AS (\
                 SELECT parent_id FROM rh_summaries \
                  WHERE parent_id IS NOT NULL AND ({touch}) \
@@ -67,8 +77,10 @@ fn messages(mark: &str) -> String {
     format!(
         "created_at >= {mark} OR id IN (\
             SELECT message_id FROM rh_summary_sources \
-             WHERE summary_id IN (SELECT id FROM rh_summaries WHERE {summaries}))",
-        summaries = summaries(mark)
+             WHERE summary_id IN (SELECT id FROM rh_summaries WHERE {summaries})) \
+         OR id IN (SELECT message_id FROM rh_summary_deliveries WHERE {deliveries})",
+        summaries = summaries(mark),
+        deliveries = deliveries(mark)
     )
 }
 
@@ -92,6 +104,14 @@ fn summary_sources(mark: &str) -> String {
     format!(
         "summary_id IN (SELECT id FROM rh_summaries WHERE {summaries})",
         summaries = summaries(mark)
+    )
+}
+
+fn deliveries(mark: &str) -> String {
+    format!(
+        "conversation_id IN (SELECT conversation_id FROM rh_summaries
+                             WHERE pipeline_version = 7 AND ({}))",
+        summaries(mark)
     )
 }
 

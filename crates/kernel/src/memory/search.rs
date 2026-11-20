@@ -17,6 +17,8 @@ pub struct SummaryDetail {
     pub tags: Vec<TagWire>,
     pub children: Vec<SummaryExcerpt>,
     pub sources: Vec<MemoryEntry>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<super::PassageSection>,
     pub provenance: Option<super::Provenance>,
 }
 
@@ -24,6 +26,14 @@ pub struct SummaryDetail {
 pub struct SummaryExcerpt {
     pub kind: SummaryKind,
     pub content: String,
+}
+
+impl MemorySearchResult {
+    pub fn detail_id(&self) -> &str {
+        self.passage
+            .as_ref()
+            .map_or(&self.id, |passage| &passage.id)
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

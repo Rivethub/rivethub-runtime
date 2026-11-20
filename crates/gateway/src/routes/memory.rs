@@ -5,8 +5,9 @@ use std::sync::Arc;
 use axum::Json;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::handler::Handler;
+use axum::http::StatusCode;
 use axum::routing;
 use axum::routing::MethodRouter;
 use kernel::memory::BrowseFilter;
@@ -15,6 +16,7 @@ use kernel::memory::Limit;
 use kernel::memory::MemoryEntry;
 use kernel::memory::SearchQuery;
 use kernel::memory::TagLiteral;
+use kernel::memory::settlement::SettleResult;
 use serde::Deserialize;
 use serde::Serialize;
 use uuid::Uuid;
@@ -102,27 +104,7 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
             "/flagged/{id}/dismiss",
             routing::post(super::flagged::dismiss).fallback(super::method_not_allowed),
         )
-        .route(
-            "/summaries/{session}",
-            routing::get(super::memory_archive::summaries).fallback(super::method_not_allowed),
-        )
-        .route(
-            "/summaries/{session}/{summary}",
-            routing::get(super::memory_archive::summary).fallback(super::method_not_allowed),
-        )
-        .route(
-            "/summaries/{session}/{summary}/children",
-            routing::get(super::memory_archive::children).fallback(super::method_not_allowed),
-        )
-        .route(
-            "/conversations/{id}/summaries",
-            routing::get(super::memory_archive::conversation_summaries)
-                .fallback(super::method_not_allowed),
-        )
-        .route(
-            "/export",
-            routing::get(super::memory_archive::export).fallback(super::method_not_allowed),
-        )
+        .merge(archive_routes())
         .route("/tool/memory_search", tool_route(tool_search))
         .route("/tool/memory_browse", tool_route(tool_browse))
         .route("/tool/memory_stats", tool_route(tool_stats))
@@ -138,6 +120,48 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
         )
         .nest("/tags", super::tags::router())
         .fallback(unknown)
+}
+
+fn archive_routes() -> Router<Arc<Gateway>> {
+    Router::new()
+        .route(
+            "/summaries/{session}",
+            routing::get(super::memory_archive::summaries).fallback(super::method_not_allowed),
+        )
+        .route(
+            "/summaries/{session}/{summary}",
+            routing::get(super::memory_archive::summary).fallback(super::method_not_allowed),
+        )
+        .route(
+            "/summaries/{session}/{summary}/children",
+            routing::get(super::memory_archive::children).fallback(super::method_not_allowed),
+        )
+        .route(
+            "/conversations/{id}/settle",
+            routing::post(settle).fallback(super::method_not_allowed),
+        )
+        .route(
+            "/conversations/{id}/summaries",
+            routing::get(super::memory_archive::conversation_summaries)
+                .fallback(super::method_not_allowed),
+        )
+        .route(
+            "/export",
+            routing::get(super::memory_archive::export).fallback(super::method_not_allowed),
+        )
+}
+
+async fn settle(
+    State(gateway): State<Arc<Gateway>>,
+    user: UserId,
+    Path(session): Path<String>,
+) -> Result<(StatusCode, Json<SettleResult>), ApiError> {
+    let result = gateway
+        .store()
+        .mark_summary_settled(&session, user.owner())
+        .await?
+        .ok_or(ApiError::NotFound("conversation not found"))?;
+    Ok((StatusCode::ACCEPTED, Json(result)))
 }
 
 fn tool_route<H, T>(handler: H) -> MethodRouter<Arc<Gateway>>
@@ -250,7 +274,7 @@ async fn search(
                 if snippets {
                     hit.content = super::memory_snippet::snippet(&hit.content, &text);
                 }
-                super::memory_rows::search_hit(hit, &origins)
+                super::memory_rows::search_hit(hit, &origins, &results.summaries)
             })
             .collect(),
         query: text,
@@ -458,7 +482,7 @@ async fn search_tool(gateway: &Gateway, args: MemorySearchToolArgs) -> Result<St
         results: results
             .results
             .into_iter()
-            .map(|hit| super::memory_rows::search_hit(hit, &origins))
+            .map(|hit| super::memory_rows::search_hit(hit, &origins, &results.summaries))
             .collect(),
     };
     serialize_tool(&response)

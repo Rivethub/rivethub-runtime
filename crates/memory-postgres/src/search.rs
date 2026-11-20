@@ -6,9 +6,9 @@ use kernel::memory::MemoryFallback;
 use kernel::memory::MemoryHitSource;
 use kernel::memory::MemoryScope;
 use kernel::memory::SearchMode;
-use kernel::memory::SummaryKind;
 use kernel::memory::TagLiteral;
 use kernel::memory::TagWire;
+use kernel::memory::{SummaryKind, SummaryPassage};
 use kernel::memory_core::FusionItem;
 use kernel::memory_core::HYBRID_RRF_K;
 use kernel::memory_core::fusion_score;
@@ -22,6 +22,7 @@ use wire::message::Role;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SearchOptions {
     pub(crate) since: Option<Timestamp>,
+    pub(crate) summary_index_key: Option<[u8; 32]>,
     pub(crate) before: Option<Timestamp>,
     pub(crate) text: String,
     pub(crate) mode: SearchMode,
@@ -58,6 +59,7 @@ impl SearchOptions {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MemorySearchHit {
     pub chunk: Option<MemoryChunkMatch>,
+    pub passage: Option<SummaryPassage>,
     pub id: String,
     pub source: MemoryHitSource,
     pub content: String,
@@ -75,6 +77,19 @@ pub struct MemorySearchHit {
     pub(crate) content_key: String,
 }
 
+impl MemorySearchHit {
+    pub(crate) fn detail_id(&self) -> &str {
+        self.passage
+            .as_ref()
+            .map_or(&self.id, |passage| &passage.id)
+    }
+}
+
+pub(crate) struct SearchRead<'a> {
+    pub(crate) memory: &'a crate::PostgresMemory,
+    pub(crate) tx: sqlx::Transaction<'static, sqlx::Postgres>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchOutcome {
     pub hits: Vec<MemorySearchHit>,
@@ -85,7 +100,9 @@ pub struct SearchOutcome {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ArmRow {
-    pub(crate) chunk: Option<kernel::memory::MemoryChunkMatch>,
+    pub(crate) chunk: Option<MemoryChunkMatch>,
+    pub(crate) passage: Option<SummaryPassage>,
+    pub(crate) record_id: Option<String>,
     pub(crate) id: String,
     pub(crate) source: MemoryHitSource,
     pub(crate) content_key: String,
@@ -97,6 +114,7 @@ pub(crate) struct ArmRow {
     pub(crate) conversation_id: Option<String>,
     pub(crate) session_id: Option<String>,
     pub(crate) created_at: Timestamp,
+    pub(crate) newest: Option<Timestamp>,
     pub(crate) arm_score: f64,
     pub(crate) semantic: f64,
     pub(crate) boost: f64,
@@ -152,7 +170,8 @@ fn fuse(
                 arm_count: ranked.arm_count,
                 hit: MemorySearchHit {
                     chunk: row.chunk.clone(),
-                    id: row.id.clone(),
+                    passage: row.passage.clone(),
+                    id: row.record_id.clone().unwrap_or_else(|| row.id.clone()),
                     source: row.source,
                     content: String::new(),
                     role: row.role,
@@ -181,7 +200,7 @@ fn fuse(
             .hit
             .score
             .total_cmp(&left.hit.score)
-            .then_with(|| left.hit.id.cmp(&right.hit.id))
+            .then_with(|| left.hit.detail_id().cmp(right.hit.detail_id()))
     });
     fused
 }
@@ -208,7 +227,8 @@ fn finish_rows(rows: Vec<ArmRow>, limit: u32) -> Result<Vec<MemorySearchHit>, Er
                 kernel::memory_core::composite_score(row.arm_score, row.semantic, row.boost);
             MemorySearchHit {
                 chunk: row.chunk,
-                id: row.id,
+                passage: row.passage,
+                id: row.record_id.unwrap_or(row.id),
                 source: row.source,
                 content: String::new(),
                 role: row.role,
@@ -240,12 +260,13 @@ fn distinct(hits: Vec<MemorySearchHit>) -> Vec<MemorySearchHit> {
     let mut seen = std::collections::BTreeSet::new();
     hits.into_iter()
         .filter(|hit| {
-            seen.insert((
-                hit.source == MemoryHitSource::Summary,
-                hit.session_id.clone(),
-                hit.created_at,
-                hit.content_key.clone(),
-            ))
+            hit.passage.is_some()
+                || seen.insert((
+                    hit.source == MemoryHitSource::Summary,
+                    hit.session_id.clone(),
+                    hit.created_at,
+                    hit.content_key.clone(),
+                ))
         })
         .collect()
 }
@@ -255,10 +276,21 @@ impl crate::PostgresMemory {
         &self,
         query: &kernel::memory::SearchQuery,
     ) -> Result<SearchOutcome, Error> {
+        let (mut read, options, embed) = self.start_search(query).await?;
+        let outcome = read.search_outcome(&options, embed).await?;
+        read.finish(&outcome.hits).await?;
+        Ok(outcome)
+    }
+
+    pub(crate) async fn start_search(
+        &self,
+        query: &kernel::memory::SearchQuery,
+    ) -> Result<(SearchRead<'_>, SearchOptions, EmbedAttempt), Error> {
         if query.window.is_some() && query.since.is_none() && query.before.is_none() {
             return Err(Error::UnresolvedWindow);
         }
-        self.search_outcome(&SearchOptions {
+        let options = SearchOptions {
+            summary_index_key: self.summary_index_key,
             since: query.since,
             before: query.before,
             text: query.text.clone(),
@@ -270,21 +302,55 @@ impl crate::PostgresMemory {
             exclude_roles: query.exclude_roles.clone(),
             tool_name: query.tool_name.clone(),
             tag: query.tag.clone(),
-        })
-        .await
+        }
+        .without_nul();
+        let embed = if matches!(options.mode, SearchMode::Trigram | SearchMode::Regex) {
+            EmbedAttempt::NotWired
+        } else {
+            self.embed_query(&options.text).await
+        };
+        let tx = self
+            .pool
+            .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .await
+            .map_err(|source| Error::operation("search snapshot", source))?;
+        Ok((SearchRead { memory: self, tx }, options, embed))
+    }
+
+    fn record_access(&self, hits: &[MemorySearchHit]) -> Result<(), Error> {
+        let messages = hit_uuids(hits, MemoryHitSource::Message)?;
+        let summaries = hit_uuids(hits, MemoryHitSource::Summary)?;
+        self.access.record(&self.pool, messages, summaries);
+        Ok(())
+    }
+}
+
+impl SearchRead<'_> {
+    pub(crate) async fn finish(self, hits: &[MemorySearchHit]) -> Result<(), Error> {
+        self.tx
+            .commit()
+            .await
+            .map_err(|source| Error::operation("search snapshot", source))?;
+        self.memory.record_access(hits)
     }
 
     pub(crate) async fn search_outcome(
-        &self,
+        &mut self,
         options: &SearchOptions,
+        embed: EmbedAttempt,
     ) -> Result<SearchOutcome, Error> {
-        let options = &options.without_nul();
         let tag_filter = options.tag.as_ref().map(TagFilter::from);
         let mut outcome = match options.mode {
-            SearchMode::Hybrid => self.hybrid_search(options, tag_filter.as_ref()).await,
-            SearchMode::Vector => self.vector_search(options, tag_filter.as_ref()).await,
+            SearchMode::Hybrid => {
+                self.hybrid_search(options, tag_filter.as_ref(), embed)
+                    .await
+            }
+            SearchMode::Vector => {
+                self.vector_search(options, tag_filter.as_ref(), embed)
+                    .await
+            }
             SearchMode::Fts | SearchMode::Trigram | SearchMode::Regex => {
-                self.explicit_search(options, tag_filter.as_ref(), options.mode)
+                self.explicit_search(options, tag_filter.as_ref(), embed)
                     .await
             }
         }?;
@@ -293,21 +359,18 @@ impl crate::PostgresMemory {
     }
 
     async fn vector_search(
-        &self,
+        &mut self,
         options: &SearchOptions,
         tag_filter: Option<&TagFilter>,
+        embed: EmbedAttempt,
     ) -> Result<SearchOutcome, Error> {
-        match self.embed_query(&options.text).await {
-            EmbedAttempt::NotWired => {
-                self.explicit_search(options, tag_filter, SearchMode::Fts)
-                    .await
-            }
+        match embed {
+            EmbedAttempt::NotWired => self.fts_explicit(options, tag_filter, None, None).await,
             EmbedAttempt::Embedded { vector, ef_search } => {
                 let rows = self
                     .vector_arm_rows(options, tag_filter, &vector, ef_search)
                     .await?;
                 let hits = finish_rows(rows, options.limit)?;
-                self.record_access(&hits)?;
                 Ok(SearchOutcome {
                     hits,
                     degraded: None,
@@ -319,7 +382,7 @@ impl crate::PostgresMemory {
                 failure,
                 elapsed_ms,
             } => {
-                self.vector_dropped(&failure, elapsed_ms);
+                self.memory.vector_dropped(&failure, elapsed_ms);
                 let reason = failure.reason();
                 self.fts_explicit(options, tag_filter, None, Some(reason))
                     .await
@@ -328,13 +391,13 @@ impl crate::PostgresMemory {
     }
 
     async fn explicit_search(
-        &self,
+        &mut self,
         options: &SearchOptions,
         tag_filter: Option<&TagFilter>,
-        mode: SearchMode,
+        embed: EmbedAttempt,
     ) -> Result<SearchOutcome, Error> {
-        if mode != SearchMode::Fts {
-            let kind = match mode {
+        if options.mode != SearchMode::Fts {
+            let kind = match options.mode {
                 SearchMode::Regex => ArmKind::Regex,
                 SearchMode::Hybrid | SearchMode::Fts | SearchMode::Vector | SearchMode::Trigram => {
                     ArmKind::Trigram
@@ -342,7 +405,6 @@ impl crate::PostgresMemory {
             };
             let rows = self.arm_rows(options, kind, tag_filter, None).await?;
             let hits = finish_rows(rows, options.limit)?;
-            self.record_access(&hits)?;
             return Ok(SearchOutcome {
                 hits,
                 degraded: None,
@@ -351,14 +413,14 @@ impl crate::PostgresMemory {
             });
         }
         let mut degraded = None;
-        let query = match self.embed_query(&options.text).await {
+        let query = match embed {
             EmbedAttempt::NotWired => None,
             EmbedAttempt::Embedded { vector, .. } => Some(vector),
             EmbedAttempt::Failed {
                 failure,
                 elapsed_ms,
             } => {
-                self.vector_warn_only(&failure, elapsed_ms);
+                self.memory.vector_warn_only(&failure, elapsed_ms);
                 degraded = Some(failure.reason());
                 None
             }
@@ -368,7 +430,7 @@ impl crate::PostgresMemory {
     }
 
     async fn fts_explicit(
-        &self,
+        &mut self,
         options: &SearchOptions,
         tag_filter: Option<&TagFilter>,
         query: Option<Vec<f32>>,
@@ -395,7 +457,6 @@ impl crate::PostgresMemory {
         } else {
             finish_rows(said_first(rows), options.limit)?
         };
-        self.record_access(&hits)?;
         Ok(SearchOutcome {
             hits,
             degraded,
@@ -405,36 +466,30 @@ impl crate::PostgresMemory {
     }
 
     async fn hybrid_search(
-        &self,
+        &mut self,
         options: &SearchOptions,
         tag_filter: Option<&TagFilter>,
+        embed: EmbedAttempt,
     ) -> Result<SearchOutcome, Error> {
-        let embed = self.embed_query(&options.text).await;
         let query = embed.vector().map(Vec::as_slice);
-        let literal = literal_scan(&options.text);
-        let trigram = async {
-            if literal {
+        let fts_rows = self
+            .arm_rows(options, ArmKind::Fts, tag_filter, query)
+            .await?;
+        let trigram_rows = if literal_scan(&options.text) {
+            Some(
                 self.optional_literal_rows(options, tag_filter, query)
-                    .await
-                    .map(Some)
-            } else {
-                Ok(None)
-            }
+                    .await?,
+            )
+        } else {
+            None
         };
-        let vector = async {
-            match &embed {
-                EmbedAttempt::Embedded { vector, ef_search } => self
-                    .vector_arm_rows(options, tag_filter, vector, *ef_search)
-                    .await
-                    .map(Some),
-                EmbedAttempt::NotWired | EmbedAttempt::Failed { .. } => Ok(None),
-            }
+        let vector_rows = match &embed {
+            EmbedAttempt::Embedded { vector, ef_search } => Some(
+                self.vector_arm_rows(options, tag_filter, vector, *ef_search)
+                    .await?,
+            ),
+            EmbedAttempt::NotWired | EmbedAttempt::Failed { .. } => None,
         };
-        let (fts_rows, trigram_rows, vector_rows) = tokio::try_join!(
-            Box::pin(self.arm_rows(options, ArmKind::Fts, tag_filter, query)),
-            Box::pin(trigram),
-            Box::pin(vector)
-        )?;
 
         let mut fallback = None;
         let mut literal_skipped = false;
@@ -464,7 +519,7 @@ impl crate::PostgresMemory {
             elapsed_ms,
         } = &embed
         {
-            self.vector_dropped(failure, *elapsed_ms);
+            self.memory.vector_dropped(failure, *elapsed_ms);
             Some(failure.reason())
         } else {
             None
@@ -483,7 +538,6 @@ impl crate::PostgresMemory {
             .collect();
         let mut hits = distinct(hits);
         hits.truncate(usize::try_from(options.limit.max(1))?);
-        self.record_access(&hits)?;
         Ok(SearchOutcome {
             hits,
             degraded,
@@ -493,7 +547,7 @@ impl crate::PostgresMemory {
     }
 
     async fn fuse_owned(
-        &self,
+        &mut self,
         fts: &[ArmRow],
         vector: Option<&[ArmRow]>,
         trigram: Option<&[ArmRow]>,
@@ -504,21 +558,33 @@ impl crate::PostgresMemory {
             .chain(trigram.into_iter().flatten())
             .filter_map(|row| row.session_id.clone())
             .collect::<Vec<_>>();
-        let owners = self.team_owners(&keys).await?;
+        let owners = crate::team::team_owners(&mut *self.tx, &keys).await?;
         let own = if owners.is_empty() {
             std::collections::BTreeSet::new()
         } else {
-            self.own_sessions(&keys).await?
+            crate::team::own_sessions(&mut self.tx, &keys).await?
         };
-        Ok(fuse(fts, vector, trigram, &own, self.own_weight))
+        Ok(fuse(fts, vector, trigram, &own, self.memory.own_weight))
     }
+}
 
-    fn record_access(&self, hits: &[MemorySearchHit]) -> Result<(), Error> {
-        let messages = hit_uuids(hits, MemoryHitSource::Message)?;
-        let summaries = hit_uuids(hits, MemoryHitSource::Summary)?;
-        self.access.record(&self.pool, messages, summaries);
-        Ok(())
-    }
+pub(crate) fn whole_summary_ids(hits: &[MemorySearchHit]) -> Result<Vec<Uuid>, Error> {
+    hits.iter()
+        .filter(|hit| hit.source == MemoryHitSource::Summary && hit.passage.is_none())
+        .map(|hit| search_uuid(&hit.id))
+        .collect()
+}
+
+pub(crate) fn passage_ids(hits: &[MemorySearchHit]) -> Result<Vec<Uuid>, Error> {
+    hits.iter()
+        .filter_map(|hit| hit.passage.as_ref())
+        .map(|passage| search_uuid(&passage.id))
+        .collect()
+}
+
+fn search_uuid(id: &str) -> Result<Uuid, Error> {
+    Uuid::parse_str(id)
+        .map_err(|error| Error::protocol(format!("search hit id {id} is not a uuid: {error}")))
 }
 
 pub(crate) fn hit_uuids(
@@ -527,11 +593,7 @@ pub(crate) fn hit_uuids(
 ) -> Result<Vec<Uuid>, Error> {
     hits.iter()
         .filter(|hit| hit.source == source)
-        .map(|hit| {
-            Uuid::parse_str(&hit.id).map_err(|error| {
-                Error::protocol(format!("search hit id {} is not a uuid: {error}", hit.id))
-            })
-        })
+        .map(|hit| search_uuid(&hit.id))
         .collect()
 }
 

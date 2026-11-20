@@ -60,8 +60,11 @@ impl ModelTasks {
 
 #[expect(missing_debug_implementations)]
 pub struct ModelBinding {
+    pub provider_id: String,
     pub provider: Arc<dyn ModelProvider>,
     pub model: String,
+    pub context_window: Option<u32>,
+    pub profile: String,
     pub embeddings: bool,
 }
 
@@ -294,8 +297,14 @@ impl ModelFactory {
                     None => provider.model().to_owned(),
                 };
                 Ok(ModelBinding {
+                    provider_id: id.to_owned(),
                     provider: Arc::new(provider),
                     model,
+                    context_window: body.context_window,
+                    profile: format!(
+                        "{id}:{kind:?}:{:?}:{:?}:{:?}:{:?}",
+                        body.base_url, body.api_prefix, body.reasoning, body.max_tokens
+                    ),
                     embeddings: true,
                 })
             }
@@ -328,8 +337,11 @@ impl ModelFactory {
                 )?
                 .with_task_tracker(self.tasks.clone());
                 Ok(ModelBinding {
+                    provider_id: id.to_owned(),
                     provider: Arc::new(provider),
                     model,
+                    context_window: body.context_window,
+                    profile: format!("{id}:{kind:?}:{effort:?}"),
                     embeddings,
                 })
             }
@@ -344,4 +356,61 @@ fn slot<'a>(config: &'a Config, id: &str) -> Result<&'a ProviderSlot, ModelError
         .as_ref()
         .and_then(|slots| slots.get(id))
         .ok_or_else(|| ModelError::Missing(id.into()))
+}
+
+pub(crate) fn summary_index_key(config: &Config, env: &Environment) -> Option<[u8; 32]> {
+    let factory = ModelFactory::without_harnesses(env);
+    let models = index_setting(factory.resolve_models(config))?;
+    let choice = models
+        .embedder
+        .choice
+        .filter(|_| !models.embedder.inherits_default)
+        .or_else(|| factory.derived_embedder(config));
+    let (endpoint, prefix, model) = if let Some(choice) = choice {
+        let provider = choice.provider.as_deref().and_then(|id| openai(config, id));
+        (
+            provider
+                .and_then(|p| p.base_url.as_deref())
+                .or(choice.endpoint.as_deref())?
+                .trim_end_matches('/')
+                .to_owned(),
+            provider.and_then(|p| p.api_prefix.clone()),
+            config.embedder_model_named(&choice)?,
+        )
+    } else {
+        let provider = openai(config, &models.default.provider)?;
+        (
+            provider
+                .base_url
+                .as_deref()?
+                .trim_end_matches('/')
+                .to_owned(),
+            provider.api_prefix.clone(),
+            provider.model.clone()?,
+        )
+    };
+    let width = index_setting(workers::EmbedSettings::from_config(config))?.width;
+    Some(kernel::memory::summary_backend::index_key(
+        &endpoint,
+        prefix.as_deref(),
+        &model,
+        width,
+    ))
+}
+
+fn openai<'a>(config: &'a Config, id: &str) -> Option<&'a config::provider::OpenaiProvider> {
+    match &index_setting(slot(config, id))?.body {
+        ProviderBody::Openai(body) => Some(body),
+        ProviderBody::Cli(_) | ProviderBody::Unknown(_) | ProviderBody::Removed(_) => None,
+    }
+}
+
+fn index_setting<T>(result: Result<T, impl std::fmt::Display>) -> Option<T> {
+    match result {
+        Ok(setting) => Some(setting),
+        Err(error) => {
+            tracing::debug!(%error, "summary index configuration is unavailable");
+            None
+        }
+    }
 }

@@ -30,9 +30,13 @@ mod records;
 mod search;
 mod session_messages;
 mod sessions;
+pub mod settlement;
 pub mod share;
 mod suggest;
 mod summary;
+pub mod summary_opening;
+pub mod summary_order;
+pub mod summary_reference;
 mod tags;
 mod title;
 mod tree;
@@ -87,8 +91,10 @@ pub use records::{
     MemoryHitSource, MemoryMessageTally, MemoryScope, MemorySearchResult, MemoryStatsResponse,
     MemorySummaryNode, RecentSession, SearchMode, SummaryKind, TopTool, VectorState,
 };
+pub use records::{PassageSection, SummaryPassage};
 pub use search::SearchOutcome;
 pub use search::{SummaryDetail, SummaryExcerpt};
+pub use session_messages::CursorError;
 pub use session_messages::MessageCursor;
 pub use session_messages::MessagesQuery;
 pub use session_messages::SESSION_MESSAGES_DEFAULT;
@@ -145,6 +151,8 @@ pub use tree::{SummaryCounts, SummaryShape, SummaryTree, TreeCut, TreeWindow, cu
 
 #[derive(Debug, Error)]
 pub enum MemoryStoreError {
+    #[error(transparent)]
+    SummaryReference(#[from] summary_reference::SummaryReferenceError),
     #[error("memory store is unavailable")]
     Unavailable(#[source] BoxError),
     #[error("memory query failed: {message}")]
@@ -301,39 +309,6 @@ pub struct SummaryDag {
 }
 
 pub const SUMMARY_PREVIEW_BYTES: usize = 320;
-
-impl SummaryDag {
-    #[must_use]
-    pub fn outline(mut self) -> Self {
-        for node in &mut self.summaries {
-            node.source_message_ids.clear();
-            if node.content.len() > SUMMARY_PREVIEW_BYTES {
-                let mut end = SUMMARY_PREVIEW_BYTES;
-                while !node.content.is_char_boundary(end) {
-                    end -= 1;
-                }
-                node.content.truncate(end);
-                node.truncated = true;
-            }
-        }
-        self
-    }
-
-    #[must_use]
-    pub fn latest(mut self, limit: usize) -> Self {
-        self.summaries.sort_by(|left, right| {
-            right
-                .latest_at
-                .cmp(&left.latest_at)
-                .then_with(|| {
-                    (right.kind == SummaryKind::Leaf).cmp(&(left.kind == SummaryKind::Leaf))
-                })
-                .then_with(|| right.id.cmp(&left.id))
-        });
-        self.summaries.truncate(limit);
-        self
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SummaryOwner {
@@ -496,6 +471,14 @@ pub trait MemoryStore: Send + Sync {
         node: Option<&str>,
     ) -> Result<CaptureResult, MemoryStoreError>;
 
+    async fn mark_summary_settled(
+        &self,
+        _session: &str,
+        _owner: &Owner,
+    ) -> Result<Option<settlement::SettleResult>, MemoryStoreError> {
+        Ok(None)
+    }
+
     async fn append(&self, owner: &Owner, batch: Vec<MemoryEntry>)
     -> Result<u64, MemoryStoreError>;
 
@@ -626,3 +609,7 @@ pub trait MemoryStore: Send + Sync {
 }
 
 pub mod schedule;
+
+#[doc(hidden)]
+pub mod summary_backend;
+pub mod summary_conversion;

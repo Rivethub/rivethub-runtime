@@ -3,6 +3,8 @@ use crate::message::Role;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
+pub const SEARCH_QUERY_GUIDANCE: &str = "Use a few specific keywords instead of a full sentence. Include names, identifiers, error text, or the subject, such as \"build cache timeout\". If nothing matches, try a second set of keywords.";
+
 #[derive(
     schemars::JsonSchema,
     Debug,
@@ -47,6 +49,9 @@ pub enum SummaryKind {
     Leaf,
     Branch,
     Root,
+    Session,
+    Part,
+    Section,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -66,6 +71,7 @@ pub struct MemorySearchToolArgs {
     pub window: Option<BrowseWindow>,
     pub expand: Option<bool>,
     pub synthesize: Option<bool>,
+    #[schemars(description = SEARCH_QUERY_GUIDANCE)]
     pub query: String,
     pub mode: Option<SearchMode>,
     pub scope: Option<MemoryScope>,
@@ -98,6 +104,11 @@ pub enum MemoryHitSource {
 pub struct MemorySearchHit {
     pub owner: Option<String>,
     pub chunk: Option<crate::memory::MemoryChunkMatch>,
+    pub passage: Option<crate::memory::SummaryPassage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<crate::memory::PassageSection>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<crate::memory::MemoryEntry>,
     pub id: String,
     pub source: MemoryHitSource,
     pub content: String,

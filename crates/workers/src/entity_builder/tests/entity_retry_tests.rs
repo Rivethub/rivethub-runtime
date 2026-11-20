@@ -407,6 +407,7 @@ fn host_view() -> EntityView {
 
 fn host_leaf() -> EntityLeaf {
     EntityLeaf {
+        delivery: None,
         id: Uuid::from_u128(4),
         conversation_id: Some(Uuid::from_u128(9)),
         content: "leaf".to_owned(),

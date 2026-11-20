@@ -22,8 +22,8 @@ const BROWSE_CONDITIONS: &str = "WHERE (?1 OR m.role <> 'tool')
          SELECT entity_id FROM ros_tags
           WHERE entity_type = 'conversation' AND state = 'accepted'
             AND key = ?6 AND value = ?7))
-   AND (?8 IS NULL OR m.created_at >= ?8)
-   AND (?9 IS NULL OR m.created_at < ?9)
+   AND (?8 IS NULL OR rh_instant(m.created_at) >= ?8)
+   AND (?9 IS NULL OR rh_instant(m.created_at) < ?9)
    AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr WHERE tr.session_key = c.session_key)";
 
 impl SqliteStore {
@@ -44,7 +44,7 @@ impl SqliteStore {
             "SELECT {ENTRY_COLUMNS} FROM ros_messages m
                JOIN ros_conversations c ON c.id = m.conversation_id
              {BROWSE_CONDITIONS}
-             ORDER BY m.created_at {direction}, m.rowid ASC
+             ORDER BY rh_instant(m.created_at) {direction}, m.rowid ASC
              LIMIT ?10"
         );
         self.with_conn(move |conn| {
@@ -59,8 +59,8 @@ impl SqliteStore {
                         filter.tool_name,
                         filter.tag.as_ref().map(|tag| tag.key.as_str()),
                         filter.tag.as_ref().map(|tag| tag.value.as_str()),
-                        bounds.since.map(time::stamp),
-                        bounds.before.map(time::stamp),
+                        bounds.since.map(time::seek_key),
+                        bounds.before.map(time::seek_key),
                         filter.limit.get(),
                     ],
                     EntryRow::read,

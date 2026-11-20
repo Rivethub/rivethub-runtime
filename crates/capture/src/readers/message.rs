@@ -58,6 +58,20 @@ pub(crate) enum Mapped {
     None,
 }
 
+impl Mapped {
+    pub(crate) fn with_metadata(
+        mut self,
+        add: impl FnOnce(&mut JsonObject) -> Result<(), serde_json::Error>,
+    ) -> Result<Self, TranscriptReaderError> {
+        if let Self::Draft(draft) = &mut self
+            && let Some(metadata) = &mut draft.message.metadata
+        {
+            add(metadata).map_err(json_failed)?;
+        }
+        Ok(self)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ToolFields {
     pub name: Option<String>,
@@ -311,7 +325,7 @@ pub(crate) fn tool_input(raw: &RawValue) -> Result<JsonObject, TranscriptReaderE
     JsonObject::from_serialize(&Wrapped { input: raw }).map_err(json_failed)
 }
 
-fn json_failed(error: serde_json::Error) -> TranscriptReaderError {
+pub(crate) fn json_failed(error: serde_json::Error) -> TranscriptReaderError {
     TranscriptReaderError::Read {
         message: format!("capture JSON failed: {error}"),
         source: Box::new(error),

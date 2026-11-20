@@ -4,7 +4,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use parking_lot::Mutex;
-use sqlx::PgPool;
+use sqlx::PgExecutor;
 
 use crate::error::Error;
 
@@ -32,7 +32,11 @@ pub(crate) struct Backfills {
 }
 
 impl Backfills {
-    pub(crate) async fn done(&self, pool: &PgPool, backfill: Backfill) -> Result<bool, Error> {
+    pub(crate) async fn done<'e>(
+        &self,
+        executor: impl PgExecutor<'e>,
+        backfill: Backfill,
+    ) -> Result<bool, Error> {
         if self.settled.load(Ordering::Relaxed) {
             return Ok(true);
         }
@@ -46,7 +50,7 @@ impl Backfills {
             pending
         } else {
             let pending: Vec<String> = sqlx::query_scalar("SELECT name FROM rh_backfills")
-                .fetch_all(pool)
+                .fetch_all(executor)
                 .await
                 .map_err(|source| Error::operation("backfill state", source))?;
             *self.seen.lock() = Some((Instant::now(), pending.clone()));

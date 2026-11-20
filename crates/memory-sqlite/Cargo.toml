@@ -12,6 +12,7 @@ config.workspace = true
 serde_with.workspace = true
 async-trait = { workspace = true }
 jiff = { workspace = true }
+hex = { workspace = true }
 kernel = { workspace = true }
 parking_lot = { workspace = true }
 rusqlite = { workspace = true, features = ["functions"] }
@@ -27,8 +28,8 @@ uuid = { workspace = true }
 wire = { workspace = true }
 
 [dev-dependencies]
+rusqlite = { workspace = true, features = ["hooks"] }
 sqlx = { workspace = true }
-hex = { workspace = true }
 migrate = { workspace = true }
 sha2 = { workspace = true }
 tempfile = { workspace = true }

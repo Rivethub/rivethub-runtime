@@ -27,9 +27,16 @@ mod session_catalog;
 mod session_marks;
 mod session_messages;
 pub use search::embed::QueryEmbed;
+mod settlement;
 mod stats;
+mod summary_backend;
+mod summary_conversion;
 mod summary_dag;
+mod summary_index;
+mod summary_opening;
 mod summary_port;
+mod summary_rehearsal;
+mod summary_replace;
 mod tags;
 mod tags_suggest;
 mod tags_write;
@@ -90,7 +97,7 @@ impl SharedClock {
     }
 }
 
-pub const SCHEMA_VERSION: i64 = 35;
+pub const SCHEMA_VERSION: i64 = 41;
 
 const FILE_PRAGMAS: &str = "PRAGMA journal_mode = wal;\nPRAGMA foreign_keys = ON;";
 
@@ -106,10 +113,12 @@ pub struct SqliteStore {
     pending: tokio_util::task::TaskTracker,
     logs: Arc<Mutex<Vec<String>>>,
     embed: Arc<AtomicBool>,
+    language_available: bool,
     claims: Arc<ClaimIds>,
     clock: SharedClock,
     query_embed: Option<QueryEmbed>,
     embed_model: Option<String>,
+    summary_index_key: Option<[u8; 32]>,
     notifications: tokio::sync::watch::Sender<()>,
     summaries_written: tokio::sync::broadcast::Sender<kernel::memory::WrittenSummary>,
 }
@@ -134,7 +143,20 @@ impl SqliteStore {
             .map_err(SqliteError::Pragma)?;
         search::functions::register(&conn)?;
         session_catalog::register(&conn)?;
+        time::register(&conn)?;
         Ok(from_conn(conn, SharedClock::new(Timestamp::now)))
+    }
+
+    #[must_use]
+    pub fn with_summary_index_key(mut self, key: [u8; 32]) -> Self {
+        self.summary_index_key = Some(key);
+        self
+    }
+
+    #[must_use]
+    pub fn with_language_available(mut self, available: bool) -> Self {
+        self.language_available = available;
+        self
     }
 
     #[must_use]
@@ -243,10 +265,12 @@ fn from_conn(conn: Connection, clock: SharedClock) -> SqliteStore {
         pending: tokio_util::task::TaskTracker::new(),
         logs: Arc::new(Mutex::new(Vec::new())),
         embed: Arc::new(AtomicBool::new(false)),
+        language_available: false,
         claims: Arc::new(ClaimIds::default()),
         clock,
         query_embed: None,
         embed_model: None,
+        summary_index_key: None,
         notifications: tokio::sync::watch::channel(()).0,
         summaries_written: tokio::sync::broadcast::channel(SUMMARY_WRITTEN_BUFFER).0,
     }

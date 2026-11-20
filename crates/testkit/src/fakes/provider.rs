@@ -7,6 +7,10 @@ use tokio::sync::{Mutex, mpsc::Receiver};
 #[derive(Debug, Clone)]
 pub enum Script {
     Chat(LlmResponse),
+    ChatFor {
+        system: &'static str,
+        response: LlmResponse,
+    },
     Stream(Vec<ModelChunk>),
     Embed(Vec<Embedding>),
     EmbedHttpStatus(u16),
@@ -56,7 +60,7 @@ impl FakeProvider {
         self.embed_requests.lock().await.clone()
     }
 
-    async fn scripted<T>(&self, keep: fn(&Script) -> Option<T>) -> Option<T> {
+    async fn scripted<T>(&self, keep: impl Fn(&Script) -> Option<T>) -> Option<T> {
         let mut script = self.script.lock().await;
         let index = script.iter().position(|s| keep(s).is_some())?;
         let entry = script.get(index).cloned()?;
@@ -105,6 +109,7 @@ fn take_embed(script: &Script) -> Option<Vec<Embedding>> {
     match script {
         Script::Embed(vectors) => Some(vectors.clone()),
         Script::Chat(_)
+        | Script::ChatFor { .. }
         | Script::Stream(_)
         | Script::EmbedHttpStatus(_)
         | Script::EmbedNetwork
@@ -117,6 +122,7 @@ fn take_http_status(script: &Script) -> Option<u16> {
     match script {
         Script::EmbedHttpStatus(status) => Some(*status),
         Script::Chat(_)
+        | Script::ChatFor { .. }
         | Script::Stream(_)
         | Script::Embed(_)
         | Script::EmbedNetwork
@@ -129,6 +135,7 @@ fn take_network(script: &Script) -> Option<()> {
     match script {
         Script::EmbedNetwork => Some(()),
         Script::Chat(_)
+        | Script::ChatFor { .. }
         | Script::Stream(_)
         | Script::Embed(_)
         | Script::EmbedHttpStatus(_)
@@ -141,6 +148,7 @@ fn take_hang(script: &Script) -> Option<()> {
     match script {
         Script::EmbedHang => Some(()),
         Script::Chat(_)
+        | Script::ChatFor { .. }
         | Script::Stream(_)
         | Script::Embed(_)
         | Script::EmbedHttpStatus(_)
@@ -163,10 +171,22 @@ fn missing_script(operation: &'static str) -> ModelProviderError {
 #[async_trait]
 impl ModelProvider for FakeProvider {
     async fn chat(&self, request: ModelRequest) -> Result<LlmResponse, ModelProviderError> {
+        let system = request
+            .messages
+            .first()
+            .and_then(|message| match &message.content {
+                wire::message::MessageContent::Text(text) => Some(text.clone()),
+                wire::message::MessageContent::Parts(_) => None,
+            });
         self.chat_requests.lock().await.push(request);
         self.scripted(|s| match s {
+            Script::ChatFor {
+                system: prompt,
+                response,
+            } if system.as_deref() == Some(*prompt) => Some(response.clone()),
             Script::Chat(response) => Some(response.clone()),
-            Script::Stream(_)
+            Script::ChatFor { .. }
+            | Script::Stream(_)
             | Script::Embed(_)
             | Script::EmbedHttpStatus(_)
             | Script::EmbedNetwork
@@ -185,6 +205,7 @@ impl ModelProvider for FakeProvider {
             .scripted(|s| match s {
                 Script::Stream(chunks) => Some(chunks.clone()),
                 Script::Chat(_)
+                | Script::ChatFor { .. }
                 | Script::Embed(_)
                 | Script::EmbedHttpStatus(_)
                 | Script::EmbedNetwork
@@ -244,6 +265,7 @@ impl ModelProvider for FakeProvider {
         self.scripted(|s| match s {
             Script::Models(models) => Some(models.clone()),
             Script::Chat(_)
+            | Script::ChatFor { .. }
             | Script::Stream(_)
             | Script::Embed(_)
             | Script::EmbedHttpStatus(_)

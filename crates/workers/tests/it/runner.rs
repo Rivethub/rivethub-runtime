@@ -539,13 +539,8 @@ async fn all_claims_every_role_that_has_a_handler() {
     let (cancel, run) = spawn(&rig);
     rig.queue.wait_phase(wiki_job, Phase::Done).await;
     rig.queue.wait_phase(embed, Phase::Done).await;
-    rig.queue.wait_phase(summarize, Phase::Backoff).await;
+    rig.queue.wait_phase(summarize, Phase::Done).await;
     rig.queue.wait_phase(tags, Phase::Backoff).await;
-    let failed = rig.queue.view(summarize).await;
-    assert_eq!(
-        failed.error.as_deref(),
-        Some("job payload is not a summarizer job: missing field `conversationId`")
-    );
     let tagged = rig.queue.view(tags).await;
     assert_eq!(
         tagged.error.as_deref(),
@@ -600,4 +595,40 @@ async fn embed_jobs_use_the_embedder_provider_and_not_the_summarizer() {
     finish(cancel, run).await;
     assert_eq!(embedder.embed_requests().await.len(), 1);
     assert_eq!(summarizer.embed_requests().await.len(), 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn scheduled_summarizer_warns_once_when_conversion_cannot_run() {
+    for (concurrency, reason) in [
+        (1, "summary model concurrency must be at least 2"),
+        (2, "no summary index key is configured"),
+    ] {
+        let (guard, lines) = testkit::logs::recorded();
+        let mut deps = deps(Arc::new(Store::new()), fnv_provider());
+        deps.summary.model_concurrency = concurrency;
+        let runner = Runner::new(
+            Arc::new(Queue::new()),
+            RunnerConfig::new(ProcessRole::Summarizer, 1).expect("concurrency"),
+            deps,
+        )
+        .with_schedules(false);
+        let mut idle = runner.idle();
+        let cancel = CancellationToken::new();
+        let (run, ()) = tokio::join!(runner.run(cancel.clone()), async {
+            wait_bool(&mut idle, true).await;
+            cancel.cancel();
+        });
+        run.expect("runner shuts down");
+        drop(guard);
+        let warnings: Vec<_> = lines
+            .lock()
+            .iter()
+            .filter(|line| line.starts_with("WARN summary conversion cannot run"))
+            .cloned()
+            .collect();
+        assert_eq!(
+            warnings,
+            [format!("WARN summary conversion cannot run: {reason}")]
+        );
+    }
 }

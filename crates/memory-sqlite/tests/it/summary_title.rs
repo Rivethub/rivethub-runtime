@@ -7,6 +7,7 @@ use kernel::memory::NewSummary;
 use kernel::memory::SummaryKind;
 use kernel::memory::SummaryStore;
 use kernel::memory::SummaryWrite;
+use kernel::memory::summary_conversion::{ConversionControl, SummaryConversion};
 use memory_sqlite::SqliteStore;
 use rusqlite::OptionalExtension as _;
 use rusqlite::params;
@@ -17,7 +18,7 @@ const FIRST_LEAF: &str =
 const SECOND_LEAF: &str = "A second leaf about weekend gardening plans.";
 
 #[tokio::test]
-async fn the_first_leaf_titles_an_untitled_conversation_once() -> TestResult {
+async fn a_leaf_without_an_opening_never_sets_a_title() -> TestResult {
     let fresh = fresh_store()?;
     let conversation = Uuid::new_v4();
     seed_conversation(&fresh.store, conversation, None).await?;
@@ -26,19 +27,8 @@ async fn the_first_leaf_titles_an_untitled_conversation_once() -> TestResult {
         .write_summary(leaf(conversation, FIRST_LEAF, "2026-10-10T12:00:00Z")?)
         .await?;
     assert_eq!(first, SummaryWrite::FirstLeaf);
-    assert_eq!(
-        title(&fresh.store, conversation).await?.as_deref(),
-        Some("Investigated the billing timeout on the payment host.")
-    );
-    let second = fresh
-        .store
-        .write_summary(leaf(conversation, SECOND_LEAF, "2026-10-10T13:00:00Z")?)
-        .await?;
-    assert_eq!(second, SummaryWrite::Added);
-    assert_eq!(
-        title(&fresh.store, conversation).await?.as_deref(),
-        Some("Investigated the billing timeout on the payment host.")
-    );
+    assert_eq!(title(&fresh.store, conversation).await?, None);
+    assert_eq!(fresh.store.backfill_titles(false).await?, 0);
     Ok(())
 }
 
@@ -59,31 +49,7 @@ async fn a_harness_title_is_never_replaced_by_a_summary() -> TestResult {
 }
 
 #[tokio::test]
-async fn a_markup_only_leaf_leaves_the_title_for_a_later_leaf() -> TestResult {
-    let fresh = fresh_store()?;
-    let conversation = Uuid::new_v4();
-    seed_conversation(&fresh.store, conversation, Some("  ")).await?;
-    fresh
-        .store
-        .write_summary(leaf(conversation, "### ", "2026-10-10T12:00:00Z")?)
-        .await?;
-    assert_eq!(
-        title(&fresh.store, conversation).await?.as_deref(),
-        Some("  ")
-    );
-    fresh
-        .store
-        .write_summary(leaf(conversation, SECOND_LEAF, "2026-10-10T13:00:00Z")?)
-        .await?;
-    assert_eq!(
-        title(&fresh.store, conversation).await?.as_deref(),
-        Some("A second leaf about weekend gardening plans.")
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn the_backfill_titles_summarized_conversations_from_their_earliest_leaf() -> TestResult {
+async fn the_backfill_titles_from_the_opening() -> TestResult {
     let fresh = fresh_store()?;
     let untitled = Uuid::new_v4();
     let named = Uuid::new_v4();
@@ -93,28 +59,18 @@ async fn the_backfill_titles_summarized_conversations_from_their_earliest_leaf()
     seed_conversation(&fresh.store, named, Some("Kept")).await?;
     seed_conversation(&fresh.store, bare, None).await?;
     seed_conversation(&fresh.store, placeholder, Some("Grok Build session")).await?;
-    raw_leaf(
+    seed_opening(
         &fresh.store,
         placeholder,
         "**Session metadata**\n- Two messages.\n\n**Billing timeout fix**\n- Fixed.",
-        "2026-10-10T12:00:00.000Z",
     )
     .await?;
-    raw_leaf(
-        &fresh.store,
-        untitled,
-        SECOND_LEAF,
-        "2026-10-10T13:00:00.000Z",
-    )
-    .await?;
-    raw_leaf(
-        &fresh.store,
-        untitled,
-        FIRST_LEAF,
-        "2026-10-10T12:00:00.000Z",
-    )
-    .await?;
-    raw_leaf(&fresh.store, named, FIRST_LEAF, "2026-10-10T12:00:00.000Z").await?;
+    seed_opening(&fresh.store, untitled, FIRST_LEAF).await?;
+    seed_opening(&fresh.store, named, FIRST_LEAF).await?;
+    fresh
+        .store
+        .write_summary(leaf(untitled, SECOND_LEAF, "2026-10-10T12:00:00Z")?)
+        .await?;
     assert_eq!(fresh.store.backfill_titles(true).await?, 2);
     assert_eq!(title(&fresh.store, untitled).await?, None);
     assert_eq!(fresh.store.backfill_titles(false).await?, 2);
@@ -171,22 +127,13 @@ async fn seed_conversation(
     Ok(())
 }
 
-async fn raw_leaf(store: &SqliteStore, conversation: Uuid, content: &str, at: &str) -> TestResult {
+async fn seed_opening(store: &SqliteStore, id: Uuid, content: &str) -> TestResult {
     let content = content.to_owned();
-    let at = at.to_owned();
     store
         .with_conn(move |conn| {
             conn.execute(
-                "INSERT INTO ros_summaries \
-                    (id, conversation_id, depth, content, kind, message_count, earliest_at, \
-                     latest_at, model, created_at, pipeline_version) \
-                 VALUES (?1, ?2, 0, ?3, 'leaf', 0, ?4, ?4, 'fake-chat', ?4, 5)",
-                params![
-                    Uuid::new_v4().to_string(),
-                    conversation.to_string(),
-                    content,
-                    at
-                ],
+                "INSERT INTO rh_summary_openings (conversation_id, content) VALUES (?1, ?2)",
+                params![id.to_string(), content],
             )
             .map_err(common::seed)?;
             Ok(())
@@ -208,4 +155,170 @@ async fn title(store: &SqliteStore, id: Uuid) -> TestResult<Option<String>> {
         })
         .await?;
     Ok(found.ok_or("conversation")?)
+}
+
+#[tokio::test]
+async fn capture_keeps_one_opening_and_reorders_it_when_the_start_arrives() -> TestResult {
+    use kernel::filing::FilingStore as _;
+
+    let fresh = fresh_store()?;
+    let store = fresh.store.clone().with_language_available(true);
+    let owner = testkit::owner()?;
+    let now = instant("2026-10-10T12:00:00Z")?;
+    let later = batch(7, "Investigate the retry budget")?;
+    let result = store.capture(later.clone(), &owner, None, now).await?;
+    let id = Uuid::parse_str(&result.conversation_id)?;
+    let before = store.opening_title(id).await?.expect("opening");
+    assert_eq!(before.content, "Investigate the retry budget");
+    assert!(before.is_seed());
+    assert_eq!(
+        store.undelivered_openings().await?,
+        [],
+        "capture queued both jobs"
+    );
+
+    let earlier = batch(2, "Fix the queue receipt")?;
+    let mut unpositioned = earlier.clone();
+    unpositioned
+        .messages
+        .first_mut()
+        .ok_or("early message")?
+        .metadata = None;
+    store
+        .capture(
+            unpositioned,
+            &owner,
+            None,
+            now + jiff::SignedDuration::from_secs(1),
+        )
+        .await?;
+    assert_eq!(
+        store.opening_title(id).await?.expect("opening").content,
+        before.content
+    );
+    let filled = store.capture(earlier, &owner, None, now).await?;
+    assert_eq!(filled.inserted, 0);
+    let duplicate = store.capture(later, &owner, None, now).await?;
+    assert_eq!(duplicate.inserted, 0);
+    assert!(
+        !store
+            .finish_opening_title(&before, Some("Stale model title"))
+            .await?
+    );
+    let after = store.opening_title(id).await?.expect("earlier opening");
+    assert_eq!(after.content, "Fix the queue receipt");
+    assert!(after.is_seed());
+    assert_eq!(
+        store.subject(id).await?.expect("subject").summary,
+        Some(after.content)
+    );
+    let rows = common::table(&store, "rh_summary_openings").await?;
+    assert_eq!(rows.len(), 1);
+    let jobs = common::table(&store, "ros_jobs").await?;
+    for task in ["file-conversation", "title-conversation"] {
+        assert_eq!(jobs.iter().filter(|job| job["task"] == task).count(), 1);
+    }
+    Ok(())
+}
+
+fn batch(line: u64, text: &str) -> TestResult<kernel::memory::CaptureBatchRequest> {
+    use kernel::memory::{CaptureBatchRequest, CaptureMessage};
+    use wire::{JsonObject, message::Role};
+
+    let mut metadata = JsonObject::default();
+    metadata.insert("session_jsonl_line", line)?;
+    metadata.insert("session_jsonl_path", "/invented/session.jsonl")?;
+    Ok(CaptureBatchRequest {
+        session_key: "cli:projected".to_owned(),
+        agent: "rivet".to_owned(),
+        channel: Some("cli".to_owned()),
+        title: None,
+        settings: None,
+        task_id: None,
+        finalize: None,
+        created_at: None,
+        updated_at: None,
+        messages: vec![CaptureMessage {
+            event_id: format!("line-{line}"),
+            role: Role::User,
+            content: text.to_owned(),
+            tool_name: None,
+            tool_args: None,
+            tool_result: None,
+            metadata: Some(metadata),
+            created_at: None,
+        }],
+    })
+}
+
+#[tokio::test]
+async fn legacy_leaves_are_materialized_once_by_the_sqlite_upgrade() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("legacy.sqlite");
+    migrate::sqlite(&path)?;
+    let id = Uuid::new_v4();
+    {
+        let conn = rusqlite::Connection::open(&path)?;
+        conn.execute_batch(
+            "ALTER TABLE ros_conversations DROP COLUMN title_from_capture; PRAGMA user_version=36;",
+        )?;
+        conn.execute(
+            "INSERT INTO ros_conversations (id, session_key, agent, channel, created_at, updated_at)
+             VALUES (?1, 'cli:legacy-opening', 'rivet', 'cli', ?2, ?2)",
+            params![id.to_string(), common::RECORDED_START],
+        )?;
+        conn.execute(
+            "INSERT INTO ros_summaries (id, conversation_id, kind, depth, content,
+                                        message_count, earliest_at, latest_at, created_at)
+             VALUES (?1, ?2, 'leaf', 0, ?3, 0, ?4, ?4, ?4)",
+            params![
+                Uuid::new_v4().to_string(),
+                id.to_string(),
+                FIRST_LEAF,
+                common::RECORDED_START
+            ],
+        )?;
+    }
+    migrate::sqlite(&path)?;
+    let store = SqliteStore::open(&path)?;
+    let opening = store.opening_title(id).await?.expect("historical opening");
+    assert_eq!(opening.content, FIRST_LEAF);
+    assert!(!opening.armed);
+    assert_eq!(
+        store.undelivered_openings().await?,
+        Vec::<kernel::queue::Job>::new()
+    );
+    store
+        .control(ConversionControl::ArmOpening { conversation: id })
+        .await?;
+    assert_eq!(store.undelivered_openings().await?.len(), 2);
+    assert_eq!(store.backfill_titles(false).await?, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn model_free_capture_arms_opening_without_enqueuing_jobs() -> TestResult {
+    let fresh = fresh_store()?;
+    let result = fresh
+        .store
+        .capture(
+            batch(1, "Inspect the invented sample")?,
+            &testkit::owner()?,
+            None,
+            instant(common::RECORDED_START)?,
+        )
+        .await?;
+    assert!(
+        fresh
+            .store
+            .opening_title(result.conversation_id.parse()?)
+            .await?
+            .is_some()
+    );
+    assert_eq!(
+        common::table(&fresh.store, "ros_jobs").await?,
+        [] as [testkit::Json; 0]
+    );
+    assert_eq!(fresh.store.undelivered_openings().await?.len(), 2);
+    Ok(())
 }

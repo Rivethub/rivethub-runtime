@@ -61,7 +61,8 @@ async fn entity(api: &Api, name: &str, kind: &str) -> TestResult<TopicRecord> {
     .await
 }
 
-fn said(
+async fn said(
+    api: &Api,
     entity: &TopicRecord,
     key: &str,
     value: &str,
@@ -74,7 +75,7 @@ fn said(
         value: FactValue::new(value)?,
         said: Said::Writer {
             session: session.parse::<SessionId>()?,
-            summary: Uuid::new_v4(),
+            summary: api.writer_summary(session).await?,
             evidence: Evidence::quote(value),
             settled: false,
         },
@@ -91,25 +92,25 @@ fn fact<'a>(article: &'a EntityArticle, key: &str) -> TestResult<&'a Fact> {
         .ok_or_else(|| format!("no {key} fact"))?)
 }
 
+async fn capture_evidence_sessions(api: &Api) -> TestResult {
+    for (session, title) in [(FIRST, "Set up web01"), (SECOND, "Audit web01")] {
+        testkit::filing::capture(api.store.as_ref(), session, "claude-code", title, None).await?;
+    }
+    Ok(())
+}
+
 async fn seeded(api: &Api) -> TestResult<TopicRecord> {
     let host = entity(api, "web01", "Hosts").await?;
     let person = entity(api, "Ana", "People").await?;
-    testkit::filing::capture(
-        api.store.as_ref(),
-        FIRST,
-        "claude-code",
-        "Set up web01",
-        None,
-    )
-    .await?;
+    capture_evidence_sessions(api).await?;
     api.store
         .assert_facts(&[
-            said(&host, "os", "Ubuntu 22.04", FIRST, 0)?,
-            said(&host, "address", "192.0.2.4", FIRST, 0)?,
-            said(&person, "role", "maintainer", FIRST, 0)?,
-            said(&host, "os", "Ubuntu 24.04", SECOND, 48)?,
-            said(&host, "address", "192.0.2.9", SECOND, 50)?,
-            said(&host, "address", "192.0.2.12", FIRST, 51)?,
+            said(api, &host, "os", "Ubuntu 22.04", FIRST, 0).await?,
+            said(api, &host, "address", "192.0.2.4", FIRST, 0).await?,
+            said(api, &person, "role", "maintainer", FIRST, 0).await?,
+            said(api, &host, "os", "Ubuntu 24.04", SECOND, 48).await?,
+            said(api, &host, "address", "192.0.2.9", SECOND, 50).await?,
+            said(api, &host, "address", "192.0.2.12", FIRST, 51).await?,
         ])
         .await?;
     Ok(host)
@@ -233,16 +234,13 @@ async fn an_article_shows_facts_sources_conflicts_and_connections() -> TestResul
         .map(|entity| (entity.title.as_str(), entity.shared_sessions))
         .collect();
     assert_eq!(connected, [("Ana", 1)]);
-    let sessions: Vec<(&str, u64)> = now
+    let mut sessions: Vec<(&str, u64)> = now
         .sessions
         .iter()
         .map(|row| (row.title.as_str(), row.message_count))
         .collect();
-    assert_eq!(
-        sessions,
-        [("Set up web01", 1)],
-        "an uncaptured session has no row"
-    );
+    sessions.sort_unstable();
+    assert_eq!(sessions, [("Audit web01", 1), ("Set up web01", 1)]);
     assert!(
         now.timeline
             .iter()
@@ -277,11 +275,12 @@ async fn as_of_shows_the_entity_as_it_stood() -> TestResult {
 }
 
 async fn disputed(api: &Api) -> TestResult<(TopicRecord, String)> {
+    capture_evidence_sessions(api).await?;
     let host = entity(api, "web01", "Hosts").await?;
     api.store
         .assert_facts(&[
-            said(&host, "address", "192.0.2.4", FIRST, 0)?,
-            said(&host, "address", "192.0.2.9", SECOND, 1)?,
+            said(api, &host, "address", "192.0.2.4", FIRST, 0).await?,
+            said(api, &host, "address", "192.0.2.9", SECOND, 1).await?,
         ])
         .await?;
     let path = format!("/api/entities/{}/facts", host.id);
@@ -308,7 +307,7 @@ async fn your_fact_resolves_a_conflict_and_a_pin_outlasts_the_writer() -> TestRe
     api.store
         .assert_facts(&[NewClaim {
             at: Timestamp::now() + SignedDuration::from_hours(1),
-            ..said(&host, "address", "192.0.2.77", FIRST, 0)?
+            ..said(&api, &host, "address", "192.0.2.77", FIRST, 0).await?
         }])
         .await?;
     let shown: EntityArticle = api

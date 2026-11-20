@@ -7,10 +7,11 @@ use uuid::Uuid;
 
 use crate::error::Error;
 use crate::search::MemorySearchHit;
-use crate::search::hit_uuids;
+use crate::search::{SearchRead, hit_uuids, passage_ids, whole_summary_ids};
 
 const MESSAGE_CONTENTS: &str = "SELECT id, content FROM rh_messages WHERE id = ANY($1)";
 const SUMMARY_CONTENTS: &str = "SELECT id, content FROM rh_summaries WHERE id = ANY($1)";
+const PASSAGE_CONTENTS: &str = "SELECT id, content FROM rh_summary_passages WHERE id = ANY($1)";
 const TOOL_OUTPUTS: &str = "SELECT id, left(tool_result, 200000) AS content FROM rh_messages \
      WHERE id = ANY($1) AND tool_result IS NOT NULL AND length(tool_result) > 0";
 
@@ -50,6 +51,11 @@ pub(crate) fn excerpt(output: &str, query: &str) -> String {
 const CHUNK_CONTENTS: &str = "SELECT c.message_id AS id, c.idx, c.content FROM rh_message_chunks c \
      JOIN unnest($1::uuid[], $2::int4[]) AS hit(message_id, idx) \
        ON hit.message_id = c.message_id AND hit.idx = c.idx";
+
+const PASSAGE_TITLES: &str =
+    "SELECT p.id, c.title, convert_to(left(s.content, 500), 'UTF8') AS spoken
+    FROM rh_summary_passages p JOIN rh_summaries s ON s.id = p.record_id
+    JOIN rh_conversations c ON c.id = s.conversation_id WHERE p.id = ANY($1)";
 
 const TITLES: &str = "SELECT c.id, c.title,
         CASE WHEN c.title IS NULL OR btrim(c.title) = '' THEN coalesce(
@@ -94,33 +100,36 @@ struct ChunkRow {
     content: String,
 }
 
-impl crate::PostgresMemory {
+impl SearchRead<'_> {
     pub(crate) async fn fill_contents(
-        &self,
+        &mut self,
         hits: &mut Vec<MemorySearchHit>,
         query: &str,
     ) -> Result<(), Error> {
-        let unchunked: Vec<MemorySearchHit> = hits
+        let unchunked = hits
             .iter()
-            .filter(|hit| hit.chunk.is_none())
-            .cloned()
-            .collect();
-        let (mut messages, mut summaries, mut chunks, titles, outputs) = tokio::try_join!(
-            self.contents(MESSAGE_CONTENTS, hit_uuids(hits, MemoryHitSource::Message)?),
-            self.contents(SUMMARY_CONTENTS, hit_uuids(hits, MemoryHitSource::Summary)?),
-            self.chunk_contents(hits),
-            self.hit_titles(hits),
-            self.contents(
-                TOOL_OUTPUTS,
-                hit_uuids(&unchunked, MemoryHitSource::Message)?
-            ),
-        )?;
+            .filter(|hit| hit.chunk.is_none() && hit.source == MemoryHitSource::Message)
+            .map(|hit| Uuid::parse_str(&hit.id))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut messages = self
+            .contents(MESSAGE_CONTENTS, hit_uuids(hits, MemoryHitSource::Message)?)
+            .await?;
+        let mut summaries = self
+            .contents(SUMMARY_CONTENTS, whole_summary_ids(hits)?)
+            .await?;
+        let mut passages = self.contents(PASSAGE_CONTENTS, passage_ids(hits)?).await?;
+        let mut chunks = self.chunk_contents(hits).await?;
+        let titles = self.hit_titles(hits).await?;
+        let outputs = self.contents(TOOL_OUTPUTS, unchunked).await?;
         hits.retain_mut(|hit| {
-            hit.title = hit
-                .conversation_id
-                .as_ref()
-                .and_then(|conversation| titles.get(conversation))
-                .cloned();
+            hit.title = if let Some(passage) = &hit.passage {
+                titles.get(&passage.id)
+            } else {
+                hit.conversation_id
+                    .as_ref()
+                    .and_then(|conversation| titles.get(conversation))
+            }
+            .cloned();
             if let Some(chunk) = &mut hit.chunk
                 && let Some(content) = chunks.remove(&(hit.id.clone(), chunk.index))
             {
@@ -128,6 +137,9 @@ impl crate::PostgresMemory {
             }
             let found = match hit.source {
                 MemoryHitSource::Message => messages.remove(&hit.id),
+                MemoryHitSource::Summary if hit.passage.is_some() => {
+                    passages.remove(hit.detail_id())
+                }
                 MemoryHitSource::Summary => summaries.remove(&hit.id),
             };
             let output = (hit.chunk.is_none() && hit.source == MemoryHitSource::Message)
@@ -135,6 +147,9 @@ impl crate::PostgresMemory {
                 .flatten();
             found
                 .map(|content| {
+                    if hit.passage.is_some() && hit.title.is_none() {
+                        hit.title = summary_title(&content);
+                    }
                     hit.content = match output {
                         Some(output) => format!("{content}\n{}", excerpt(output, query)),
                         None => content,
@@ -146,11 +161,17 @@ impl crate::PostgresMemory {
     }
 
     async fn hit_titles(
-        &self,
+        &mut self,
         hits: &[MemorySearchHit],
     ) -> Result<BTreeMap<String, String>, Error> {
+        let ids = passage_ids(hits)?;
+        let mut titles = BTreeMap::new();
+        if !ids.is_empty() {
+            titles.extend(self.titles(PASSAGE_TITLES, ids).await?);
+        }
         let mut conversations = hits
             .iter()
+            .filter(|hit| hit.passage.is_none())
             .filter_map(|hit| hit.conversation_id.as_deref())
             .map(|id| {
                 Uuid::parse_str(id).map_err(|error| {
@@ -162,19 +183,27 @@ impl crate::PostgresMemory {
             .collect::<Result<Vec<_>, _>>()?;
         conversations.sort_unstable();
         conversations.dedup();
-        if conversations.is_empty() {
-            return Ok(BTreeMap::new());
+        if !conversations.is_empty() {
+            titles.extend(self.titles(TITLES, conversations).await?);
         }
-        let rows: Vec<TitleRow> = sqlx::query_as(TITLES)
-            .bind(conversations)
-            .fetch_all(&self.pool)
+        Ok(titles)
+    }
+
+    async fn titles(
+        &mut self,
+        statement: &'static str,
+        ids: Vec<Uuid>,
+    ) -> Result<BTreeMap<String, String>, Error> {
+        let rows: Vec<TitleRow> = sqlx::query_as(statement)
+            .bind(ids)
+            .fetch_all(&mut *self.tx)
             .await
             .map_err(|source| Error::operation("search titles", source))?;
         Ok(rows.into_iter().filter_map(TitleRow::best).collect())
     }
 
     async fn chunk_contents(
-        &self,
+        &mut self,
         hits: &[MemorySearchHit],
     ) -> Result<BTreeMap<(String, u32), String>, Error> {
         let mut messages = Vec::new();
@@ -193,7 +222,7 @@ impl crate::PostgresMemory {
         let rows: Vec<ChunkRow> = sqlx::query_as(CHUNK_CONTENTS)
             .bind(messages)
             .bind(indexes)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *self.tx)
             .await
             .map_err(|source| Error::operation("search contents", source))?;
         rows.into_iter()
@@ -202,7 +231,7 @@ impl crate::PostgresMemory {
     }
 
     async fn contents(
-        &self,
+        &mut self,
         statement: &'static str,
         ids: Vec<Uuid>,
     ) -> Result<BTreeMap<String, String>, Error> {
@@ -211,7 +240,7 @@ impl crate::PostgresMemory {
         }
         let rows: Vec<ContentRow> = sqlx::query_as(statement)
             .bind(ids)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *self.tx)
             .await
             .map_err(|source| Error::operation("search contents", source))?;
         Ok(rows

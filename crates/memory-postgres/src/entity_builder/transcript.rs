@@ -1,11 +1,16 @@
 use jiff::Timestamp;
 use std::collections::HashSet;
 
+use kernel::memory::MemoryBrowseOrder;
+use kernel::memory::summary_order::{MessagePosition, order_messages};
 use kernel::wiki::entity_pass::EntityLeaf;
 use kernel::wiki::entity_pass::EntityStoreError;
 use kernel::wiki::entity_pass::TranscriptMessage;
 use serde_json::Value;
+use sqlx::types::Json;
 use uuid::Uuid;
+use wire::JsonObject;
+use wire::message::Role;
 
 use super::error::query_error;
 
@@ -22,10 +27,11 @@ struct SourceLink {
 #[derive(Debug, sqlx::FromRow)]
 struct TranscriptRow {
     id: Uuid,
+    conversation_id: Uuid,
+    metadata: Option<Json<JsonObject>>,
     #[sqlx(try_from = "jiff_sqlx::Timestamp")]
     created_at: Timestamp,
-    #[cfg_attr(dylint_lib = "rr_lints", expect(stringly))]
-    role: String,
+    role: Json<Role>,
     tool_name: Option<String>,
     content: String,
     tool_args: Option<Value>,
@@ -39,7 +45,11 @@ pub(super) async fn load_transcript(
     if leaves.is_empty() {
         return Ok(Vec::new());
     }
-    let summary_ids: Vec<Uuid> = leaves.iter().map(|leaf| leaf.id).collect();
+    let summary_ids: Vec<Uuid> = leaves
+        .iter()
+        .filter(|leaf| leaf.delivery.is_none())
+        .map(|leaf| leaf.id)
+        .collect();
     let links = sqlx::query_as::<_, SourceLink>(SOURCE_LINKS)
         .bind(&summary_ids)
         .fetch_all(pool)
@@ -52,6 +62,10 @@ pub(super) async fn load_transcript(
         wanted.insert(link.message_id);
     }
     for leaf in leaves {
+        if let Some(delivery) = &leaf.delivery {
+            wanted.extend(delivery.pending.iter().copied());
+            continue;
+        }
         if covered.contains(&leaf.id) {
             continue;
         }
@@ -76,6 +90,14 @@ pub(super) async fn load_transcript(
         .fetch_all(pool)
         .await
         .map_err(query_error)?;
+    let rows = order_messages(rows, MemoryBrowseOrder::Asc, |row| {
+        MessagePosition::new(
+            row.created_at,
+            row.role.0,
+            row.metadata.as_ref().map(|json| &json.0),
+        )
+        .in_conversation(row.conversation_id)
+    });
     Ok(rows.into_iter().map(message_from).collect())
 }
 
@@ -86,7 +108,7 @@ fn message_from(row: TranscriptRow) -> TranscriptMessage {
     TranscriptMessage {
         id: row.id,
         at: row.created_at,
-        role: row.role,
+        role: row.role.0.to_string(),
         tool_name,
         content: row.content,
         tool_args,

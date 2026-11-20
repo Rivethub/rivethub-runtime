@@ -5,6 +5,8 @@ pub(super) enum Table {
     Chunks,
     Summaries,
     SummarySources,
+    SummaryPassages,
+    SummaryDeliveries,
     Topics,
     TopicAliases,
     TopicRedirects,
@@ -33,12 +35,14 @@ pub(super) enum Table {
 }
 
 impl Table {
-    pub(super) const ALL: [Self; 30] = [
+    pub(super) const ALL: [Self; 32] = [
         Self::Conversations,
         Self::Messages,
         Self::Chunks,
         Self::Summaries,
         Self::SummarySources,
+        Self::SummaryPassages,
+        Self::SummaryDeliveries,
         Self::Topics,
         Self::TopicAliases,
         Self::TopicRedirects,
@@ -73,6 +77,8 @@ impl Table {
             Self::Chunks => "rh_message_chunks",
             Self::Summaries => "rh_summaries",
             Self::SummarySources => "rh_summary_sources",
+            Self::SummaryPassages => "rh_summary_passages",
+            Self::SummaryDeliveries => "rh_summary_deliveries",
             Self::Topics => "rh_topics",
             Self::TopicAliases => "rh_topic_aliases",
             Self::TopicRedirects => "rh_topic_redirects",

@@ -102,7 +102,7 @@ impl PostgresMemory {
         let Some(directory) = self.wiki_directory.clone() else {
             return Ok(Vec::new());
         };
-        let repository = WikiRepository::new(directory);
+        let repository = WikiRepository::for_store(directory);
         let slugs = sqlx::query_scalar::<_, String>(
             "SELECT slug FROM rh_wiki_topics WHERE slug IN ('people', 'hosts', 'tools') ORDER BY slug",
         )

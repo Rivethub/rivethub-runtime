@@ -41,6 +41,8 @@ pub enum WorkerError {
     Concurrency,
     #[error("embedding width must be at least 1")]
     Width,
+    #[error("embedding width is {got}, the summary column requires {expected} dimensions")]
+    EmbedWidth { got: u32, expected: usize },
     #[error("chunk window must be at least 1")]
     ChunkWindow,
     #[error("job payload is not an embed target: {source}")]
@@ -84,11 +86,15 @@ pub enum WorkerError {
     },
     #[error("conversation {id} is not in the summary store")]
     ConversationMissing { id: Uuid },
-    #[error("a truncated leaf batch cannot shrink further")]
-    LeafShrink,
+    #[error("summary revision is no longer eligible")]
+    SummarySuperseded,
+    #[error("historical summary conversion yielded")]
+    ConversionYield,
+    #[error("summary tree changed while publishing")]
+    SummaryReplan,
     #[error("the model returned an empty summary")]
     EmptySummary,
-    #[error("the model truncated the summary")]
+    #[error("the model truncated the response")]
     Truncated,
     #[error("another worker is rewriting this page route")]
     RouteBusy,
@@ -165,7 +171,11 @@ impl From<EmbeddingStoreError> for WorkerError {
 
 impl From<SummaryStoreError> for WorkerError {
     fn from(source: SummaryStoreError) -> Self {
-        Self::Summary(source)
+        if matches!(source, SummaryStoreError::StaleRun { .. }) {
+            Self::SummarySuperseded
+        } else {
+            Self::Summary(source)
+        }
     }
 }
 

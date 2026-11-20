@@ -21,19 +21,12 @@ struct Column {
 }
 
 impl Block {
-    pub(super) fn parse(conn: &Connection, text: &str, line: usize) -> Result<Self, ImportError> {
-        let body = text
-            .strip_prefix("COPY ")
-            .and_then(|body| body.strip_suffix(") FROM stdin;"))
-            .ok_or_else(|| copy::invalid(line, "expected COPY table (columns) FROM stdin;"))?;
-        let (table, fields) = body
-            .split_once(" (")
-            .ok_or_else(|| copy::invalid(line, "missing COPY column list"))?;
-        let table = table
-            .strip_prefix("public.")
-            .or_else(|| table.strip_prefix("\"public\"."))
-            .ok_or_else(|| copy::invalid(line, "COPY must name the public schema"))?;
-        let name = identifier(table, line)?;
+    pub(super) fn parse(
+        conn: &Connection,
+        name: &str,
+        fields: &str,
+        line: usize,
+    ) -> Result<Self, ImportError> {
         let table: ImportTable = name
             .strip_prefix("ros_")
             .ok_or_else(|| copy::invalid(line, "expected a compatibility ros_* memory table"))?
@@ -58,7 +51,9 @@ impl Block {
             if !supplied.insert(name.clone()) {
                 return Err(copy::invalid(line, "duplicate COPY column"));
             }
-            if table == ImportTable::Messages && name == "content_hash" {
+            if table == ImportTable::Messages && name == "content_hash"
+                || table == ImportTable::Summaries && name == "owner_user_id"
+            {
                 columns.push(None);
                 continue;
             }
@@ -242,4 +237,19 @@ fn identifier(text: &str, line: usize) -> Result<&str, ImportError> {
         return Err(copy::invalid(line, "unsupported identifier"));
     }
     Ok(text)
+}
+
+pub(super) fn header(text: &str, line: usize) -> Result<(&str, &str), ImportError> {
+    let body = text
+        .strip_prefix("COPY ")
+        .and_then(|body| body.strip_suffix(") FROM stdin;"))
+        .ok_or_else(|| copy::invalid(line, "expected COPY table (columns) FROM stdin;"))?;
+    let (table, fields) = body
+        .split_once(" (")
+        .ok_or_else(|| copy::invalid(line, "missing COPY column list"))?;
+    let table = table
+        .strip_prefix("public.")
+        .or_else(|| table.strip_prefix("\"public\"."))
+        .ok_or_else(|| copy::invalid(line, "COPY must name the public schema"))?;
+    Ok((identifier(table, line)?, fields))
 }

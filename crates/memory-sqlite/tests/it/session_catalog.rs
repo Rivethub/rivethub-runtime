@@ -149,3 +149,140 @@ async fn a_session_s_messages_are_read_in_order_and_counted_like_the_catalog() -
     )
     .await
 }
+
+#[tokio::test]
+async fn positioned_messages_reach_session_and_summary_readers() -> TestResult {
+    let (_directory, store) = store()?;
+    testkit::session_messages::session_and_summary_readers_use_line_order(&store, &store, &store)
+        .await
+}
+
+#[tokio::test]
+async fn inserting_before_the_cursor_requires_restarting_the_session() -> TestResult {
+    let (_directory, memory) = store()?;
+    testkit::session_messages::inserting_before_the_cursor_requires_restarting_the_session(
+        &memory, &memory,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn deleting_messages_preserves_only_unchanged_positioned_prefixes() -> TestResult {
+    let (directory, memory) = store()?;
+    testkit::session_messages::deleting_messages_preserves_only_unchanged_positioned_prefixes(
+        &memory,
+        &memory,
+        async |id: uuid::Uuid| {
+            connection(&directory)?
+                .execute("DELETE FROM ros_messages WHERE id = ?1", [id.to_string()])?;
+            Ok(())
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn deleted_unpositioned_cursor_uses_the_timestamp_keyset() -> TestResult {
+    let (directory, memory) = store()?;
+    testkit::session_messages::deleted_unpositioned_cursor_uses_the_timestamp_keyset(
+        &memory,
+        &memory,
+        async |id: uuid::Uuid| {
+            connection(&directory)?
+                .execute("DELETE FROM ros_messages WHERE id = ?1", [id.to_string()])?;
+            Ok(())
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn scoped_browse_keeps_timestamp_window_order() -> TestResult {
+    let (_directory, memory) = store()?;
+    testkit::session_messages::scoped_browse_keeps_timestamp_window_order(&memory, &memory).await
+}
+
+#[tokio::test]
+async fn identical_positions_use_the_same_id_tie_break_in_both_readers() -> TestResult {
+    use kernel::memory::{MessagesQuery, SummaryStore};
+
+    let (directory, memory) = store()?;
+    let (key, conversation) = session_with_two_messages(&directory, &memory).await?;
+    let first = memory
+        .messages(&key, &MessagesQuery::new(None, Some(1)))
+        .await?;
+    let second = memory
+        .messages(&key, &MessagesQuery::new(first.next, Some(1)))
+        .await?;
+    let panel: Vec<_> = first
+        .items
+        .into_iter()
+        .chain(second.items)
+        .map(|row| row.content)
+        .collect();
+    let window = memory
+        .conversation(conversation)
+        .await?
+        .ok_or("summary window")?;
+    let summary: Vec<_> = window.messages.into_iter().map(|row| row.content).collect();
+    assert_eq!(panel, ["second insert", "first insert"]);
+    assert_eq!(summary, panel);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_tool_replay_fills_position_and_invalidates_an_earlier_cursor() -> TestResult {
+    let (_directory, memory) = store()?;
+    testkit::session_messages::a_tool_replay_fills_position_and_invalidates_an_earlier_cursor(
+        &memory, &memory, &memory,
+    )
+    .await
+}
+
+async fn session_with_two_messages(
+    directory: &TempDir,
+    memory: &SqliteStore,
+) -> TestResult<(wire::session_id::SessionKey, uuid::Uuid)> {
+    use kernel::memory::CaptureMessage;
+    use testkit::topics::at;
+    use wire::message::Role;
+
+    let key = "claude-code:00000000-0000-4000-8000-0000000000e7".parse()?;
+    let make = |content: &str| -> TestResult<CaptureMessage> {
+        Ok(CaptureMessage {
+            event_id: content.to_owned(),
+            role: Role::User,
+            content: content.to_owned(),
+            tool_name: None,
+            tool_args: None,
+            tool_result: None,
+            metadata: Some(serde_json::from_str(r#"{"session_jsonl_line":0}"#)?),
+            created_at: Some(at(10)),
+        })
+    };
+    for content in ["first insert", "second insert"] {
+        testkit::session_messages::capture_session_fixture(memory, &key, vec![make(content)?])
+            .await?;
+    }
+    connection(directory)?.execute(
+        "UPDATE ros_messages SET id = CASE content
+             WHEN 'first insert' THEN '90000000-0000-4000-8000-000000000001'
+             ELSE '10000000-0000-4000-8000-000000000002' END",
+        [],
+    )?;
+    let conversation = memory
+        .get(&key)
+        .await?
+        .and_then(|row| row.conversation)
+        .ok_or("conversation ID")?;
+    Ok((key, conversation))
+}
+
+#[tokio::test]
+async fn new_hook_coordinates_reach_session_and_summary_readers() -> TestResult {
+    let (_directory, memory) = store()?;
+    testkit::session_messages::session_and_summary_readers_use_hook_coordinates(
+        &memory, &memory, &memory,
+    )
+    .await
+}

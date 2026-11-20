@@ -95,6 +95,10 @@ pub(crate) async fn postgres(
                 .map_or(1.25, |memory| memory.recall.weight()),
         )
         .with_missing_models(missing_models(config, env));
+    let memory = match crate::models::summary_index_key(config, env) {
+        Some(key) => memory.with_summary_index_key(key),
+        None => memory,
+    };
     Ok(match embed {
         Some(embed) => memory.with_query_embed(embed),
         None => memory,

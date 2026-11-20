@@ -1,5 +1,9 @@
+use kernel::memory::SummaryStoreError;
+use kernel::memory::summary_opening::OpeningTitle;
+use kernel::queue::Job;
 use std::sync::Arc;
 use std::time::Duration;
+use uuid::Uuid;
 
 use kernel::model::ModelProvider;
 use kernel::queue::FixedJob;
@@ -82,6 +86,30 @@ impl kernel::memory::SummaryStore for IdleSummaries {
         _summary: kernel::memory::NewSummary,
     ) -> Result<kernel::memory::SummaryWrite, kernel::memory::SummaryStoreError> {
         Err(kernel::memory::SummaryStoreError::Closed)
+    }
+
+    async fn opening_title(&self, _: Uuid) -> Result<Option<OpeningTitle>, SummaryStoreError> {
+        Ok(None)
+    }
+
+    async fn finish_opening_title(
+        &self,
+        _: &OpeningTitle,
+        _: Option<&str>,
+    ) -> Result<bool, SummaryStoreError> {
+        Ok(false)
+    }
+
+    async fn opening_filing(&self, _: Uuid) -> Result<Option<bool>, SummaryStoreError> {
+        Ok(None)
+    }
+
+    async fn finish_opening_filing(&self, _: Uuid) -> Result<(), SummaryStoreError> {
+        Ok(())
+    }
+
+    async fn undelivered_openings(&self) -> Result<Vec<Job>, SummaryStoreError> {
+        Ok(Vec::new())
     }
 
     async fn retitle(

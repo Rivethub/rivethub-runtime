@@ -141,5 +141,46 @@ pub(super) async fn align_embeddings(
         .await
         .map_err(|error| Error::operation("merge embeddings", error))?;
     }
+    sqlx::query("UPDATE merge_rh_summary_passages SET embedding = NULL")
+        .execute(&mut *conn)
+        .await
+        .map_err(|error| Error::operation("merge summary passage embeddings", error))?;
     Ok(true)
+}
+
+pub(super) async fn mark_summary_repairs(
+    conn: &mut PgConnection,
+    key: Option<&[u8; 32]>,
+) -> Result<bool, Error> {
+    let key = key.map(<[_; 32]>::as_slice);
+    let cleared = sqlx::query(
+        "UPDATE merge_rh_summary_passages SET embedding = NULL
+         WHERE embedding IS NOT NULL AND index_key IS DISTINCT FROM $1",
+    )
+    .bind(key)
+    .execute(&mut *conn)
+    .await
+    .map_err(|error| Error::operation("merge summary embedding specification", error))?;
+    sqlx::query(
+        "UPDATE merge_rh_summaries s SET index_key = $1,
+             index_needs_repair = s.index_needs_repair OR NOT coalesce((
+                SELECT bool_and(embedded AND char_start = previous_end AND ordinal = position)
+                       AND max(char_end) = length(s.content)
+                FROM (
+                    SELECT p.char_start, p.char_end, p.ordinal,
+                           p.embedding IS NOT NULL AND p.index_key = $1
+                             AND p.content = substring(s.content FROM p.char_start + 1 FOR p.char_end - p.char_start)
+                             AS embedded,
+                           lag(p.char_end, 1, 0) OVER (ORDER BY p.ordinal) AS previous_end,
+                           row_number() OVER (ORDER BY p.ordinal) - 1 AS position
+                    FROM merge_rh_summary_passages p WHERE p.record_id = s.id
+                ) pieces
+             ), false)
+         WHERE s.kind IN ('session', 'part')",
+    )
+    .bind(key)
+    .execute(conn)
+    .await
+    .map_err(|error| Error::operation("merge summary repairs", error))?;
+    Ok(cleared.rows_affected() > 0)
 }

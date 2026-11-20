@@ -17,6 +17,7 @@ use crate::SqliteStore;
 use crate::error::SqliteError;
 use crate::meta;
 use crate::meta::MetaKey;
+use kernel::memory::summary_reference::SummaryReferenceError;
 
 const CHUNKS: &str = "ros_message_chunks";
 
@@ -38,6 +39,7 @@ impl EmbeddingStore for SqliteStore {
             let tx = conn
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(SqliteError::query("write embedding"))?;
+            guard_summary(&tx, &stored.target, Some(&stored.content_hash))?;
             write_target(&tx, &stored, model.as_deref())?;
             tx.commit().map_err(SqliteError::query("write embedding"))
         })
@@ -52,9 +54,13 @@ impl EmbeddingStore for SqliteStore {
     ) -> Result<(), EmbeddingStoreError> {
         let target = target.clone();
         let error = reason.error_text();
-        self.with_conn(move |conn| mark_target(conn, &target, "unembeddable", &error))
-            .await
-            .map_err(embed_err)
+        self.with_conn(move |conn| {
+            guarded(conn, &target, |tx| {
+                mark_target(tx, &target, "unembeddable", &error)
+            })
+        })
+        .await
+        .map_err(embed_err)
     }
 
     async fn record_null(
@@ -64,7 +70,7 @@ impl EmbeddingStore for SqliteStore {
     ) -> Result<u32, EmbeddingStoreError> {
         let target = target.clone();
         let error = error.to_owned();
-        self.with_conn(move |conn| bump_failure(conn, &target, &error))
+        self.with_conn(move |conn| guarded(conn, &target, |tx| bump_failure(tx, &target, &error)))
             .await
             .map_err(embed_err)
     }
@@ -76,9 +82,13 @@ impl EmbeddingStore for SqliteStore {
     ) -> Result<(), EmbeddingStoreError> {
         let target = target.clone();
         let error = error.to_owned();
-        self.with_conn(move |conn| mark_target(conn, &target, "failed", &error))
-            .await
-            .map_err(embed_err)
+        self.with_conn(move |conn| {
+            guarded(conn, &target, |tx| {
+                mark_target(tx, &target, "failed", &error)
+            })
+        })
+        .await
+        .map_err(embed_err)
     }
 }
 
@@ -364,6 +374,9 @@ fn blob_value(bytes: Option<Vec<u8>>) -> Value {
 }
 
 fn embed_err(error: SqliteError) -> EmbeddingStoreError {
+    if let SqliteError::SummaryReference(error) = error {
+        return error.into();
+    }
     if let SqliteError::Width { got, expected } = error {
         return EmbeddingStoreError::Width { got, expected };
     }
@@ -377,4 +390,46 @@ fn embed_err(error: SqliteError) -> EmbeddingStoreError {
         message: error.to_string(),
         source: Box::new(error),
     }
+}
+
+fn guarded<T>(
+    conn: &mut rusqlite::Connection,
+    target: &EmbedTarget,
+    write: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<T, SqliteError>,
+) -> Result<T, SqliteError> {
+    let tx = crate::summary_replace::immediate(conn).map_err(SqliteError::query("embed begin"))?;
+    guard_summary(&tx, target, None)?;
+    let result = write(&tx)?;
+    tx.commit().map_err(SqliteError::query("embed commit"))?;
+    Ok(result)
+}
+
+fn guard_summary(
+    tx: &rusqlite::Transaction<'_>,
+    target: &EmbedTarget,
+    hash: Option<&str>,
+) -> Result<(), SqliteError> {
+    if target.table != EmbedTable::Summaries {
+        return Ok(());
+    }
+    let id = Uuid::parse_str(&target.id).map_err(|_| SqliteError::StoredValue {
+        column: "summary ID",
+        value: target.id.clone(),
+    })?;
+    let input = crate::summary_replace::shared(tx, id).map_err(|error| match error {
+        crate::summary_replace::FenceError::Reference(error) => {
+            SqliteError::SummaryReference(error)
+        }
+        crate::summary_replace::FenceError::Query(error) => {
+            SqliteError::query("embed summary")(error)
+        }
+    })?;
+    if input.input_key.is_some()
+        || hash.is_some_and(|hash| {
+            kernel::memory::summary_reference::embedding_input_hash(&input.content) != hash
+        })
+    {
+        return Err(SummaryReferenceError::Stale(id).into());
+    }
+    Ok(())
 }

@@ -51,6 +51,7 @@ impl SnapshotHead {
             agent: self.agent.clone(),
             channel: self.channel.clone(),
             title: self.title.clone(),
+            trashed: false,
         }
     }
 }

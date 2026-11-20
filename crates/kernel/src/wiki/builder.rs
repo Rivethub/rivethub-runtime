@@ -74,10 +74,20 @@ pub struct WikiSummary {
     #[serde(skip)]
     #[serde_as(as = "Option<values::time::Rfc3339>")]
     pub created_at: Option<Timestamp>,
+    #[serde(skip)]
+    pub delivery: Option<SummaryDelivery>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SummaryDelivery {
+    pub input_key: Vec<u8>,
+    pub pending: Vec<Uuid>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WikiRouting {
+    pub deferred: Option<DeferredWiki>,
+    pub input: Option<WikiSummary>,
     pub topic_page: Option<WikiSlug>,
     pub cited: Vec<WikiSlug>,
     pub merged: Vec<MergedPage>,
@@ -132,6 +142,8 @@ pub enum WikiWork {
 
 #[derive(Debug, Error)]
 pub enum WikiStoreError {
+    #[error(transparent)]
+    Reference(#[from] crate::memory::summary_reference::SummaryReferenceError),
     #[error("wiki directory is not configured")]
     DirectoryMissing,
     #[error("wiki page write failed: {0}")]
@@ -148,6 +160,16 @@ pub enum WikiStoreError {
     TopicMissing(String),
     #[error("invalid wiki patch: {0}")]
     InvalidPatch(String),
+}
+
+impl WikiStoreError {
+    #[must_use]
+    pub const fn obsolete_input(&self) -> bool {
+        matches!(
+            self,
+            Self::Reference(_) | Self::Missing(_) | Self::ConversationMismatch(_)
+        )
+    }
 }
 
 #[async_trait]
@@ -197,6 +219,14 @@ pub trait WikiBuilderStore: Send + Sync {
         Ok(Vec::new())
     }
 
+    async fn lease_summary_effects(
+        &self,
+        _ids: &[Uuid],
+        _expected: &[&WikiSummary],
+    ) -> Result<RouteLease, WikiStoreError> {
+        Ok(RouteLease::sole())
+    }
+
     async fn lease_route(&self, route: &str) -> Result<Option<RouteLease>, WikiStoreError> {
         let _: &str = route;
         Ok(Some(RouteLease::sole()))
@@ -209,7 +239,7 @@ pub enum WikiWriteError {
     Io(#[from] std::io::Error),
     #[error("wiki page: {0}")]
     Page(#[from] WikiPageError),
-    #[error("wiki writer lock exhausted 200 attempts")]
+    #[error("wiki writer lock timed out")]
     LockTimeout,
     #[error("wiki path escapes its repository: {0}")]
     Containment(std::path::PathBuf),

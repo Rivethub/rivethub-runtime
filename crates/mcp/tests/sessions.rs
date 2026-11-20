@@ -30,6 +30,7 @@ use uuid::Uuid;
 fn hit(key: &str, score: f64, content: &str, created_at: &str) -> MemorySearchResult {
     MemorySearchResult {
         chunk: None,
+        passage: None,
         id: format!("{key}-{score}"),
         source: MemoryHitSource::Message,
         content: content.to_owned(),

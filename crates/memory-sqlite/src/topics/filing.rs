@@ -52,11 +52,10 @@ impl FilingStore for SqliteStore {
             conn.query_row(
                 "SELECT c.id, c.session_key, c.agent, c.channel, c.title,
                         json_extract(c.settings, '$.cwd'),
-                        (SELECT s.content FROM ros_summaries s
-                          WHERE s.conversation_id = c.id AND s.kind = 'leaf'
-                          ORDER BY s.earliest_at IS NULL, s.earliest_at, s.created_at
-                          LIMIT 1)
-                   FROM ros_conversations c WHERE c.id = ?1",
+                        o.content
+                   FROM ros_conversations c
+                   LEFT JOIN rh_summary_openings o ON o.conversation_id = c.id
+                  WHERE c.id = ?1",
                 params![conversation.to_string()],
                 |row| {
                     Ok((
@@ -350,6 +349,7 @@ fn head_of(
         agent,
         channel,
         title,
+        trashed: false,
     })
 }
 
