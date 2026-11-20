@@ -69,6 +69,10 @@ pub struct ConversionProgress {
     pub waiting_quiet: i64,
     #[serde(default)]
     pub waiting_second_pass: i64,
+    #[serde(default)]
+    pub delivery_rows_waiting_for_release: i64,
+    #[serde(default)]
+    pub delivery_rows_not_covered: i64,
     pub reserved: i64,
     pub complete: i64,
     pub failed: i64,

@@ -575,21 +575,17 @@ async fn top_down_references_split_message_has_only_the_first_anchor(pool: PgPoo
          VALUES ($1, $2, 'fixture', 'cli', 'user', 'A new measurement.', '2024-01-03', 'alice'),
                 ($3, $2, 'fixture', 'cli', 'assistant', '', '2024-01-04', 'alice')",
     ).bind(id(4)).bind(id(1)).bind(id(5)).execute(&pool).await?;
-    sqlx::query("UPDATE rh_messages SET metadata = '{\"session_jsonl_line\":2}' WHERE id = $1")
-        .bind(id(3))
-        .execute(&pool)
-        .await?;
-    sqlx::query("INSERT INTO rh_messages
-           (id, conversation_id, agent, channel, role, tool_result, tool_args, metadata, created_at, owner_user_id)
-         VALUES ($1, $3, 'fixture', 'cli', 'tool', 'Pressure is steady.', NULL,
-                 '{\"session_jsonl_line\":3}', '2024-01-01', 'alice'),
-                ($2, $3, 'fixture', 'cli', 'tool', NULL, '{\"unit\":\"bar\"}',
-                 '{\"session_jsonl_line\":1}', '2023-12-31', 'alice')")
-        .bind(id(6))
-        .bind(id(7))
-        .bind(id(1))
-        .execute(&pool)
-        .await?;
+    sqlx::query(
+        r#"INSERT INTO rh_messages
+           (id, conversation_id, agent, channel, role, tool_result, tool_args, created_at, owner_user_id)
+         VALUES ($1, $3, 'fixture', 'cli', 'tool', 'Pressure is steady.', NULL, '2024-01-01', 'alice'),
+                ($2, $3, 'fixture', 'cli', 'tool', NULL, '{"unit":"bar"}', '2023-12-31', 'alice')"#,
+    )
+    .bind(id(6))
+    .bind(id(7))
+    .bind(id(1))
+    .execute(&pool)
+    .await?;
     let mut prepared = tree(&[10, 11, 12], 20, &[2, 3, 4], true);
     for (part, ordinal, messages) in [(21, 1, vec![(2, 1), (3, 2)]), (22, 2, vec![(2, 1), (4, 2)])]
     {
@@ -642,7 +638,6 @@ async fn top_down_references_split_message_has_only_the_first_anchor(pool: PgPoo
 
 async fn verify_released_deliveries(pool: &PgPool, store: &PostgresMemory) -> TestResult {
     use kernel::memory::summary_conversion::{ConversionControl, SummaryConversion};
-    use kernel::wiki::entity_pass::{EntityStore, EntityWork, ExtractEntities};
 
     let empty_backlog: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM rh_summary_deliveries WHERE message_id = $1 AND historical_backlog",
@@ -651,37 +646,26 @@ async fn verify_released_deliveries(pool: &PgPool, store: &PostgresMemory) -> Te
     .fetch_one(pool)
     .await?;
     assert_eq!(empty_backlog, 2);
-    Scope::Maintenance
+    let progress = Scope::Maintenance
         .run(store.control(ConversionControl::Release {
             conversation: id(1),
         }))
         .await?;
+    assert_eq!(progress.delivery_rows_waiting_for_release, 0);
+    assert_eq!(progress.delivery_rows_not_covered, 4);
     let found: Vec<(Uuid, Uuid)> = sqlx::query_as(
         "SELECT message_id, anchor_id FROM rh_summary_deliveries WHERE consumer = 'wiki' AND anchor_id IS NOT NULL ORDER BY message_id",
     ).fetch_all(pool).await?;
-    assert_eq!(
-        found,
-        [(2, 22), (3, 21), (4, 22), (6, 21), (7, 22)]
-            .map(|(message, anchor)| (id(message), id(anchor)))
-    );
-    let job = ExtractEntities {
-        summary_id: id(21),
-        conversation_id: Some(id(1)),
-        session_at: None,
-    };
-    let EntityWork::Pending(leaf) = Scope::Maintenance.run(store.entity_work(&job)).await? else {
-        return Err("expected entity work".into());
-    };
-    assert!(
-        leaf.delivery
-            .ok_or("expected entity delivery")?
-            .pending
-            .contains(&id(6))
-    );
-    let remaining: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM rh_summary_deliveries WHERE conversation_id = $1 AND historical_backlog",
-    ).bind(id(1)).fetch_one(pool).await?;
-    assert_eq!(remaining, 0);
+    assert_eq!(found, [(id(2), id(22)), (id(3), id(21)), (id(4), id(22))]);
+    let remaining: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT message_id FROM rh_summary_deliveries
+         WHERE conversation_id = $1 AND historical_backlog AND anchor_id IS NULL
+           AND completed_version IS NULL ORDER BY message_id",
+    )
+    .bind(id(1))
+    .fetch_all(pool)
+    .await?;
+    assert_eq!(remaining, [id(6), id(6), id(7), id(7)]);
     let completed: Vec<(String, i32)> = sqlx::query_as(
         "SELECT consumer, completed_version FROM rh_summary_deliveries
           WHERE message_id = $1 AND anchor_id IS NULL ORDER BY consumer",
