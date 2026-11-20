@@ -1,50 +1,12 @@
-use jiff::SignedDuration;
-use jiff::Timestamp;
 use std::path::Path;
 use std::time::Duration;
-use wire::time::TimestampFormat as _;
 
 use rusqlite::OptionalExtension as _;
 
 use super::{REPLY, TestResult, model_stub, provider_at, start, stop, write_state};
 
-const CONVERSATION: &str = "0199e2a0-7b3c-7a00-8000-0000000000e1";
-const MESSAGES: u32 = 20;
-const SUMMARY_WAIT: Duration = Duration::from_mins(1);
+const SUMMARY_WAIT: Duration = Duration::from_secs(20);
 const POLL: Duration = Duration::from_millis(100);
-
-fn stamp(at: Timestamp) -> String {
-    at.rfc3339_millis()
-}
-
-fn seed_idle_conversation(path: &Path) -> TestResult {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    migrate::sqlite(path)?;
-    let conn = rusqlite::Connection::open(path)?;
-    let started = Timestamp::now() - SignedDuration::from_hours(2);
-    conn.execute(
-        "INSERT INTO ros_conversations (id, session_key, agent, created_at, updated_at)
-         VALUES (?1, 'idle-session', 'rivet', ?2, ?2)",
-        (CONVERSATION, stamp(started)),
-    )?;
-    for index in 0..MESSAGES {
-        let role = if index % 2 == 0 { "user" } else { "assistant" };
-        conn.execute(
-            "INSERT INTO ros_messages (id, conversation_id, agent, channel, role, content, created_at)
-             VALUES (?1, ?2, 'rivet', 'test', ?3, ?4, ?5)",
-            (
-                format!("0199e2a0-7b3c-7a00-8001-{index:012}"),
-                CONVERSATION,
-                role,
-                format!("ledger step {index}"),
-                stamp(started + SignedDuration::from_secs(i64::from(index))),
-            ),
-        )?;
-    }
-    Ok(())
-}
 
 fn summary(path: &Path, conversation: &str) -> TestResult<Option<String>> {
     let conn = rusqlite::Connection::open(path)?;
@@ -54,7 +16,8 @@ fn summary(path: &Path, conversation: &str) -> TestResult<Option<String>> {
             "SELECT s.content FROM ros_summaries s
                JOIN ros_summary_sources src ON src.summary_id = s.id
                JOIN ros_messages m ON m.id = src.message_id
-              WHERE m.conversation_id = ?1
+              WHERE m.conversation_id = ?1 AND s.kind = 'session'
+                AND s.index_needs_repair = 0 AND s.embedding IS NOT NULL
               LIMIT 1",
             [conversation],
             |row| row.get(0),
@@ -82,35 +45,103 @@ async fn wait_summary(path: &Path, conversation: &str) -> TestResult<Option<Stri
 }
 
 #[tokio::test]
-async fn an_idle_sqlite_conversation_is_summarized_within_one_idle_tick() -> TestResult {
+async fn top_down_live_capture_settle_and_publish_on_sqlite() -> TestResult {
+    local_publish(false).await
+}
+
+#[tokio::test]
+async fn top_down_live_multipart_and_exact_tokenizer_on_sqlite() -> TestResult {
+    local_publish(true).await
+}
+
+async fn local_publish(multipart: bool) -> TestResult {
     let dir = tempfile::tempdir()?;
     let home = dir.path();
     let database = home.join(".rivethub").join("memory.sqlite");
-    seed_idle_conversation(&database)?;
     let stub = model_stub().await?;
     let port = testkit::ports::claim()?;
-    write_state(
+    let mut config = provider_at(
         home,
-        &provider_at(
-            home,
-            &format!("http://{}", stub.addr),
-            &format!(
-                "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\n    workers: true\ngateway:\n  host: 127.0.0.1\n  port: {port}\n",
-                database.display()
-            ),
+        &format!("http://{}", stub.addr),
+        &format!(
+            "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\n    workers: true\ngateway:\n  host: 127.0.0.1\n  port: {port}\n",
+            database.display()
         ),
-    )?;
+    );
+    if multipart {
+        config = config.replace(
+            "    type: openai-compatible",
+            "    type: vllm\n    context_window: 32768\n    probe_models: false",
+        );
+    }
+    write_state(home, &config)?;
+    std::fs::create_dir_all(home.join(".rivethub"))?;
+    migrate::sqlite(&database)?;
+    seed_transcript(&database, multipart).await?;
     let started = start(
         home,
         &["local", "--no-lan"],
         &["gateway listening on ", "worker running summarizer"],
     )
     .await?;
-    let summarized = wait_summary(&database, CONVERSATION).await;
+    let settled = tokio::process::Command::new(env!("CARGO_BIN_EXE_rh"))
+        .args(["memory", "settle", "live-ledger", "--json"])
+        .env_clear()
+        .env("HOME", home)
+        .output()
+        .await?;
+    assert!(
+        settled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&settled.stderr)
+    );
+    let state: kernel::memory::settlement::SettleResult = serde_json::from_slice(&settled.stdout)?;
+    let conversation = state.conversation_id.to_string();
+    let summarized = wait_summary(&database, &conversation).await;
     let logs = stop(started).await;
     let closed = stub.close().await;
     let logs = logs?;
     closed?;
     assert_eq!(summarized?.as_deref(), Some(REPLY), "{logs}");
+    let conn = rusqlite::Connection::open(&database)?;
+    let part_count: i64 = conn.query_row(
+        "SELECT count(*) FROM ros_summaries WHERE conversation_id = ?1 AND kind = 'part'",
+        [conversation],
+        |row| row.get(0),
+    )?;
+    if multipart {
+        assert!(part_count >= 3);
+    } else {
+        assert_eq!(part_count, 0);
+    }
+    Ok(())
+}
+
+async fn seed_transcript(database: &std::path::Path, multipart: bool) -> TestResult {
+    let store = memory_sqlite::SqliteStore::open(database)?;
+    let now = jiff::Timestamp::now();
+    let messages = (0..if multipart { 6 } else { 1 })
+        .map(|position| kernel::memory::MemoryEntry {
+            id: None,
+            session_id: "live-ledger".into(),
+            agent: "rivet".into(),
+            channel: "test".into(),
+            role: wire::message::Role::User,
+            content: if multipart {
+                format!("Deposit {position}: {}", "hazelnut ".repeat(1750))
+            } else {
+                "Please reconcile the blue ledger.".into()
+            },
+            tool_name: None,
+            tool_args: None,
+            tool_result: None,
+            metadata: None,
+            created_at: Some(now + jiff::SignedDuration::from_millis(position)),
+            provenance: None,
+        })
+        .collect();
+    store
+        .append_entries(messages, &testkit::owner()?, now)
+        .await?;
     Ok(())
 }

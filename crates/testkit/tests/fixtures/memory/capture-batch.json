@@ -199,7 +199,7 @@
       "session_key": "claude-code:s1",
       "agent": "rivet-grok",
       "channel": "grok-build",
-      "title": null,
+      "title": "other agent",
       "settings": {},
       "task_id": null,
       "active": true,
@@ -225,7 +225,7 @@
       "session_key": "claude-code:s3",
       "agent": "rivet-claude",
       "channel": "claude-code",
-      "title": null,
+      "title": "project rule",
       "settings": {
         "cwd": "/home/user/work/AcmeKit"
       },

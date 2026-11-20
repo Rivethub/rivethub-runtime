@@ -174,6 +174,9 @@ pub(crate) fn args() -> UpdateArgs {
         no_restart: false,
         web_only: false,
         source: None,
+        from: None,
+        sha256: None,
+        manifest: None,
     }
 }
 

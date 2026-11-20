@@ -158,11 +158,11 @@ async fn wiki_rejects_wrong_conversation_before_model_or_writes(pool: PgPool) ->
         topics: Some(wiki_support::ports(&store)),
     };
     assert!(matches!(
-        handle_extract_wiki(&env, &extract_wiki_job(&job)?.payload).await,
-        Err(WorkerError::WikiStore(
-            WikiStoreError::ConversationMismatch(_)
-        ))
+        store.wiki_work(&job).await,
+        Err(WikiStoreError::ConversationMismatch(_))
     ));
+    let touched = handle_extract_wiki(&env, &extract_wiki_job(&job)?.payload).await?;
+    assert_eq!(touched, [] as [String; 0]);
     assert_eq!(model.chat_requests().await.len(), 0);
     let count: (i64,) = sqlx::query_as("SELECT count(*) FROM rh_wiki_extractions")
         .fetch_one(&pool)

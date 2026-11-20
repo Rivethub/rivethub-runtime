@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::v1::schema as acp;
 use kernel::harness::SessionEvent;
 use tokio::sync::mpsc;
 
@@ -18,7 +18,7 @@ pub(crate) async fn on_session_update(
     events: &mpsc::Sender<SessionEvent>,
     options: &crate::options::SessionOptions,
     context: &crate::context::ContextWindows,
-) -> Result<(), acp::Error> {
+) -> Result<(), agent_client_protocol::Error> {
     if let acp::SessionUpdate::ConfigOptionUpdate(update) = notification.update {
         options.replace(update.config_options);
         return Ok(());
@@ -29,42 +29,44 @@ pub(crate) async fn on_session_update(
     match events::session_event(notification.update) {
         Ok(Some(event)) => {
             if events.send(event).await.is_err() {
-                Err(acp::Error::internal_error().data("session event stream is closed"))
+                Err(agent_client_protocol::Error::internal_error()
+                    .data("session event stream is closed"))
             } else {
                 Ok(())
             }
         }
         Ok(None) => Ok(()),
-        Err(error) => Err(acp::Error::invalid_params().data(error.to_string())),
+        Err(error) => Err(agent_client_protocol::Error::invalid_params().data(error.to_string())),
     }
 }
 
 pub(crate) async fn on_permission(
     request: acp::RequestPermissionRequest,
-    responder: agent_client_protocol::Responder<acp::RequestPermissionResponse>,
+    responder: agent_client_protocol::v1::Responder<acp::RequestPermissionResponse>,
     permissions: &PermissionRegistry,
     events: &mpsc::Sender<SessionEvent>,
-) -> Result<(), acp::Error> {
+) -> Result<(), agent_client_protocol::Error> {
     let (request_id, answer) = permissions.register(request.options.clone());
     let event = match events::permission_request(&request_id, &request) {
         Ok(event) => event,
         Err(error) => {
             permissions.withdraw(&request_id);
-            return responder
-                .respond_with_error(acp::Error::internal_error().data(error.to_string()));
+            return responder.respond_with_error(
+                agent_client_protocol::Error::internal_error().data(error.to_string()),
+            );
         }
     };
     if events.send(SessionEvent::Permission(event)).await.is_err() {
         permissions.withdraw(&request_id);
         return responder.respond_with_error(
-            acp::Error::internal_error().data("session event stream is closed"),
+            agent_client_protocol::Error::internal_error().data("session event stream is closed"),
         );
     }
     let outcome = match answer.await {
         Ok(outcome) => outcome,
         Err(error) => {
             return responder.respond_with_error(
-                acp::Error::internal_error()
+                agent_client_protocol::Error::internal_error()
                     .data(format!("the permission request was withdrawn: {error}")),
             );
         }

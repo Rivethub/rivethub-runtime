@@ -41,8 +41,8 @@ const MESSAGE_SQL: &str = "SELECT m.id, m.content, m.role, m.agent, m.created_at
      JOIN ros_messages m ON m.id = ros_messages_fts.id \
      WHERE ros_messages_fts MATCH ?1 \
        AND (?2 IS NULL OR m.agent = ?2) \
-       AND (?3 IS NULL OR m.created_at >= ?3) \
-       AND (?4 IS NULL OR m.created_at < ?4) \
+       AND (?3 IS NULL OR rh_instant(m.created_at) >= ?3) \
+       AND (?4 IS NULL OR rh_instant(m.created_at) < ?4) \
        AND (?6 IS NULL OR m.role = ?6) \
        AND (?7 IS NULL OR m.tool_name = ?7) \
        AND (?8 IS NULL OR m.role NOT IN (SELECT value FROM json_each(?8))) \
@@ -52,18 +52,21 @@ const MESSAGE_SQL: &str = "SELECT m.id, m.content, m.role, m.agent, m.created_at
      ORDER BY ros_messages_fts.rank ASC \
      LIMIT ?5";
 
-const SUMMARY_SQL: &str = "SELECT s.id, s.content, s.created_at, s.conversation_id, \
+const SUMMARY_SQL: &str = "SELECT s.id, s.content, CASE WHEN s.kind IN ('session', 'part') THEN s.latest_at ELSE s.created_at END AS search_time, s.conversation_id, \
      ros_summaries_fts.rank, \
      (SELECT c.session_key FROM ros_conversations c WHERE c.id = s.conversation_id), \
      (SELECT c.channel FROM ros_conversations c WHERE c.id = s.conversation_id) \
      FROM ros_summaries_fts \
      JOIN ros_summaries s ON s.id = ros_summaries_fts.id \
-     WHERE ros_summaries_fts MATCH ?1 \
+     WHERE ros_summaries_fts MATCH ?1 AND s.kind <> 'section' \
+       AND (s.kind IN ('session', 'part') OR NOT EXISTS ( \
+             SELECT 1 FROM ros_summaries session \
+              WHERE session.conversation_id = s.conversation_id AND session.kind = 'session')) \
        AND (?2 IS NULL OR EXISTS ( \
              SELECT 1 FROM ros_conversations c \
               WHERE c.id = s.conversation_id AND c.agent = ?2)) \
-       AND (?3 IS NULL OR s.created_at >= ?3) \
-       AND (?4 IS NULL OR s.created_at < ?4) \
+       AND (?3 IS NULL OR rh_instant(search_time) >= ?3) \
+       AND (?4 IS NULL OR rh_instant(search_time) < ?4) \
        AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr \
              JOIN ros_conversations tc ON tc.session_key = tr.session_key \
             WHERE tc.id = s.conversation_id) \
@@ -86,6 +89,7 @@ const SUMMARY_BUMP: &str = "UPDATE ros_summaries \
 #[derive(Debug, Clone)]
 struct Plan {
     pattern: Option<String>,
+    summary_index_key: Option<[u8; 32]>,
     text: String,
     mode: SearchMode,
     scope: MemoryScope,
@@ -138,7 +142,8 @@ impl SqliteStore {
         now: Timestamp,
         zone: &TimeZone,
     ) -> Result<SearchOutcome, SqliteError> {
-        let plan = Plan::prepare(query, now, zone)?;
+        let mut plan = Plan::prepare(query, now, zone)?;
+        plan.summary_index_key = self.summary_index_key;
         let semantic = matches!(plan.mode, SearchMode::Hybrid | SearchMode::Vector);
         let (vector, degraded) = if semantic {
             match &self.query_embed {
@@ -166,11 +171,7 @@ impl SqliteStore {
             if plan.mode == SearchMode::Regex {
                 functions::compile(&plan.text)?;
             }
-            let mut outcome = if keyword {
-                execute(conn, &plan)?
-            } else {
-                ranked::execute(conn, &plan, vector.as_deref())?
-            };
+            let mut outcome = search_snapshot(conn, &plan, vector.as_deref(), keyword)?;
             if let Some(reason) = degraded {
                 outcome.degraded = Some(MemoryDegraded {
                     reason,
@@ -216,6 +217,7 @@ impl Plan {
             limit
         };
         Ok(Self {
+            summary_index_key: None,
             pattern,
             text: query.text,
             mode: query.mode,
@@ -225,8 +227,8 @@ impl Plan {
             exclude_roles,
             tool_name: query.tool_name,
             tag: query.tag,
-            since: range.since.map(time::stamp),
-            before: range.before.map(time::stamp),
+            since: range.since.map(time::seek_key),
+            before: range.before.map(time::seek_key),
             limit,
             fetch_limit,
             now,
@@ -234,7 +236,33 @@ impl Plan {
     }
 }
 
-fn execute(conn: &mut Connection, plan: &Plan) -> Result<SearchOutcome, SqliteError> {
+fn search_snapshot(
+    conn: &mut Connection,
+    plan: &Plan,
+    vector: Option<&[f32]>,
+    keyword: bool,
+) -> Result<SearchOutcome, SqliteError> {
+    let snapshot = conn
+        .transaction()
+        .map_err(SqliteError::query("search snapshot"))?;
+    let read = if keyword {
+        execute(&snapshot, plan)?
+    } else {
+        ranked::execute(&snapshot, plan, vector)?
+    };
+    snapshot
+        .commit()
+        .map_err(SqliteError::query("search snapshot commit"))?;
+    bump(conn, &read.reinforced, &time::stamp(plan.now))?;
+    Ok(read.outcome)
+}
+
+struct SearchRead {
+    outcome: SearchOutcome,
+    reinforced: Vec<Candidate>,
+}
+
+fn execute(conn: &Connection, plan: &Plan) -> Result<SearchRead, SqliteError> {
     let mut pool = fetch(conn, plan)?;
     pool.sort_by(|left, right| {
         left.rank
@@ -256,16 +284,22 @@ fn execute(conn: &mut Connection, plan: &Plan) -> Result<SearchOutcome, SqliteEr
         .collect();
     let matched = !selected.is_empty();
     selected.truncate(hit_limit(plan.limit)?);
+    let results = selected
+        .iter()
+        .cloned()
+        .map(Candidate::into_result)
+        .collect();
     let reinforced = if plan.tag.is_some() && matched {
-        pool.as_slice()
+        pool
     } else {
-        selected.as_slice()
+        selected
     };
-    bump(conn, reinforced, &time::stamp(plan.now))?;
-    let results = selected.into_iter().map(Candidate::into_result).collect();
-    Ok(SearchOutcome {
-        results,
-        ..SearchOutcome::default()
+    Ok(SearchRead {
+        outcome: SearchOutcome {
+            results,
+            ..SearchOutcome::default()
+        },
+        reinforced,
     })
 }
 
@@ -434,6 +468,7 @@ impl Candidate {
                 ..
             } => MemorySearchResult {
                 chunk: None,
+                passage: None,
                 id: self.id,
                 source: MemoryHitSource::Message,
                 content: self.content,
@@ -446,6 +481,7 @@ impl Candidate {
             },
             Kind::Summary { session_id, .. } => MemorySearchResult {
                 chunk: None,
+                passage: None,
                 id: self.id,
                 source: MemoryHitSource::Summary,
                 content: self.content,
@@ -576,9 +612,8 @@ fn bump(conn: &mut Connection, rows: &[Candidate], at: &str) -> Result<(), Sqlit
     if rows.is_empty() {
         return Ok(());
     }
-    let tx = conn
-        .transaction()
-        .map_err(SqliteError::query("search access"))?;
+    let tx =
+        crate::summary_replace::immediate(conn).map_err(SqliteError::query("search access"))?;
     for row in rows {
         bump_one(&tx, row, at)?;
     }
@@ -595,7 +630,7 @@ fn bump_one(tx: &rusqlite::Transaction<'_>, row: &Candidate, at: &str) -> Result
     let updated = tx
         .execute(sql, params![at, row.id])
         .map_err(SqliteError::query("search access"))?;
-    if updated == 1 {
+    if updated == 1 || row.source() == MemoryHitSource::Summary {
         Ok(())
     } else {
         Err(SqliteError::MissingHit { id: row.id.clone() })

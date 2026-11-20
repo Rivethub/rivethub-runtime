@@ -64,7 +64,7 @@ impl WikiConsolidateStore for PostgresMemory {
             .as_ref()
             .ok_or(WikiStoreError::DirectoryMissing)?;
         let (folded, released) = {
-            let mut repository = WikiRepository::new(directory.clone()).lock().await?;
+            let mut repository = WikiRepository::for_store(directory.clone()).lock().await?;
             let folded = self.fold_pages(&mut repository, fold, now).await;
             (folded, repository.release().await)
         };
@@ -85,6 +85,20 @@ impl PostgresMemory {
             .collect();
         slugs.sort_unstable();
         slugs.dedup();
+        let keys: Vec<&str> = slugs.clone();
+        let ids: Vec<uuid::Uuid> = sqlx::query_scalar(
+            "SELECT summary_id FROM rh_wiki_citations WHERE topic_slug = ANY($1)
+             UNION SELECT source_id FROM rh_wiki_provenance
+              WHERE topic_slug = ANY($1) AND source_kind = 'summary'",
+        )
+        .bind(&keys)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(query_error)?;
+        let live = crate::summary_replace::shared_visible(&mut tx, &ids)
+            .await
+            .map_err(super::fence_error)?;
+        let live: Vec<_> = live.into_iter().map(|input| input.id).collect();
         for slug in slugs {
             lock_slug(&mut tx, slug).await?;
         }
@@ -121,7 +135,7 @@ impl PostgresMemory {
         let git_sha = repository.fold(&mut page, &folded, &message, now).await?;
         topics::store_topic(&mut tx, &page, &git_sha, now).await?;
         for child in &folded {
-            retire(&mut tx, child, &fold.parent, now).await?;
+            retire(&mut tx, child, &fold.parent, now, &live).await?;
         }
         tx.commit().await.map_err(query_error)?;
         Ok(folded)
@@ -167,26 +181,33 @@ async fn retire(
     child: &str,
     parent: &str,
     now: Timestamp,
+    live: &[uuid::Uuid],
 ) -> Result<(), WikiStoreError> {
     for statement in [
         "INSERT INTO rh_wiki_citations (topic_slug, summary_id, kind, note, cited_at, owner_user_id)
          SELECT $2, summary_id, kind, note, cited_at, owner_user_id
-           FROM rh_wiki_citations WHERE topic_slug = $1
+           FROM rh_wiki_citations WHERE topic_slug = $1 AND summary_id = ANY($3)
          ON CONFLICT DO NOTHING",
         "INSERT INTO rh_wiki_provenance
              (topic_slug, source_kind, source_id, conversation_id, git_sha, created_at, owner_user_id)
          SELECT $2, source_kind, source_id, conversation_id, git_sha, created_at, owner_user_id
-           FROM rh_wiki_provenance WHERE topic_slug = $1
+           FROM rh_wiki_provenance WHERE topic_slug = $1 AND (source_kind <> 'summary' OR source_id = ANY($3))
          ON CONFLICT DO NOTHING",
-        "UPDATE rh_wiki_redirects SET to_slug = $2 WHERE to_slug = $1",
     ] {
         sqlx::query(statement)
             .bind(child)
             .bind(parent)
+            .bind(live)
             .execute(&mut **tx)
             .await
             .map_err(query_error)?;
     }
+    sqlx::query("UPDATE rh_wiki_redirects SET to_slug = $2 WHERE to_slug = $1")
+        .bind(child)
+        .bind(parent)
+        .execute(&mut **tx)
+        .await
+        .map_err(query_error)?;
     for (statement, slug) in [
         ("DELETE FROM rh_wiki_redirects WHERE from_slug = $1", parent),
         ("DELETE FROM rh_wiki_topics WHERE slug = $1", child),

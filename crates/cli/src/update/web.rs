@@ -11,6 +11,12 @@ use url::Url;
 
 use super::{Channel, UpdateError, files, release};
 
+mod active;
+mod local;
+
+pub use active::{Active, active};
+pub(super) use local::Local;
+
 pub(super) const RELEASES: &str = "https://api.github.com/repos/Rivethub/rivethub-app/releases";
 const DOWNLOAD_LIMIT: usize = 128 * 1024 * 1024;
 const UNPACK_LIMIT: u64 = 512 * 1024 * 1024;
@@ -93,6 +99,7 @@ pub(super) enum Outcome {
     NoCompatible,
     Explicit,
     Failed(String),
+    Refused(String),
 }
 
 impl Outcome {
@@ -109,6 +116,15 @@ impl Outcome {
                     "Web: Update failed. Any active bundle was kept. Resolve the error and retry with `",
                     &retry,
                     "`. ",
+                    &reason,
+                    "\n",
+                ]);
+                report.exit = crate::Exit::Failure;
+                return;
+            }
+            Self::Refused(reason) => {
+                report.stderr.extend([
+                    "Web: Not installed. Any active bundle was kept. ",
                     &reason,
                     "\n",
                 ]);

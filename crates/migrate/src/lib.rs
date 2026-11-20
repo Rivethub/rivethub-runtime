@@ -11,6 +11,7 @@ pub use foreign::foreign_line;
 pub use foreign::sqlite_foreign;
 pub use postgres::POSTGRES;
 pub use postgres::postgres;
+pub use postgres::postgres_apply;
 pub use postgres::postgres_pool;
 pub use postgres::postgres_status;
 pub use postgres::postgres_status_pool;

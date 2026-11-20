@@ -95,7 +95,7 @@ pub(crate) fn candidates(sessions: &mut [BundledSession]) -> Candidates {
 }
 
 fn is_id_key(key: &str) -> bool {
-    if crate::writer::metadata_keep().contains(&key) {
+    if crate::writer::keep_metadata_key(key) {
         return true;
     }
     let folded: String = key

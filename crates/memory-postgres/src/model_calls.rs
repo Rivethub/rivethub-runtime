@@ -81,6 +81,69 @@ impl Row {
     }
 }
 
+async fn insert_call(
+    conn: &mut sqlx::PgConnection,
+    owner: &str,
+    session: Option<&str>,
+    call: &ModelCall,
+) -> Result<u64, Error> {
+    let usage = call.usage;
+    sqlx::query!(
+        "INSERT INTO rh_model_calls (call_id, owner_user_id, session_key, turn_id, request_kind,
+                    started_at, finished_at, provider, model_requested, model_served, account,
+                    status_code, outcome, retry_after_secs, input_tokens, output_tokens,
+                    cache_read_tokens, cache_write_tokens, reasoning_tokens)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+                 ON CONFLICT (owner_user_id, call_id) DO NOTHING",
+        call.call_id,
+        owner,
+        session,
+        call.turn.as_ref().and_then(|turn| turn.turn_id.as_deref()),
+        call.turn.as_ref().and_then(|turn| turn.request_kind.as_deref()),
+    crate::time::BindTime::bind_time(call.started_at) as _,
+    crate::time::BindTime::bind_time(call.finished_at) as _,
+        call.provider,
+        call.model_requested,
+        call.model_served,
+        call.account,
+        call.status_code.map(i32::from),
+        call.outcome.to_string(),
+        call.retry_after_secs.map(signed).transpose()?,
+        usage.map(|usage| signed(usage.input)).transpose()?,
+        usage.map(|usage| signed(usage.output)).transpose()?,
+        usage.map(|usage| signed(usage.cache_read)).transpose()?,
+        usage.map(|usage| signed(usage.cache_write)).transpose()?,
+        usage.map(|usage| signed(usage.reasoning)).transpose()?
+    )
+    .execute(conn)
+    .await
+    .map(|written| written.rows_affected())
+    .map_err(|source| Error::operation("model call record", source))
+}
+
+impl PostgresMemory {
+    pub(crate) async fn record_conversation_call(
+        &self,
+        conversation: uuid::Uuid,
+        call: &ModelCall,
+    ) -> Result<(), MemoryStoreError> {
+        let failure = |source| Error::operation("summary model call record", source);
+        let mut tx = self.pool.begin().await.map_err(failure)?;
+        let identity: Option<(String, String)> = sqlx::query_as(
+            "SELECT owner_user_id, session_key FROM rh_conversations WHERE id = $1 FOR KEY SHARE",
+        )
+        .bind(conversation)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(failure)?;
+        if let Some((owner, session)) = identity {
+            insert_call(&mut tx, &owner, Some(&session), call).await?;
+        }
+        tx.commit().await.map_err(failure)?;
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl ModelCallStore for PostgresMemory {
     async fn record(
@@ -95,38 +158,13 @@ impl ModelCallStore for PostgresMemory {
             .map_err(|source| Error::operation("model call record", source))?;
         let mut inserted = 0_u64;
         for call in calls {
-            let usage = call.usage;
-            let written = sqlx::query!(
-                "INSERT INTO rh_model_calls (call_id, owner_user_id, session_key, turn_id, request_kind,
-                    started_at, finished_at, provider, model_requested, model_served, account,
-                    status_code, outcome, retry_after_secs, input_tokens, output_tokens,
-                    cache_read_tokens, cache_write_tokens, reasoning_tokens)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
-                 ON CONFLICT (owner_user_id, call_id) DO NOTHING",
-                call.call_id,
+            inserted += insert_call(
+                &mut transaction,
                 owner.as_str(),
                 call.session.as_ref().map(SessionId::as_str),
-                call.turn.as_ref().and_then(|turn| turn.turn_id.as_deref()),
-                call.turn.as_ref().and_then(|turn| turn.request_kind.as_deref()),
-            crate::time::BindTime::bind_time(call.started_at) as _,
-            crate::time::BindTime::bind_time(call.finished_at) as _,
-                call.provider,
-                call.model_requested,
-                call.model_served,
-                call.account,
-                call.status_code.map(i32::from),
-                call.outcome.to_string(),
-                call.retry_after_secs.map(signed).transpose()?,
-                usage.map(|usage| signed(usage.input)).transpose()?,
-                usage.map(|usage| signed(usage.output)).transpose()?,
-                usage.map(|usage| signed(usage.cache_read)).transpose()?,
-                usage.map(|usage| signed(usage.cache_write)).transpose()?,
-                usage.map(|usage| signed(usage.reasoning)).transpose()?
+                call,
             )
-            .execute(&mut *transaction)
-            .await
-            .map_err(|source| Error::operation("model call record", source))?;
-            inserted += written.rows_affected();
+            .await?;
         }
         transaction
             .commit()

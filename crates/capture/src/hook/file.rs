@@ -24,6 +24,7 @@ pub(crate) struct FileCapture<'a> {
     pub(crate) finalize: bool,
     pub(crate) cwd: Option<String>,
     pub(crate) agent_type: Option<&'a str>,
+    pub(crate) event_id: Option<&'a str>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -50,7 +51,7 @@ pub(crate) async fn batch(
         capture.finalize,
         &[],
     )?;
-    if batch.messages.is_empty() {
+    if batch.messages.is_empty() && capture.last_event != "SubagentStop" {
         return Ok(None);
     }
     let subagent = match &file.parent {
@@ -77,7 +78,7 @@ pub(crate) async fn batch(
         .cwd
         .clone()
         .or_else(|| parsed.lines.iter().find_map(|line| line.cwd.clone()));
-    batch.settings = Some(JsonObject::from_serialize(&TranscriptSettings {
+    let mut settings = JsonObject::from_serialize(&TranscriptSettings {
         source: SOURCE,
         file: Some(file.path.display().to_string()),
         session_id: file.id.clone(),
@@ -86,7 +87,14 @@ pub(crate) async fn batch(
         last_event: capture.last_event,
         last_ingest_at: iso_at(now),
         subagent,
-    })?);
+    })?;
+    if let Some(id) = capture.event_id {
+        settings.insert("last_event_id", id)?;
+    }
+    batch.settings = Some(settings);
+    if batch.messages.is_empty() {
+        batch.title = None;
+    }
     Ok(Some(batch))
 }
 

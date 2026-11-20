@@ -96,6 +96,10 @@ fn seed(path: &Path) -> TestResult {
         ("friday-rollout", CHILD, STAMP),
     )?;
     conn.execute(
+        "INSERT INTO ros_summaries (id, content, created_at) VALUES (?1, ?2, ?3)",
+        (SUMMARY, CHILD_STATE, STAMP),
+    )?;
+    conn.execute(
         "INSERT INTO ros_wiki_citations (topic_slug, summary_id, kind, note, cited_at)
          VALUES (?1, ?2, 'summary', 'rolled out', ?3)",
         (CHILD, SUMMARY, STAMP),

@@ -606,6 +606,7 @@ fn dsh_connect_wires_capture_and_recall_for_every_profile() -> TestResult {
     assert!(patch.contains(RH), "{patch}");
     let plugin = machine.read(".dsh/plugins/rivethub-capture.mjs")?;
     assert!(plugin.contains("turn/end"), "{plugin}");
+    assert!(plugin.contains("subagent/end"), "{plugin}");
     assert!(plugin.contains("inject = ['sessions']"), "{plugin}");
     assert!(plugin.contains("capture hook --harness dsh"), "{plugin}");
     assert!(plugin.contains(RH), "{plugin}");

@@ -22,6 +22,7 @@ use crate::{Error, Exit, Report, configuration, db};
 pub use error::UpdateError;
 use node::Restart;
 use release::Staged;
+pub use web::{Active as ActiveWeb, active as active_web};
 
 #[derive(
     Debug,
@@ -54,6 +55,28 @@ pub struct UpdateArgs {
     pub web_only: bool,
     #[arg(long, value_name = "rivethub-cloud|github")]
     pub source: Option<wire::gateway::account::UpdateSource>,
+    #[arg(
+        long,
+        value_name = "ARCHIVE",
+        requires_all = ["web_only", "sha256"],
+        conflicts_with = "source",
+        help = "Install the web app from this archive instead of a published release"
+    )]
+    pub from: Option<PathBuf>,
+    #[arg(
+        long,
+        value_name = "HEX",
+        requires = "from",
+        help = "The archive's SHA-256"
+    )]
+    pub sha256: Option<String>,
+    #[arg(
+        long,
+        value_name = "FILE",
+        requires = "from",
+        help = "The archive's web-manifest.json [default: beside the archive]"
+    )]
+    pub manifest: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -108,8 +131,21 @@ impl Updater {
             report.stderr.extend(["Error: ", &error.to_string(), "\n"]);
             report.exit = Exit::Failure;
         }
-        let outcome = match web_store {
-            Ok(Some(store)) => {
+        let outcome = match (web_store, web::Local::parse(args)) {
+            (_, Err(error)) => web::Outcome::Refused(error.to_string()),
+            (Ok(Some(store)), Ok(Some(local))) => {
+                match tokio::task::spawn_blocking(move || store.install_local(&local, &runtime))
+                    .await
+                    .map_err(UpdateError::from)
+                    .and_then(|installed| installed)
+                {
+                    Ok(outcome) => outcome,
+                    Err(error) => web::Outcome::Refused(error.to_string()),
+                }
+            }
+            (Ok(None), Ok(Some(_))) => web::Outcome::Refused(UpdateError::WebExplicit.to_string()),
+            (Err(error), Ok(Some(_))) => web::Outcome::Refused(error.to_string()),
+            (Ok(Some(store)), Ok(None)) => {
                 match store
                     .refresh(&self.web_releases, args.channel, &runtime, shutdown)
                     .await
@@ -118,8 +154,8 @@ impl Updater {
                     Err(error) => web::Outcome::Failed(error.to_string()),
                 }
             }
-            Ok(None) => web::Outcome::Explicit,
-            Err(error) => web::Outcome::Failed(error.to_string()),
+            (Ok(None), Ok(None)) => web::Outcome::Explicit,
+            (Err(error), Ok(None)) => web::Outcome::Failed(error.to_string()),
         };
         outcome.report(args.channel, &mut report);
         report

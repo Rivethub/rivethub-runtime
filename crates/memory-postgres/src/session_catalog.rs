@@ -111,7 +111,7 @@ SELECT g.session_key, g.title, g.started_at, g.updated_at, g.active, g.kept, g.t
                 WHERE f.conversation_id = ANY(g.conversations)) AS flagged,
        (SELECT s.content FROM rh_summaries s
          WHERE s.conversation_id = ANY(g.conversations)
-         ORDER BY s.depth DESC, s.created_at DESC, s.id LIMIT 1) AS summary,
+         ORDER BY (s.kind = 'session') DESC, s.depth DESC, s.created_at DESC, s.id LIMIT 1) AS summary,
        (SELECT c.settings->>'cwd' FROM rh_conversations c
          WHERE c.id = ANY(g.conversations) AND jsonb_typeof(c.settings->'cwd') = 'string'
          ORDER BY c.updated_at DESC, c.id LIMIT 1) AS cwd,

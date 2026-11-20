@@ -21,6 +21,10 @@ pub enum ImportError {
     DuplicateTable { table: ImportTable },
     #[error("Postgres dump is incomplete: expected COPY blocks and the pg_dump completion footer")]
     Truncated,
+    #[error("Postgres import has an incomplete or inconsistent top-down summary graph")]
+    SummaryGraph,
+    #[error("Postgres import has missing foreign-key references")]
+    ForeignKeys,
     #[error("Postgres import cancelled")]
     Cancelled,
     #[error("Postgres import database constraint or operation failed: {0}")]

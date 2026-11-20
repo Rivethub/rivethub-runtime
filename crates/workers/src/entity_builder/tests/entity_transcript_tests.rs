@@ -148,6 +148,7 @@ fn chunks_are_consecutive_and_a_long_message_stands_alone() {
 #[test]
 fn preface_is_labelled_and_later_facts_replace_known_ones() {
     let leaf = EntityLeaf {
+        delivery: None,
         id: uid(8),
         conversation_id: Some(uid(9)),
         content: "intent only".to_owned(),

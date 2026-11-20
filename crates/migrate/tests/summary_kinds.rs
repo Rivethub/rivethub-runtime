@@ -235,7 +235,7 @@ async fn legacy_summary_kind_below_zero_rolls_the_rewrite_back(pool: PgPool) -> 
     ];
     insert(&pool, &seeded).await?;
     let before = stored(&pool, false).await?;
-    let Err(error) = POSTGRES.run(&pool).await else {
+    let Err(error) = migrate::postgres_pool(&pool).await else {
         return Err("a negative depth must refuse the rewrite".into());
     };
     let text = chain(&error);

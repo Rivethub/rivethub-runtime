@@ -106,7 +106,7 @@ async fn seed(pool: &PgPool) -> TestResult {
         .bind(testkit::OWNER)
         .execute(&mut *conn)
         .await?;
-    migrate::POSTGRES.run(&mut *conn).await?;
+    migrate::postgres_apply(conn).await?;
     Ok(())
 }
 

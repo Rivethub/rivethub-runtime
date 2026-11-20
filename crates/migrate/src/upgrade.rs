@@ -86,10 +86,74 @@ fn step(conn: &mut Connection, to: SchemaVersion, now: Timestamp) -> Result<(), 
             tx.execute_batch(include_str!("schema/review_marks_v33.sql"))
         }),
         SchemaVersion::V34 => in_transaction(conn, to, add_daily_digest),
+        SchemaVersion::V36 => in_transaction(conn, to, add_top_down_summaries),
+        SchemaVersion::V38 => in_transaction(conn, to, |tx| {
+            tx.execute_batch(include_str!("schema/summary_index_v38.sql"))
+        }),
+        SchemaVersion::V39 => in_transaction(conn, to, add_transcript_time),
+        SchemaVersion::V40 => in_transaction(conn, to, add_conversion_second_pass),
+        SchemaVersion::V41 => in_transaction(conn, to, add_opening_checked_user_count),
+        SchemaVersion::V37 => in_transaction(conn, to, add_opening_work),
         SchemaVersion::V35 => in_transaction(conn, to, |tx| {
             tx.execute_batch(include_str!("schema/model_calls_v35.sql"))
         }),
     }
+}
+
+pub(crate) fn add_conversion_second_pass(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    if !column_present(tx, "rh_summary_conversion_items", "second_pass_at")? {
+        tx.execute_batch("ALTER TABLE rh_summary_conversion_items ADD COLUMN second_pass_at TEXT")?;
+    }
+    Ok(())
+}
+
+pub(crate) fn add_opening_checked_user_count(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    if !column_present(tx, "rh_summary_state", "opening_checked_user_count")? {
+        tx.execute_batch(
+            "ALTER TABLE rh_summary_state ADD COLUMN opening_checked_user_count INTEGER",
+        )?;
+    }
+    Ok(())
+}
+
+pub(crate) fn add_transcript_time(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    let suffix = "ltrim(substr(created_at, 20), '.0123456789')";
+    let key = format!(
+        include_str!("schema/transcript_time_v39.sql"),
+        suffix = suffix,
+        seconds = "unixepoch(replace(substr(created_at, 1, 19), 't', 'T'))",
+        zone = format_args!("replace(replace({suffix}, '−', '-'), ':', '')"),
+        fraction = format_args!(
+            "substr(created_at, 21, max(0, length(created_at) - length({suffix}) - 20))"
+        ),
+    );
+    tx.execute_batch(&format!(
+        "CREATE VIEW IF NOT EXISTS rh_transcript_times AS
+             SELECT id, conversation_id, created_at, {key} AS seek_time FROM ros_messages;
+         CREATE INDEX IF NOT EXISTS rh_transcript_seek ON ros_messages (conversation_id, ({key}), id);
+         CREATE INDEX IF NOT EXISTS rh_transcript_recent ON ros_messages (({key}), conversation_id);
+         CREATE TABLE IF NOT EXISTS rh_summary_capture_clock (
+             conversation_id TEXT PRIMARY KEY REFERENCES ros_conversations(id) ON DELETE CASCADE,
+             captured_at TEXT NOT NULL
+         );"
+    ))
+}
+
+pub(crate) fn add_opening_work(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    if !column_present(tx, "ros_conversations", "title_from_capture")? {
+        tx.execute_batch(
+            "ALTER TABLE ros_conversations ADD COLUMN title_from_capture INTEGER NOT NULL DEFAULT 0
+                 CHECK (title_from_capture IN (0, 1))",
+        )?;
+    }
+    tx.execute_batch(include_str!("schema/opening_work_v37.sql"))
+}
+
+fn add_top_down_summaries(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    if column_present(tx, "ros_summaries", "summary_ordinal")? {
+        return Ok(());
+    }
+    tx.execute_batch(include_str!("schema/summaries_v36.sql"))
 }
 
 fn add_daily_digest(tx: &Transaction<'_>) -> rusqlite::Result<()> {

@@ -75,10 +75,10 @@ impl GrokTranscriptReader {
         let root = self.root.clone();
         let session = session.clone();
         let slice = blocking(move || {
-            let text = updates_text(&root, &native_id, reach)?;
-            text.map_or_else(
+            let source = updates_source(&root, &native_id, reach)?;
+            source.map_or_else(
                 || Ok(TranscriptSlice::empty(offset)),
-                |text| updates::map_updates(&session, &text, offset, extent),
+                |(path, text)| updates::map_updates(&session, &path, &text, offset, extent),
             )
         })
         .await?;
@@ -135,8 +135,8 @@ pub(crate) fn update_lines(
     store: &Path,
     native_id: &str,
 ) -> Result<UpdateLines, TranscriptReaderError> {
-    match updates_text(store, native_id, Reach::Capped)? {
-        Some(text) => updates::parse_lines(&text),
+    match updates_source(store, native_id, Reach::Capped)? {
+        Some((_, text)) => updates::parse_lines(&text),
         None => Ok(UpdateLines::default()),
     }
 }
@@ -147,11 +147,11 @@ enum Reach {
     Whole,
 }
 
-fn updates_text(
+fn updates_source(
     store: &Path,
     native_id: &str,
     reach: Reach,
-) -> Result<Option<String>, TranscriptReaderError> {
+) -> Result<Option<(PathBuf, String)>, TranscriptReaderError> {
     session_component(native_id)?;
     let root = Root::open(store)?;
     let Some(dir) = session_dirs(&root)?
@@ -160,10 +160,12 @@ fn updates_text(
     else {
         return Ok(None);
     };
-    match reach {
-        Reach::Capped => read_optional(&root, &dir.join(UPDATES)),
-        Reach::Whole => read_whole(&root, &dir.join(UPDATES)),
-    }
+    let path = dir.join(UPDATES);
+    let text = match reach {
+        Reach::Capped => read_optional(&root, &path),
+        Reach::Whole => read_whole(&root, &path),
+    }?;
+    Ok(text.map(|text| (path, text)))
 }
 
 fn session_dirs(root: &Root) -> Result<Vec<(String, PathBuf)>, TranscriptReaderError> {

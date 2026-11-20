@@ -3,7 +3,7 @@ use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::v1::schema as acp;
 use config::Config;
 use config::HarnessSlot;
 use serde::Serialize;

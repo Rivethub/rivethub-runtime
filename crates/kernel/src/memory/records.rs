@@ -30,6 +30,8 @@ pub struct MemoryEntry {
 pub struct MemorySearchResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chunk: Option<MemoryChunkMatch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passage: Option<SummaryPassage>,
     pub id: String,
     pub source: MemoryHitSource,
     pub content: String,
@@ -43,6 +45,23 @@ pub struct MemorySearchResult {
     pub session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SummaryPassage {
+    pub id: String,
+    pub ordinal: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PassageSection {
+    pub id: String,
+    pub heading: String,
+    pub source_first: u32,
+    pub source_last: u32,
+    pub range_verified: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,6 +131,9 @@ pub enum SummaryKind {
     Leaf,
     Branch,
     Root,
+    Session,
+    Part,
+    Section,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -211,14 +233,18 @@ pub struct MemorySummaryNode {
     pub kind: SummaryKind,
     pub content: String,
     pub message_count: u32,
-
     #[serde_as(as = "Option<values::time::Rfc3339>")]
     pub earliest_at: Option<Timestamp>,
     #[serde_as(as = "Option<values::time::Rfc3339>")]
     pub latest_at: Option<Timestamp>,
-
     #[serde_as(as = "values::time::Rfc3339")]
     pub created_at: Timestamp,
+    pub summary_ordinal: Option<u32>,
+    pub source_first: Option<u32>,
+    pub source_last: Option<u32>,
+    pub range_verified: Option<bool>,
+    #[serde(default)]
+    pub quality_flags: u32,
     pub source_message_ids: Vec<String>,
     pub vector: VectorState,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -253,11 +279,16 @@ pub struct MemoryMessageTally {
 
 impl SummaryKind {
     #[must_use]
+    pub const fn is_top_down(self) -> bool {
+        matches!(self, Self::Session | Self::Part | Self::Section)
+    }
+
+    #[must_use]
     pub const fn depth(self) -> i32 {
         match self {
-            Self::Leaf => 0,
-            Self::Branch => 1,
-            Self::Root => 2,
+            Self::Leaf | Self::Section => 0,
+            Self::Branch | Self::Part => 1,
+            Self::Root | Self::Session => 2,
         }
     }
 
@@ -267,6 +298,9 @@ impl SummaryKind {
             Self::Leaf => "leaf",
             Self::Branch => "branch",
             Self::Root => "root",
+            Self::Session => "session",
+            Self::Part => "part",
+            Self::Section => "section",
         }
     }
 

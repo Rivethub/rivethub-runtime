@@ -1,6 +1,6 @@
 use agent_client_protocol::Client;
-use agent_client_protocol::ConnectionTo;
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::v1::ConnectionTo;
+use agent_client_protocol::v1::schema as acp;
 
 pub(crate) struct Selection {
     pub model: String,
@@ -105,7 +105,7 @@ fn choices(ids: &[&str]) -> Vec<acp::SessionConfigSelectOption> {
 pub(crate) fn apply_selection(
     selection: &mut Selection,
     request: &acp::SetSessionConfigOptionRequest,
-) -> Result<String, acp::Error> {
+) -> Result<String, agent_client_protocol::Error> {
     let chosen = choose(selection, request)?;
     match chosen.selector {
         Selector::Model => selection.model.clone_from(&chosen.value),
@@ -117,23 +117,26 @@ pub(crate) fn apply_selection(
 fn choose(
     selection: &Selection,
     request: &acp::SetSessionConfigOptionRequest,
-) -> Result<Chosen, acp::Error> {
+) -> Result<Chosen, agent_client_protocol::Error> {
     let value = match request.value.as_value_id() {
         Some(id) => id.0.to_string(),
         None => {
-            return Err(acp::Error::invalid_params().data("config value is not an id"));
+            return Err(
+                agent_client_protocol::Error::invalid_params().data("config value is not an id")
+            );
         }
     };
     let options = fixture_options(selection);
     let found = options.iter().find(|option| option.id == request.config_id);
     let Some(found) = found else {
-        return Err(acp::Error::invalid_params().data("config option is not offered"));
+        return Err(
+            agent_client_protocol::Error::invalid_params().data("config option is not offered")
+        );
     };
     let offered = offered_ids(found)?;
     if !offered.iter().any(|id| id.0.as_ref() == value) {
-        return Err(
-            acp::Error::invalid_params().data(format!("config value {value} is not offered"))
-        );
+        return Err(agent_client_protocol::Error::invalid_params()
+            .data(format!("config value {value} is not offered")));
     }
     let selector = match &found.category {
         Some(acp::SessionConfigOptionCategory::Model) => Selector::Model,
@@ -145,7 +148,8 @@ fn choose(
             | _,
         )
         | None => {
-            return Err(acp::Error::invalid_params().data("config option has no selector category"));
+            return Err(agent_client_protocol::Error::invalid_params()
+                .data("config option has no selector category"));
         }
     };
     Ok(Chosen { selector, value })
@@ -153,11 +157,12 @@ fn choose(
 
 fn offered_ids(
     option: &acp::SessionConfigOption,
-) -> Result<Vec<acp::SessionConfigValueId>, acp::Error> {
+) -> Result<Vec<acp::SessionConfigValueId>, agent_client_protocol::Error> {
     match &option.kind {
         acp::SessionConfigKind::Select(select) => Ok(select_ids(&select.options)),
         acp::SessionConfigKind::Boolean(_) | _ => {
-            Err(acp::Error::invalid_params().data("config option is not a selector"))
+            Err(agent_client_protocol::Error::invalid_params()
+                .data("config option is not a selector"))
         }
     }
 }
@@ -186,7 +191,7 @@ pub(crate) async fn run_step(
     connection: &ConnectionTo<Client>,
     session_id: &acp::SessionId,
     step: &Step,
-) -> Result<Option<acp::StopReason>, acp::Error> {
+) -> Result<Option<acp::StopReason>, agent_client_protocol::Error> {
     match step {
         Step::Text(text) => emit_text(connection, session_id, text, Chunk::Agent)?,
         Step::Thought(text) => emit_text(connection, session_id, text, Chunk::Thought)?,
@@ -218,7 +223,7 @@ pub(crate) fn emit_text(
     session_id: &acp::SessionId,
     text: &str,
     chunk: Chunk,
-) -> Result<(), acp::Error> {
+) -> Result<(), agent_client_protocol::Error> {
     let content = acp::ContentChunk::new(acp::ContentBlock::from(text.to_owned()));
     let update = match chunk {
         Chunk::Agent => acp::SessionUpdate::AgentMessageChunk(content),
@@ -232,13 +237,13 @@ fn emit(
     connection: &ConnectionTo<Client>,
     session_id: &acp::SessionId,
     update: acp::SessionUpdate,
-) -> Result<(), acp::Error> {
+) -> Result<(), agent_client_protocol::Error> {
     connection.send_notification(acp::SessionNotification::new(session_id.clone(), update))
 }
 
-fn tool_call(title: &str) -> Result<acp::SessionUpdate, acp::Error> {
+fn tool_call(title: &str) -> Result<acp::SessionUpdate, agent_client_protocol::Error> {
     let input = serde_json::to_value(CommandInput { command: "ls -1" })
-        .map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
+        .map_err(|error| agent_client_protocol::Error::internal_error().data(error.to_string()))?;
     Ok(acp::SessionUpdate::ToolCall(
         acp::ToolCall::new("fake-tool-1", title.to_owned())
             .kind(acp::ToolKind::Execute)
@@ -247,9 +252,9 @@ fn tool_call(title: &str) -> Result<acp::SessionUpdate, acp::Error> {
     ))
 }
 
-fn raw_array_tool() -> Result<acp::SessionUpdate, acp::Error> {
+fn raw_array_tool() -> Result<acp::SessionUpdate, agent_client_protocol::Error> {
     let input = serde_json::to_value(RawArray(&["not", "an", "object"]))
-        .map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
+        .map_err(|error| agent_client_protocol::Error::internal_error().data(error.to_string()))?;
     Ok(acp::SessionUpdate::ToolCall(
         acp::ToolCall::new("fake-tool-1", "raw")
             .kind(acp::ToolKind::Other)
@@ -283,7 +288,7 @@ fn commands_update() -> acp::SessionUpdate {
 async fn permission_step(
     connection: &ConnectionTo<Client>,
     session_id: &acp::SessionId,
-) -> Result<Option<acp::StopReason>, acp::Error> {
+) -> Result<Option<acp::StopReason>, agent_client_protocol::Error> {
     let request = acp::RequestPermissionRequest::new(
         session_id.clone(),
         acp::ToolCallUpdate::new(
@@ -295,7 +300,9 @@ async fn permission_step(
                     serde_json::to_value(CommandInput {
                         command: "cargo build",
                     })
-                    .map_err(|error| acp::Error::internal_error().data(error.to_string()))?,
+                    .map_err(|error| {
+                        agent_client_protocol::Error::internal_error().data(error.to_string())
+                    })?,
                 ),
         ),
         vec![
@@ -307,7 +314,10 @@ async fn permission_step(
     match response.outcome {
         acp::RequestPermissionOutcome::Cancelled => Ok(Some(acp::StopReason::Cancelled)),
         acp::RequestPermissionOutcome::Selected(_) => Ok(None),
-        _ => Err(acp::Error::internal_error().data("unrecognized permission outcome")),
+        _ => {
+            Err(agent_client_protocol::Error::internal_error()
+                .data("unrecognized permission outcome"))
+        }
     }
 }
 

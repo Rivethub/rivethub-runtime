@@ -90,6 +90,16 @@ impl MemoryStore for SqliteStore {
             .map_err(MemoryStoreError::from)
     }
 
+    async fn mark_summary_settled(
+        &self,
+        session: &str,
+        owner: &Owner,
+    ) -> Result<Option<kernel::memory::settlement::SettleResult>, MemoryStoreError> {
+        self.mark_settled(session, owner.as_str())
+            .await
+            .map_err(Into::into)
+    }
+
     async fn append(
         &self,
         owner: &Owner,

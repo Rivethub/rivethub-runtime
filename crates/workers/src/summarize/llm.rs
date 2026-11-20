@@ -1,59 +1,13 @@
-use kernel::model::LlmResponse;
 use kernel::model::ModelProviderError;
-use kernel::model::ModelRequest;
-use wire::message::Message;
-use wire::message::MessageContent;
-use wire::message::Role;
 
 use super::SummarizeEnv;
 use crate::error::WorkerError;
-
-pub(super) async fn chat(
-    env: &SummarizeEnv<'_>,
-    system: &str,
-    user: &str,
-    max_tokens: u32,
-) -> Result<LlmResponse, WorkerError> {
-    cancelled(env)?;
-    let request = ModelRequest {
-        options: kernel::model::ModelOptions::default(),
-        model: env.settings.model.clone(),
-        messages: vec![
-            text_message(Role::System, system),
-            text_message(Role::User, user),
-        ],
-        thinking: None,
-        max_tokens: Some(max_tokens),
-    };
-    tokio::select! {
-        biased;
-        () = env.cancel.cancelled() => Err(WorkerError::Cancelled),
-        result = env.provider.chat(request) => result.map_err(llm_error),
-    }
-}
-
-pub(super) fn require_text(response: &LlmResponse) -> Result<String, WorkerError> {
-    match response.content.as_deref() {
-        Some(text) if !text.is_empty() => Ok(text.to_owned()),
-        Some(_) | None => Err(WorkerError::EmptySummary),
-    }
-}
 
 pub(super) fn cancelled(env: &SummarizeEnv<'_>) -> Result<(), WorkerError> {
     if env.cancel.is_cancelled() {
         Err(WorkerError::Cancelled)
     } else {
         Ok(())
-    }
-}
-
-fn text_message(role: Role, text: &str) -> Message {
-    Message {
-        role,
-        content: MessageContent::Text(text.to_owned()),
-        reasoning: None,
-        tool_calls: None,
-        tool_call_id: None,
     }
 }
 

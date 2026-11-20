@@ -6,8 +6,8 @@ use std::time::Duration;
 use std::time::Instant;
 
 use agent_client_protocol::Agent;
-use agent_client_protocol::ConnectionTo;
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::v1::ConnectionTo;
+use agent_client_protocol::v1::schema as acp;
 use kernel::harness::Command;
 use kernel::harness::HarnessModelsSource;
 use kernel::harness::HarnessOffering;
@@ -277,7 +277,7 @@ pub(crate) async fn delete(
     connection: &ConnectionTo<Agent>,
     acp_session: acp::SessionId,
     deletion: Deletion,
-) -> Result<(), acp::Error> {
+) -> Result<(), agent_client_protocol::Error> {
     match deletion {
         Deletion::Standard => connection
             .send_request(acp::DeleteSessionRequest::new(acp_session))
@@ -294,7 +294,8 @@ pub(crate) async fn delete(
             if deleted.success {
                 Ok(())
             } else {
-                Err(acp::Error::internal_error().data("grok did not delete the session"))
+                Err(agent_client_protocol::Error::internal_error()
+                    .data("grok did not delete the session"))
             }
         }
     }
@@ -305,7 +306,7 @@ mod tests {
     use super::Advertisement;
     use crate::options::SessionOptions;
     use crate::sheets::{SheetInput, offering};
-    use agent_client_protocol::schema::v1 as acp;
+    use agent_client_protocol::v1::schema as acp;
     use config::ModelsMode;
     use kernel::harness::HarnessModelsSource;
     use std::sync::Arc;

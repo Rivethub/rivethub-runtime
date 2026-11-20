@@ -94,7 +94,11 @@ async fn take(
     extract: &ExtractWiki,
     size: usize,
 ) -> Result<Taken, WorkerError> {
-    let summary = match env.store.wiki_work(extract).await? {
+    let work = match env.store.wiki_work(extract).await {
+        Err(error) if error.obsolete_input() => return Ok(Taken::Done),
+        result => result?,
+    };
+    let summary = match work {
         WikiWork::Complete { .. } => return Ok(Taken::Done),
         WikiWork::Pending(summary) => summary,
     };

@@ -270,6 +270,13 @@ fn grok_stop(session: &str) -> String {
     format!(r#"{{"hook_event_name":"Stop","session_id":"{session}","cwd":"/home/user/acmekit"}}"#)
 }
 
+fn has_end(batch: Json) -> Result<bool, Box<dyn std::error::Error>> {
+    let batch: wire::capture::CaptureBatchRequest = serde_json::from_value(batch)?;
+    Ok(batch
+        .session_observation()?
+        .is_some_and(|observation| observation.end_key.is_some()))
+}
+
 #[tokio::test]
 async fn opencode_1_19_subagent_settings_name_the_parent_and_the_task_call() -> TestResult {
     let home = tempfile::tempdir()?;
@@ -297,6 +304,8 @@ async fn opencode_1_19_subagent_settings_name_the_parent_and_the_task_call() -> 
     )
     .await?;
     assert_eq!(link(&parent), expected([None; 5]));
+    assert!(!has_end(child)?);
+    assert!(!has_end(parent)?);
     Ok(())
 }
 
@@ -338,6 +347,7 @@ async fn grok_subagent_settings_name_the_parent_from_its_spawn_record() -> TestR
     )
     .await?;
     assert_eq!(link(&parent), expected([None; 5]));
+    assert!(!has_end(child)?);
     Ok(())
 }
 
@@ -351,6 +361,18 @@ async fn dsh_subagent_settings_name_the_parent_from_the_session_header() -> Test
         link(&child),
         expected([Some(DSH_PARENT), Some(DSH_CHILD), None, None, None])
     );
+    assert!(!has_end(child)?);
+    let stop = format!(
+        r#"{{"hook_event_name":"subagent/end","session_id":"{DSH_CHILD}","event_id":"invented-run"}}"#
+    );
+    let child = batch(home.path(), StoreHarness::Dsh, &stop).await?;
+    assert_eq!(
+        child
+            .pointer("/settings/last_event_id")
+            .and_then(Json::as_str),
+        Some("invented-run")
+    );
+    assert!(has_end(child)?);
     Ok(())
 }
 
@@ -417,6 +439,7 @@ async fn a_codex_subagent_stop_captures_the_child_thread_linked_to_its_parent() 
         .and_then(|message| message.pointer("/content"))
         .and_then(Json::as_str);
     assert_eq!(last, Some("196"));
+    assert!(!has_end(captured)?);
     let stop = format!(
         r#"{{"session_id":"{CODEX_PARENT}","hook_event_name":"Stop","cwd":"/home/user/acmekit"}}"#
     );

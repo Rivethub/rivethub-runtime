@@ -281,7 +281,7 @@ async fn idle_batch_from(
     .ok_or("opencode store")?;
     let now: Timestamp = NOW_TEXT.parse()?;
     let payload = format!(
-        r#"{{"session_id":"{session}","hook_event_name":"session.idle","cwd":"/home/user/acmekit"}}"#
+        r#"{{"session_id":"{session}","hook_event_name":"session.execution.succeeded","event_id":"invented-execution","cwd":"/home/user/acmekit"}}"#
     );
     assert_eq!(hook.run(&payload, now).await.stderr, "");
     let posts = transport.posts.lock().clone();
@@ -489,6 +489,16 @@ async fn opencode_2_3_part_rows_keep_the_same_rows_and_subagent_link() -> TestRe
             at(&parts, "/settings/tool_use_id"),
             at(&inline, "/settings/tool_use_id")
         );
+        for captured in [inline, parts] {
+            let captured: wire::capture::CaptureBatchRequest = serde_json::from_value(captured)?;
+            let end = captured
+                .session_observation()?
+                .and_then(|event| event.end_key);
+            assert_eq!(end.is_some(), session == CHILD);
+            if let Some(key) = end {
+                assert!(key.ends_with(":invented-execution"));
+            }
+        }
     }
     let child = idle_batch_from(SUBAGENT_FIXTURE, Layout::PartRows, CHILD).await?;
     assert_eq!(

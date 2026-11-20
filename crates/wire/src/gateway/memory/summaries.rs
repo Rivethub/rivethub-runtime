@@ -34,14 +34,19 @@ pub struct MemorySummaryNode {
     pub kind: SummaryKind,
     pub content: String,
     pub message_count: u32,
-
     #[serde_as(as = "Option<crate::time::Rfc3339>")]
     pub earliest_at: Option<Timestamp>,
     #[serde_as(as = "Option<crate::time::Rfc3339>")]
     pub latest_at: Option<Timestamp>,
-
     #[serde_as(as = "crate::time::Rfc3339")]
     pub created_at: Timestamp,
+    pub summary_ordinal: Option<u32>,
+    pub source_first: Option<u32>,
+    pub source_last: Option<u32>,
+    pub range_verified: Option<bool>,
+    #[serde(default)]
+    #[schemars(skip_serializing_if = "is_default")]
+    pub quality_flags: u32,
     pub source_message_ids: Vec<String>,
     pub vector: VectorState,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -59,8 +64,21 @@ pub struct MemorySummaryCounts {
     pub leaves: u64,
     pub branches: u64,
     pub roots: u64,
+    #[serde(default)]
+    #[schemars(skip_serializing_if = "is_default")]
+    pub sessions: u64,
+    #[serde(default)]
+    #[schemars(skip_serializing_if = "is_default")]
+    pub parts: u64,
+    #[serde(default)]
+    #[schemars(skip_serializing_if = "is_default")]
+    pub sections: u64,
     pub embedded: u64,
     pub top: u64,
+}
+
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

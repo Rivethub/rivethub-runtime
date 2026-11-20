@@ -300,6 +300,7 @@ async fn sqlite(
         }
         None => store,
     };
+    let store = store.with_language_available(config.memory_models_available());
     Ok(match model {
         Some(model) => store.with_embed_model(&model),
         None => store,

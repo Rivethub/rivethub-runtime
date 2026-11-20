@@ -172,7 +172,7 @@ fn push_wire_columns(builder: &mut QueryBuilder<Postgres>) {
 }
 
 pub(crate) async fn summary_conversation_tags(
-    pool: &PgPool,
+    tx: &mut sqlx::PgConnection,
     summaries: &[Uuid],
 ) -> Result<BTreeMap<Uuid, Vec<TagWire>>, MemoryStoreError> {
     let mut builder = QueryBuilder::new("");
@@ -187,7 +187,7 @@ pub(crate) async fn summary_conversation_tags(
         .push(")) order by t.entity_id, t.key, t.value");
     let rows = read_rows(
         "tags list",
-        builder.build_query_as::<TagWireRow>().fetch_all(pool).await,
+        builder.build_query_as::<TagWireRow>().fetch_all(tx).await,
     )?;
     let mut grouped: BTreeMap<Uuid, Vec<TagWire>> = BTreeMap::new();
     for row in rows.shape() {
@@ -336,6 +336,18 @@ async fn decide_tags(
     decided_by: Option<String>,
 ) -> Result<u64, MemoryStoreError> {
     let uuids: Vec<Uuid> = ids.iter().map(|id| id.uuid()).collect();
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|source| store_error("tags decide", source))?;
+    let summaries: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT entity_id FROM rh_tags WHERE id = ANY($1) AND entity_type = 'summary'",
+    )
+    .bind(&uuids)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|source| store_error("tags decide", source))?;
+    guard(&mut tx, &summaries).await?;
     let state = TagState::from(decision);
     let result = sqlx::query!(
         "update rh_tags set state = $2, \
@@ -346,9 +358,12 @@ async fn decide_tags(
         state.to_string(),
         decided_by
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(|source| store_error("tags decide", source))?;
+    tx.commit()
+        .await
+        .map_err(|source| store_error("tags decide", source))?;
     Ok(result.rows_affected())
 }
 
@@ -398,6 +413,13 @@ async fn add_tag(pool: &PgPool, add: &TagAdd) -> Result<TagWire, MemoryStoreErro
         Some(text) => text.to_owned(),
         None => add.tag.value.clone(),
     };
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|source| store_error("tag add", source))?;
+    if add.entity_type == TagEntityType::Summary {
+        guard(&mut tx, &[entity_id]).await?;
+    }
     let record = sqlx::query!(
         r#"insert into rh_tags (entity_type, entity_id, key, value, display, source, state, proposed_by, reason, decided_by, decided_at) values ($1, $2, $3, $4, coalesce($5, ''), 'user', 'accepted', '', coalesce($6, ''), $7::text, case when $7::text is null then null else now() end) on conflict (entity_type, entity_id, key, value) do update set state = 'accepted', decided_by = coalesce($7::text, rh_tags.decided_by), decided_at = case when $7::text is null then rh_tags.decided_at else now() end, updated_at = now() returning id::text as "id!", entity_type, entity_id::text as "entity_id!", key, value, display, source, state, confidence, proposed_by, reason, decided_by, decided_at AS "decided_at!: crate::time::OptionalTimestamp", created_at AS "created_at!: jiff_sqlx::Timestamp", updated_at AS "updated_at!: jiff_sqlx::Timestamp""#,
         add.entity_type.to_string(),
@@ -408,9 +430,12 @@ async fn add_tag(pool: &PgPool, add: &TagAdd) -> Result<TagWire, MemoryStoreErro
         add.reason.clone(),
         add.decided_by.clone()
     )
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
     .map_err(|source| store_error("tag add", source))?;
+    tx.commit()
+        .await
+        .map_err(|source| store_error("tag add", source))?;
     Ok(TagWire {
         id: record.id,
         entity_type: add.entity_type,
@@ -527,4 +552,17 @@ impl crate::PostgresMemory {
     ) -> Result<kernel::memory::TagSuggestionStored, MemoryStoreError> {
         suggest::store_tag_suggestions(&self.pool, write).await
     }
+}
+
+async fn guard(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ids: &[Uuid],
+) -> Result<(), MemoryStoreError> {
+    crate::summary_replace::shared(tx, ids)
+        .await
+        .map_err(|error| match error {
+            crate::summary_replace::FenceError::Reference(error) => error.into(),
+            crate::summary_replace::FenceError::Query(error) => store_error("tag source", error),
+        })?;
+    Ok(())
 }

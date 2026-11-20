@@ -859,6 +859,68 @@ async fn teammates_are_named_and_instruction_shaped_text_is_quoted() {
     }
 }
 
+#[tokio::test]
+async fn search_renders_passage_heading_and_section_provenance() {
+    let (server, store) = setup();
+    let outcome = serde_json::from_str(r#"{
+        "results": [
+            {"id":"owner","passage":{"id":"piece","ordinal":2},"source":"summary",
+             "content":"The cask valve has a bypass.","createdAt":"2026-10-10T12:00:00Z","relevanceScore":0.5,"title":"Orchard plumbing"}
+        ],
+        "summaries": {
+            "piece": {"kind":"part","tags":[],"sources":[],
+             "children":[{"kind":"section","content":"The full unrelated record would be noisy."}],
+             "sections":[{"id":"valve-section","heading":"Cask valves","sourceFirst":1,"sourceLast":2,"rangeVerified":false}]}
+        }
+    }"#).expect("fixture");
+    store.set_search_outcome(outcome).await;
+    let reply = support::call(
+        &server,
+        "memory_search",
+        r#"{"query":"valve","expand":true}"#,
+    )
+    .await;
+    let text = &reply
+        .content
+        .first()
+        .and_then(|block| block.as_text())
+        .expect("text")
+        .text;
+    for expected in [
+        "part/owner · passage 3",
+        "Orchard plumbing",
+        "The cask valve has a bypass.",
+        "valve-section (sources 1–2, inferred): Cask valves",
+    ] {
+        assert!(text.contains(expected), "{text}");
+    }
+    assert!(!text.contains("full unrelated record"));
+}
+
+#[tokio::test]
+async fn a_passage_hit_links_its_session_page() {
+    let store = Arc::new(FakeMemoryStore::default());
+    let digest = "cd".repeat(32);
+    let outcome = serde_json::from_str(&format!(
+        r#"{{
+        "results": [
+            {{"id":"owner","passage":{{"id":"piece","ordinal":0}},"source":"summary","sessionId":"import:{digest}",
+             "content":"The cask valve has a bypass.","createdAt":"2026-10-10T12:00:00Z","relevanceScore":0.5}}
+        ],
+        "summaries": {{
+            "piece": {{"kind":"part","tags":[],"sources":[],"children":[],"sections":[]}}
+        }}
+    }}"#
+    ))
+    .expect("fixture");
+    store.set_search_outcome(outcome).await;
+    let linked = linked(store);
+    let found = text_of(&support::call(&linked, "memory_search", r#"{"query":"valve"}"#).await);
+    let url = format!("https://localhost:5174/sessions/import%3A{digest}");
+    assert!(found.contains("part/owner · passage 1"), "{found}");
+    assert_eq!(found.matches(&url).count(), 1, "{found}");
+}
+
 fn linked(store: Arc<FakeMemoryStore>) -> Server {
     Server::builder(store, CancellationToken::new())
         .page_origin(url::Url::parse("https://localhost:5174").expect("origin"))
@@ -948,6 +1010,7 @@ async fn an_import_key_is_percent_encoded_and_expanded_sources_are_not_linked() 
         created_at: when,
         session_id: Some(import.clone()),
         title: None,
+        passage: None,
     });
     outcome.summaries.insert(
         "sum-1".into(),
@@ -962,6 +1025,7 @@ async fn an_import_key_is_percent_encoded_and_expanded_sources_are_not_linked() 
             }],
             sources: vec![native("src", None)],
             provenance: None,
+            sections: Vec::new(),
         },
     );
     store.set_search_outcome(outcome).await;

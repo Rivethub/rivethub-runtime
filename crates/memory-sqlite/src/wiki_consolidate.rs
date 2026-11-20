@@ -232,8 +232,8 @@ fn store_parent(conn: &Connection, topic: &Topic, at: &str) -> Result<(), WikiSt
 fn retire(conn: &Connection, child: &str, parent: &str, at: &str) -> Result<(), WikiStoreError> {
     conn.execute(
         "INSERT INTO ros_wiki_citations (topic_slug, summary_id, kind, note, cited_at)
-         SELECT ?2, summary_id, kind, note, cited_at FROM ros_wiki_citations
-          WHERE topic_slug = ?1
+         SELECT ?2, summary_id, kind, note, cited_at FROM ros_wiki_citations c
+          WHERE topic_slug = ?1 AND EXISTS (SELECT 1 FROM ros_summaries s WHERE s.id = c.summary_id)
          ON CONFLICT DO NOTHING",
         params![child, parent],
     )
@@ -242,7 +242,8 @@ fn retire(conn: &Connection, child: &str, parent: &str, at: &str) -> Result<(), 
         "INSERT INTO ros_wiki_provenance
             (topic_slug, source_kind, source_id, conversation_id, git_sha, created_at)
          SELECT ?2, source_kind, source_id, conversation_id, git_sha, created_at
-           FROM ros_wiki_provenance WHERE topic_slug = ?1
+           FROM ros_wiki_provenance p WHERE topic_slug = ?1 AND (source_kind <> 'summary'
+                    OR EXISTS (SELECT 1 FROM ros_summaries s WHERE s.id = p.source_id))
          ON CONFLICT DO NOTHING",
         params![child, parent],
     )

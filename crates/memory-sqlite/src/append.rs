@@ -1,4 +1,6 @@
 use jiff::Timestamp;
+use std::collections::{BTreeMap, BTreeSet};
+
 use kernel::memory::MemoryEntry;
 use kernel::owner::Owner;
 use rusqlite::Transaction;
@@ -36,37 +38,52 @@ impl SqliteStore {
             });
         }
         let owner = owner.clone();
-        self.with_conn(move |conn| {
-            let tx = conn
-                .transaction()
-                .map_err(SqliteError::query("append begin"))?;
-            let mut admitted = std::collections::BTreeMap::new();
-            for entry in &entries {
-                if admitted.contains_key(&entry.session_id) {
-                    continue;
+        let language_available = self.language_available;
+        let (ids, opening_jobs) = self
+            .with_conn(move |conn| {
+                let tx = conn
+                    .transaction()
+                    .map_err(SqliteError::query("append begin"))?;
+                let mut admitted = BTreeMap::new();
+                for entry in &entries {
+                    if admitted.contains_key(&entry.session_id) {
+                        continue;
+                    }
+                    let stamps = entries
+                        .iter()
+                        .filter(|other| other.session_id == entry.session_id)
+                        .map(|other| other.created_at);
+                    let admits = crate::deletion::admits(&tx, &entry.session_id, stamps)?;
+                    admitted.insert(entry.session_id.clone(), admits);
                 }
-                let stamps = entries
-                    .iter()
-                    .filter(|other| other.session_id == entry.session_id)
-                    .map(|other| other.created_at);
-                let admits = crate::deletion::admits(&tx, &entry.session_id, stamps)?;
-                admitted.insert(entry.session_id.clone(), admits);
-            }
-            let mut ids = Vec::with_capacity(entries.len());
-            for entry in &entries {
-                if admitted.get(&entry.session_id) == Some(&false) {
-                    tracing::debug!(
-                        session_key = %entry.session_id,
-                        "append dropped for a deleted session"
-                    );
-                    continue;
+                let mut ids = Vec::with_capacity(entries.len());
+                let mut conversations = BTreeSet::new();
+                for entry in &entries {
+                    if admitted.get(&entry.session_id) == Some(&false) {
+                        tracing::debug!(
+                            session_key = %entry.session_id,
+                            "append dropped for a deleted session"
+                        );
+                        continue;
+                    }
+                    let (id, conversation) = append_one(&tx, entry, owner.as_str(), now)?;
+                    ids.push(id);
+                    conversations.insert(conversation);
                 }
-                ids.push(append_one(&tx, entry, owner.as_str(), now)?);
-            }
-            tx.commit().map_err(SqliteError::query("append commit"))?;
-            Ok(ids)
-        })
-        .await
+                let mut opening_jobs = false;
+                for id in conversations {
+                    crate::settlement::record_capture(&tx, &id, now, true, false, (None, None))?;
+                    opening_jobs |=
+                        crate::summary_opening::refresh(&tx, &id, now, language_available)?;
+                }
+                tx.commit().map_err(SqliteError::query("append commit"))?;
+                Ok((ids, opening_jobs))
+            })
+            .await?;
+        if opening_jobs {
+            self.notifications.send_replace(());
+        }
+        Ok(ids)
     }
 }
 
@@ -75,7 +92,7 @@ fn append_one(
     entry: &MemoryEntry,
     owner: &str,
     now: Timestamp,
-) -> Result<String, SqliteError> {
+) -> Result<(String, String), SqliteError> {
     let key = ConversationKey {
         session_key: entry.session_id.clone(),
         agent: entry.agent.clone(),
@@ -104,6 +121,7 @@ fn append_one(
             key: &key,
             channel: Some(&entry.channel),
             title: Some(&title(entry)),
+            title_from_capture: false,
             settings: None,
             task_id: task_id.as_deref(),
             owner,
@@ -135,10 +153,11 @@ fn append_one(
         created_at: Stamp::from(entry.created_at).at(now),
         owner: conversation.owner.as_deref().unwrap_or(owner),
     };
-    match &entry.id {
+    let id = match &entry.id {
         Some(id) => message.insert_as(tx, id.clone()),
         None => message.insert(tx),
-    }
+    }?;
+    Ok((id, conversation.id))
 }
 
 fn admit(

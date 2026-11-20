@@ -6,6 +6,23 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 #[serde_with::skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SummaryPassage {
+    pub id: String,
+    pub ordinal: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PassageSection {
+    pub id: String,
+    pub heading: String,
+    pub source_first: u32,
+    pub source_last: u32,
+    pub range_verified: bool,
+}
+
 #[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -32,6 +49,8 @@ pub struct MemoryEntry {
 pub struct MemorySearchResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chunk: Option<MemoryChunkMatch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passage: Option<SummaryPassage>,
     pub id: String,
     pub source: MemoryHitSource,
     pub content: String,

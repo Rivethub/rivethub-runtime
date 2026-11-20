@@ -1,6 +1,7 @@
 use std::process::ExitCode;
 
 pub(crate) const ALREADY_RUNNING: u8 = 11;
+pub(crate) const NO_WEB_APP: u8 = 12;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Exit {
@@ -12,6 +13,7 @@ pub enum Exit {
     Runtime,
     Held,
     AlreadyRunning,
+    NoWebApp,
     Child(u8),
 }
 
@@ -25,6 +27,7 @@ impl Exit {
             Self::Serve => ExitCode::from(4),
             Self::Runtime => ExitCode::from(5),
             Self::AlreadyRunning => ExitCode::from(ALREADY_RUNNING),
+            Self::NoWebApp => ExitCode::from(NO_WEB_APP),
             Self::Child(code) => ExitCode::from(code),
         }
     }

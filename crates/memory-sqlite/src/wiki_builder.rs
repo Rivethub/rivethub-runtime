@@ -20,7 +20,9 @@ use rusqlite::params;
 use uuid::Uuid;
 
 use crate::SqliteStore;
+use crate::summary_replace::{self, FenceError};
 use crate::wiki_held;
+use kernel::memory::summary_reference::{SummaryConsumer, SummaryReferenceError};
 
 #[async_trait]
 impl WikiBuilderStore for SqliteStore {
@@ -64,7 +66,13 @@ impl WikiBuilderStore for SqliteStore {
         now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         let error = error.to_owned();
-        blocking(self, move |conn| fail(conn, summary_id, &error, now)).await
+        blocking(self, move |conn| {
+            let tx = write_tx(conn)?;
+            summary_replace::shared(&tx, summary_id).map_err(fence_error)?;
+            fail(&tx, summary_id, &error, now)?;
+            tx.commit().map_err(query)
+        })
+        .await
     }
 
     async fn defer_wiki(&self, deferred: DeferredWiki) -> Result<(), WikiStoreError> {
@@ -107,6 +115,13 @@ where
 
 fn work(conn: &Connection, job: &ExtractWiki) -> Result<WikiWork, WikiStoreError> {
     let summary = load_summary(conn, job)?;
+    if let Some(delivery) = &summary.delivery {
+        return if delivery.pending.is_empty() {
+            Ok(WikiWork::Complete { topics: Vec::new() })
+        } else {
+            Ok(WikiWork::Pending(summary))
+        };
+    }
     if let Some(topics) = completed(conn, job.summary_id)? {
         return Ok(WikiWork::Complete { topics });
     }
@@ -122,8 +137,34 @@ fn apply_all(
 ) -> Result<Vec<String>, WikiStoreError> {
     reject_empty(&patches)?;
     let tx = write_tx(conn)?;
+    let input = summary_replace::shared(&tx, job.summary_id).map_err(fence_error)?;
+    if let Some(expected) = &routing.input
+        && (expected.id != job.summary_id
+            || expected.conversation_id.map(|id| id.to_string()) != input.conversation_id
+            || expected.owner.as_ref().map(Owner::as_str) != input.owner.as_deref()
+            || expected.content != input.content)
+    {
+        return Err(SummaryReferenceError::Stale(job.summary_id).into());
+    }
     let summary = load_summary(&tx, job)?;
-    if let Some(topics) = completed(&tx, job.summary_id)? {
+    if summary.delivery.as_ref()
+        != routing
+            .input
+            .as_ref()
+            .and_then(|input| input.delivery.as_ref())
+    {
+        return Err(SummaryReferenceError::Stale(job.summary_id).into());
+    }
+    if summary
+        .delivery
+        .as_ref()
+        .is_some_and(|delivery| delivery.pending.is_empty())
+    {
+        return Ok(Vec::new());
+    }
+    if summary.delivery.is_none()
+        && let Some(topics) = completed(&tx, job.summary_id)?
+    {
         tx.commit().map_err(query)?;
         return Ok(topics);
     }
@@ -143,7 +184,31 @@ fn apply_all(
     }
     touched.sort();
     touched.dedup();
+    if let Some(deferred) = &routing.deferred {
+        if deferred.summary_id != job.summary_id {
+            return Err(SummaryReferenceError::Stale(deferred.summary_id).into());
+        }
+        wiki_held::upsert(&tx, deferred)?;
+    }
     record_done(&tx, job.summary_id, &touched, now)?;
+    if let Some(delivery) = &summary.delivery {
+        summary_replace::complete(
+            &tx,
+            job.summary_id,
+            SummaryConsumer::Wiki,
+            &delivery.pending,
+            WIKI_PIPELINE_VERSION,
+        )
+        .map_err(fence_error)?;
+    } else {
+        summary_replace::complete_legacy(
+            &tx,
+            job.summary_id,
+            SummaryConsumer::Wiki,
+            WIKI_PIPELINE_VERSION,
+        )
+        .map_err(query)?;
+    }
     tx.commit().map_err(query)?;
     for slug in &touched {
         tracing::info!("wiki topic stored {slug}");
@@ -168,9 +233,9 @@ fn backfill(conn: &Connection, budget: BackfillBudget) -> Result<Vec<ExtractWiki
             "SELECT s.id, s.conversation_id FROM ros_summaries s
              LEFT JOIN ros_conversations c ON c.id = s.conversation_id
              LEFT JOIN ros_wiki_extractions e ON e.summary_id = s.id
-             WHERE s.kind = 'leaf'
+             WHERE ((s.kind = 'leaf' AND (e.summary_id IS NULL OR e.status = 'failed' ))
+                 OR EXISTS (SELECT 1 FROM ros_summary_deliveries d WHERE d.anchor_id = s.id AND d.consumer = 'wiki'))
                AND (c.id IS NULL OR c.session_key NOT LIKE 'heartbeat:%')
-               AND (e.summary_id IS NULL OR e.status = 'failed')
                AND NOT EXISTS (SELECT 1 FROM ros_jobs j WHERE j.job_key = 'wiki-ext-' || s.id)
              ORDER BY s.created_at DESC, s.id
              LIMIT max(0, (SELECT CASE WHEN EXISTS (
@@ -263,7 +328,7 @@ pub(crate) fn load_summary(
 ) -> Result<WikiSummary, WikiStoreError> {
     let row = conn
         .query_row(
-            "SELECT s.id, s.conversation_id, s.content, c.session_key, c.owner_user_id, s.created_at
+            "SELECT s.id, s.conversation_id, s.content, c.session_key, c.owner_user_id, s.created_at, s.input_key
                FROM ros_summaries s
                LEFT JOIN ros_conversations c ON c.id = s.conversation_id WHERE s.id = ?1",
             params![job.summary_id.to_string()],
@@ -275,6 +340,7 @@ pub(crate) fn load_summary(
                     row.get::<_, Option<String>>(3)?,
                     row.get::<_, Option<String>>(4)?,
                     row.get::<_, String>(5)?,
+                    row.get::<_, Option<Vec<u8>>>(6)?,
                 ))
             },
         )
@@ -289,7 +355,14 @@ pub(crate) fn load_summary(
     {
         return Err(WikiStoreError::ConversationMismatch(job.summary_id));
     }
+    let delivery = if let Some(input_key) = row.6 {
+        let pending = summary_replace::pending(conn, id, SummaryConsumer::Wiki).map_err(query)?;
+        Some(kernel::wiki::builder::SummaryDelivery { input_key, pending })
+    } else {
+        None
+    };
     Ok(WikiSummary {
+        delivery,
         id,
         conversation_id,
         content: row.2,
@@ -350,4 +423,11 @@ fn time_stamp(now: Timestamp) -> String {
 
 pub(crate) fn query(source: rusqlite::Error) -> WikiStoreError {
     WikiStoreError::Query(Box::new(source))
+}
+
+pub(crate) fn fence_error(error: FenceError) -> WikiStoreError {
+    match error {
+        FenceError::Reference(error) => error.into(),
+        FenceError::Query(error) => query(error),
+    }
 }

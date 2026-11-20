@@ -130,6 +130,13 @@ pub(crate) async fn store_tag_suggestions(
         .begin()
         .await
         .map_err(|source| store_error("tag suggestions", source))?;
+    let ids: Vec<_> = write
+        .rows
+        .iter()
+        .filter(|row| row.entity_type == kernel::memory::TagEntityType::Summary)
+        .map(|row| row.entity_id)
+        .collect();
+    super::guard(&mut tx, &ids).await?;
     let stored = write_all(&mut tx, write).await?;
     tx.commit()
         .await

@@ -57,9 +57,10 @@ impl Titles {
 
 pub(crate) fn error(error: FactError) -> ApiError {
     match error {
-        FactError::EmptyKey | FactError::EmptyValue | FactError::TooLong { .. } => {
-            ApiError::BadRequest(error.to_string())
-        }
+        FactError::EmptyKey
+        | FactError::EmptyValue
+        | FactError::TooLong { .. }
+        | FactError::SummaryReference(_) => ApiError::BadRequest(error.to_string()),
         FactError::Unavailable(source) => {
             tracing::error!("fact store failed: {source}");
             ApiError::Unavailable("fact store unavailable".into())

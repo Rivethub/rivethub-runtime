@@ -30,3 +30,22 @@ pub(crate) async fn probe(pool: &PgPool) -> Result<PgPool, Box<dyn std::error::E
             .await?,
     )
 }
+
+pub(crate) async fn seed_entity_leaf(
+    pool: &PgPool,
+    leaf: &kernel::wiki::entity_pass::EntityLeaf,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO rh_summaries (id, conversation_id, content, owner_user_id, earliest_at, latest_at)
+         VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(leaf.id)
+    .bind(leaf.conversation_id)
+    .bind(&leaf.content)
+    .bind(leaf.owner.as_deref())
+    .bind(memory_postgres::time::PgTimestamp::from(leaf.start))
+    .bind(memory_postgres::time::PgTimestamp::from(leaf.end))
+    .execute(pool)
+    .await
+    .map(drop)
+}

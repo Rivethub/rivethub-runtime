@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use kernel::transcript::TranscriptReaderError;
 use serde::Deserialize;
@@ -18,6 +19,7 @@ use crate::readers::message::TextTurn;
 use crate::readers::message::ToolFields;
 use crate::readers::message::TranscriptSlice;
 use crate::readers::message::assemble;
+use crate::readers::message::json_failed;
 use crate::readers::message::parse_json;
 use crate::readers::message::push_mapped;
 use crate::readers::message::text_turn;
@@ -51,6 +53,7 @@ pub(super) fn parse_lines(text: &str) -> Result<UpdateLines, TranscriptReaderErr
 
 pub(super) fn map_updates(
     session: &SessionId,
+    path: &Path,
     text: &str,
     offset: u64,
     extent: Extent,
@@ -77,7 +80,16 @@ pub(super) fn map_updates(
     drafts.retain(|draft| draft.position <= settled);
     skipped.retain(|record| record.position <= settled);
     let ordinals = ordinals(&records)?;
+    let path = path.display().to_string();
     for draft in &mut drafts {
+        if let Some(metadata) = &mut draft.message.metadata {
+            metadata
+                .insert("session_jsonl_path", &path)
+                .map_err(json_failed)?;
+            metadata
+                .insert("session_jsonl_line", draft.position)
+                .map_err(json_failed)?;
+        }
         if let Some(ordinal) = ordinals.get(&draft.position) {
             draft.message.event_id = format!("{session}:{ordinal}");
         }
@@ -232,7 +244,8 @@ impl Reading<'_> {
                 arguments: input,
                 result,
             },
-        )
+        )?
+        .with_metadata(|metadata| metadata.insert("tool_use_id", &update.tool_call_id))
     }
 }
 

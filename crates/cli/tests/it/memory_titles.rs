@@ -16,7 +16,7 @@ struct TitlesBody {
 }
 
 #[tokio::test]
-async fn backfill_titles_names_summarized_sqlite_conversations() {
+async fn backfill_titles_names_sqlite_conversations_from_openings() {
     let directory = tempfile::tempdir().expect("directory");
     let database = migrated(directory.path());
     seed(
@@ -121,7 +121,7 @@ fn migrated(directory: &Path) -> PathBuf {
     path
 }
 
-fn seed(path: &Path, id: &str, title: Option<&str>, leaf: &str) {
+fn seed(path: &Path, id: &str, title: Option<&str>, opening: &str) {
     let connection = rusqlite::Connection::open(path).expect("sqlite");
     connection
         .execute(
@@ -131,10 +131,10 @@ fn seed(path: &Path, id: &str, title: Option<&str>, leaf: &str) {
         .expect("conversation");
     connection
         .execute(
-            "INSERT INTO ros_summaries (id, conversation_id, depth, content, kind, message_count, earliest_at, latest_at, model, created_at, pipeline_version) VALUES (?1, ?2, 0, ?3, 'leaf', 0, '2020-01-01T00:00:00.000Z', '2020-01-01T00:00:00.000Z', 'fake-chat', '2020-01-01T00:00:00.000Z', 5)",
-            (format!("leaf-{id}"), id, leaf),
+            "INSERT INTO rh_summary_openings (conversation_id, content) VALUES (?1, ?2)",
+            (id, opening),
         )
-        .expect("leaf");
+        .expect("opening");
 }
 
 fn title(path: &Path, id: &str) -> Option<String> {

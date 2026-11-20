@@ -12,6 +12,7 @@ jiff = { workspace = true }
 rusqlite = { workspace = true }
 sqlx = { workspace = true, features = ["macros"] }
 thiserror = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 hex = { workspace = true }

@@ -17,28 +17,18 @@ use crate::time;
 use crate::wiki_builder::load_summary;
 use crate::wiki_builder::query;
 
-pub(crate) fn defer(conn: &Connection, deferred: &DeferredWiki) -> Result<(), WikiStoreError> {
-    conn.execute(
-        "INSERT INTO rh_wiki_deferred
-             (summary_id, waits_session, waits_conversation, applied_topic, patches, deferred_at,
-              owner_user_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, (SELECT c.owner_user_id FROM ros_summaries s
-                                           JOIN ros_conversations c ON c.id = s.conversation_id
-                                          WHERE s.id = ?1))
-         ON CONFLICT (summary_id) DO UPDATE SET waits_session = excluded.waits_session,
-            waits_conversation = excluded.waits_conversation, applied_topic = excluded.applied_topic,
-            patches = excluded.patches, deferred_at = excluded.deferred_at",
-        params![
-            deferred.summary_id.to_string(),
-            deferred.waits.session().map(SessionId::as_str),
-            deferred.waits.conversation().map(|conversation| conversation.to_string()),
-            deferred.applied.map(|topic| topic.to_string()),
-            encoded(&deferred.patches)?,
-            time::stamp(deferred.at)
-        ],
+pub(crate) fn defer(conn: &mut Connection, deferred: &DeferredWiki) -> Result<(), WikiStoreError> {
+    let tx = crate::summary_replace::immediate(conn).map_err(query)?;
+    guard(&tx, deferred.summary_id)?;
+    upsert(&tx, deferred)?;
+    crate::summary_replace::complete_legacy(
+        &tx,
+        deferred.summary_id,
+        kernel::memory::summary_reference::SummaryConsumer::Wiki,
+        kernel::wiki::builder::WIKI_PIPELINE_VERSION,
     )
     .map_err(query)?;
-    Ok(())
+    tx.commit().map_err(query)
 }
 
 pub(crate) fn unsettled(
@@ -93,7 +83,7 @@ pub(crate) fn unsettled(
 }
 
 pub(crate) fn cite(
-    conn: &Connection,
+    conn: &mut Connection,
     summary_id: Uuid,
     slug: &WikiSlug,
     now: Timestamp,
@@ -102,8 +92,11 @@ pub(crate) fn cite(
         summary_id,
         conversation_id: None,
     };
-    let summary = load_summary(conn, &job)?;
-    crate::wiki_topics::cite(conn, slug.as_ref(), &summary, now)
+    let tx = crate::summary_replace::immediate(conn).map_err(query)?;
+    guard(&tx, summary_id)?;
+    let summary = load_summary(&tx, &job)?;
+    crate::wiki_topics::cite(&tx, slug.as_ref(), &summary, now)?;
+    tx.commit().map_err(query)
 }
 
 pub(crate) fn uncite(
@@ -111,7 +104,8 @@ pub(crate) fn uncite(
     summary_id: Uuid,
     slug: &WikiSlug,
 ) -> Result<(), WikiStoreError> {
-    let tx = conn.transaction().map_err(query)?;
+    let tx = crate::summary_replace::immediate(conn).map_err(query)?;
+    guard(&tx, summary_id)?;
     for statement in [
         "DELETE FROM ros_wiki_citations WHERE topic_slug = ?1 AND summary_id = ?2
             AND NOT EXISTS (SELECT 1 FROM ros_wiki_extractions e, json_each(e.topics_touched) t
@@ -141,4 +135,36 @@ fn stamped(text: &str) -> Result<Timestamp, WikiStoreError> {
 
 fn invalid(error: impl std::fmt::Display) -> WikiStoreError {
     WikiStoreError::InvalidPatch(error.to_string())
+}
+
+fn guard(tx: &rusqlite::Transaction<'_>, id: Uuid) -> Result<(), WikiStoreError> {
+    crate::summary_replace::shared(tx, id).map_err(crate::wiki_builder::fence_error)?;
+    Ok(())
+}
+
+pub(crate) fn upsert(
+    tx: &rusqlite::Transaction<'_>,
+    deferred: &DeferredWiki,
+) -> Result<(), WikiStoreError> {
+    tx.execute(
+        "INSERT INTO rh_wiki_deferred
+             (summary_id, waits_session, waits_conversation, applied_topic, patches, deferred_at,
+              owner_user_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, (SELECT c.owner_user_id FROM ros_summaries s
+                                           JOIN ros_conversations c ON c.id = s.conversation_id
+                                          WHERE s.id = ?1))
+         ON CONFLICT (summary_id) DO UPDATE SET waits_session = excluded.waits_session,
+            waits_conversation = excluded.waits_conversation, applied_topic = excluded.applied_topic,
+            patches = excluded.patches, deferred_at = excluded.deferred_at",
+        params![
+            deferred.summary_id.to_string(),
+            deferred.waits.session().map(SessionId::as_str),
+            deferred.waits.conversation().map(|conversation| conversation.to_string()),
+            deferred.applied.map(|topic| topic.to_string()),
+            encoded(&deferred.patches)?,
+            time::stamp(deferred.at)
+        ],
+    )
+    .map_err(query)?;
+    Ok(())
 }

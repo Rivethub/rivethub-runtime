@@ -1,10 +1,11 @@
+mod replay;
+
 use jiff::Timestamp;
 use kernel::memory::CaptureBatchRequest;
 use kernel::memory::CaptureMessage;
 use kernel::memory::CaptureResult;
 use kernel::memory::spoken_title;
 use kernel::owner::Owner;
-use rusqlite::OptionalExtension as _;
 use rusqlite::Transaction;
 use rusqlite::params;
 use serde::Serialize;
@@ -14,6 +15,7 @@ use wire::message::Role;
 use crate::SqliteStore;
 use crate::conversation::ConversationKey;
 use crate::conversation::NewConversation;
+use crate::conversation::StoredConversation;
 use crate::error::SqliteError;
 use crate::message::NewMessage;
 use crate::queue::enqueue_embed;
@@ -31,6 +33,7 @@ struct PreparedMessage {
     tool_args: Option<String>,
     tool_result: Option<String>,
     metadata: String,
+    position_patch: Option<String>,
     created_at: Stamp,
 }
 
@@ -41,6 +44,8 @@ struct PreparedBatch {
     title: Option<String>,
     settings: Option<JsonObject>,
     imported: bool,
+    observation: Option<wire::capture::SessionObservation>,
+    is_end: bool,
     task_id: Option<String>,
     node: Option<String>,
     finalize: bool,
@@ -61,6 +66,7 @@ struct Target<'a> {
 enum Outcome {
     Inserted(String),
     Filled(String),
+    Positioned,
     Skipped,
 }
 
@@ -75,7 +81,8 @@ impl SqliteStore {
         let prepared = PreparedBatch::new(batch, owner, node)?;
         let owner = owner.clone();
         let embed = self.embed_armed();
-        let result = self
+        let language_available = self.language_available;
+        let (result, opening_jobs) = self
             .with_conn(move |conn| {
                 let tx = conn
                     .transaction()
@@ -85,14 +92,14 @@ impl SqliteStore {
                         session_key = %prepared.key.session_key,
                         "capture dropped for a deleted session"
                     );
-                    return prepared.dropped();
+                    return Ok((prepared.dropped()?, false));
                 }
-                let result = prepared.write(&tx, owner.as_str(), now, embed)?;
+                let result = prepared.write(&tx, owner.as_str(), now, embed, language_available)?;
                 tx.commit().map_err(SqliteError::query("capture commit"))?;
                 Ok(result)
             })
             .await?;
-        if embed {
+        if embed || opening_jobs {
             self.notifications.send_replace(());
         }
         Ok(result)
@@ -112,6 +119,16 @@ impl PreparedBatch {
                 message: error.to_string(),
             })?;
         let imported = owned_key.is_some();
+        let observation = crate::settlement::capture_observation(
+            &batch.session_key,
+            batch.settings.as_ref(),
+            batch.finalize,
+        );
+        let is_end = wire::capture::SessionObservation::is_session_end(
+            &batch.session_key,
+            batch.settings.as_ref(),
+            batch.finalize,
+        );
         let messages = batch
             .messages
             .iter()
@@ -130,6 +147,8 @@ impl PreparedBatch {
                 .map(str::to_owned),
             settings: batch.settings,
             imported,
+            observation,
+            is_end,
             task_id: batch.task_id,
             node: node.map(str::to_owned),
             finalize: batch.finalize == Some(true),
@@ -164,8 +183,101 @@ impl PreparedBatch {
         owner: &str,
         now: Timestamp,
         embed: bool,
-    ) -> Result<CaptureResult, SqliteError> {
-        let conversation = match self.key.find(tx)? {
+        language_available: bool,
+    ) -> Result<(CaptureResult, bool), SqliteError> {
+        let found = self.key.find(tx)?;
+        let prior = if let Some(found) = &found
+            && self.observation.is_some()
+        {
+            crate::settlement::prior_observation(tx, &found.id, &self.key.session_key)?
+        } else {
+            None
+        };
+        if found.is_none() && self.messages.is_empty() && self.is_end {
+            return Ok((self.dropped()?, false));
+        }
+        let conversation = self.write_conversation(tx, owner, now, found)?;
+        let channel = match &self.channel {
+            Some(channel) => channel,
+            None => &conversation.channel,
+        };
+        let target = Target {
+            conversation_id: &conversation.id,
+            agent: &self.key.agent,
+            channel,
+            owner: conversation.owner.as_deref().unwrap_or(owner),
+        };
+        let mut inserted: u64 = 0;
+        let mut skipped: u64 = 0;
+        let mut changed = false;
+        let mut before = None;
+        for message in &self.messages {
+            match message.write(tx, &target, now, &mut before, inserted == 0)? {
+                Outcome::Inserted(id) => {
+                    changed = true;
+                    inserted += 1;
+                    queue_inserted(tx, &id, embed, now)?;
+                }
+                Outcome::Filled(id) => {
+                    changed = true;
+                    skipped += 1;
+                    queue_if_absent(tx, message, &id, embed, now)?;
+                }
+                Outcome::Positioned => {
+                    changed = true;
+                    skipped += 1;
+                }
+                Outcome::Skipped => skipped += 1,
+            }
+        }
+        let opening_jobs = changed
+            && crate::summary_opening::refresh(tx, &conversation.id, now, language_available)?;
+        let enriched = if let Some(before) = before
+            && inserted == 0
+        {
+            before != crate::settlement::rendered_inputs(tx, &conversation.id)?
+        } else {
+            false
+        };
+        crate::settlement::record_capture(
+            tx,
+            &conversation.id,
+            now,
+            inserted > 0 || enriched,
+            self.imported,
+            (self.observation.as_ref(), prior.as_ref()),
+        )?;
+        if self.finalize {
+            tx.execute(
+                "UPDATE ros_conversations SET active = 0 WHERE id = ?1 AND active = 1",
+                [&conversation.id],
+            )
+            .map_err(SqliteError::query("conversation finalize"))?;
+        }
+        Ok((
+            CaptureResult {
+                ok: true,
+                conversation_id: conversation.id,
+                inserted,
+                skipped,
+            },
+            opening_jobs,
+        ))
+    }
+
+    fn write_conversation(
+        &self,
+        tx: &Transaction<'_>,
+        owner: &str,
+        now: Timestamp,
+        found: Option<StoredConversation>,
+    ) -> Result<StoredConversation, SqliteError> {
+        let conversation = match found {
+            Some(found) if found.owner.as_deref().is_some_and(|stored| stored != owner) => {
+                return Err(SqliteError::Invalid {
+                    message: "this session belongs to another user".to_owned(),
+                });
+            }
             Some(found) => {
                 self.update_conversation(tx, &found.id, found.updated_at, owner, now)?;
                 found
@@ -174,6 +286,7 @@ impl PreparedBatch {
                 key: &self.key,
                 channel: self.channel.as_deref(),
                 title: self.title.as_deref(),
+                title_from_capture: self.title.is_some(),
                 settings: self
                     .settings
                     .as_ref()
@@ -195,44 +308,7 @@ impl PreparedBatch {
             )
             .map_err(SqliteError::query("conversation node"))?;
         }
-        let channel = match &self.channel {
-            Some(channel) => channel,
-            None => &conversation.channel,
-        };
-        let target = Target {
-            conversation_id: &conversation.id,
-            agent: &self.key.agent,
-            channel,
-            owner: conversation.owner.as_deref().unwrap_or(owner),
-        };
-        let mut inserted: u64 = 0;
-        let mut skipped: u64 = 0;
-        for message in &self.messages {
-            match message.write(tx, &target, now)? {
-                Outcome::Inserted(id) => {
-                    inserted += 1;
-                    queue_inserted(tx, &id, embed, now)?;
-                }
-                Outcome::Filled(id) => {
-                    skipped += 1;
-                    queue_if_absent(tx, message, &id, embed, now)?;
-                }
-                Outcome::Skipped => skipped += 1,
-            }
-        }
-        if self.finalize {
-            tx.execute(
-                "UPDATE ros_conversations SET active = 0 WHERE id = ?1 AND active = 1",
-                [&conversation.id],
-            )
-            .map_err(SqliteError::query("conversation finalize"))?;
-        }
-        Ok(CaptureResult {
-            ok: true,
-            conversation_id: conversation.id,
-            inserted,
-            skipped,
-        })
+        Ok(conversation)
     }
 
     fn update_conversation(
@@ -271,6 +347,7 @@ impl PreparedBatch {
             "UPDATE ros_conversations
                 SET updated_at = ?2,
                     title = coalesce(?3, title),
+                    title_from_capture = title_from_capture OR ?3 IS NOT NULL,
                     settings = coalesce(?4, settings),
                     task_id = coalesce(?5, task_id),
                     owner_user_id = coalesce(owner_user_id, ?6)
@@ -307,7 +384,18 @@ impl PreparedMessage {
             full_content_length,
             full_tool_result_length,
         })?;
+        let mut position = JsonObject::default();
+        wire::capture::add_transcript_position(&mut position, message.metadata.as_ref()).map_err(
+            |source| SqliteError::Encode {
+                column: "position metadata",
+                source,
+            },
+        )?;
+        let position_patch = (!position.as_map().is_empty())
+            .then(|| encode(&position, "position metadata"))
+            .transpose()?;
         Ok(Self {
+            position_patch,
             event_id: message.event_id.clone(),
             role: message.role,
             content: content.to_owned(),
@@ -328,21 +416,42 @@ impl PreparedMessage {
         tx: &Transaction<'_>,
         target: &Target<'_>,
         now: Timestamp,
+        before: &mut Option<Vec<crate::settlement::RenderInput>>,
+        compare: bool,
     ) -> Result<Outcome, SqliteError> {
         let conversation_id = target.conversation_id;
         if let Some(stored) = self.stored_by_event(tx, conversation_id)? {
-            if self.fill_pending(tx, &stored)? {
-                return Ok(Outcome::Filled(stored));
+            if compare
+                && before.is_none()
+                && (self.tool_result.is_some() || self.position_patch.is_some())
+            {
+                *before = Some(crate::settlement::rendered_inputs(tx, conversation_id)?);
             }
-            return Ok(Outcome::Skipped);
+            let completed = self.fill_pending(tx, &stored)?;
+            let positioned = self.fill_position(tx, &stored)?;
+            return Ok(if completed {
+                Outcome::Filled(stored)
+            } else if positioned {
+                Outcome::Positioned
+            } else {
+                Outcome::Skipped
+            });
         }
         if let Some(hook_row) = self.unclaimed_hook_row(tx, conversation_id)? {
+            if compare && before.is_none() {
+                *before = Some(crate::settlement::rendered_inputs(tx, conversation_id)?);
+            }
             tx.execute(
-                "UPDATE ros_messages SET metadata = ?2 WHERE id = ?1",
-                params![hook_row, self.metadata],
+                "UPDATE ros_messages SET metadata = json_set(metadata, '$.cowork_transcript_event_id', ?2)
+                  WHERE id = ?1",
+                params![hook_row, self.event_id],
             )
             .map_err(SqliteError::query("cowork claim"))?;
-            return Ok(Outcome::Skipped);
+            return Ok(if self.fill_position(tx, &hook_row)? {
+                Outcome::Positioned
+            } else {
+                Outcome::Skipped
+            });
         }
         let id = NewMessage {
             conversation_id,
@@ -359,60 +468,6 @@ impl PreparedMessage {
         }
         .insert(tx)?;
         Ok(Outcome::Inserted(id))
-    }
-
-    fn stored_by_event(
-        &self,
-        tx: &Transaction<'_>,
-        conversation_id: &str,
-    ) -> Result<Option<String>, SqliteError> {
-        tx.query_row(
-            "SELECT id FROM ros_messages
-              WHERE conversation_id = ?1 AND json_extract(metadata, '$.event_id') = ?2
-              ORDER BY rowid LIMIT 1",
-            params![conversation_id, self.event_id],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(SqliteError::query("event id lookup"))
-    }
-
-    fn fill_pending(&self, tx: &Transaction<'_>, id: &str) -> Result<bool, SqliteError> {
-        let changed = tx
-            .execute(
-                "UPDATE ros_messages SET tool_result = ?2, metadata = ?3
-                  WHERE id = ?1
-                    AND ?2 IS NOT NULL
-                    AND json_extract(metadata, '$.pending_result') = 1
-                    AND json_extract(?3, '$.pending_result') IS NOT 1",
-                params![id, self.tool_result, self.metadata],
-            )
-            .map_err(SqliteError::query("pending tool result fill"))?;
-        Ok(changed > 0)
-    }
-
-    fn unclaimed_hook_row(
-        &self,
-        tx: &Transaction<'_>,
-        conversation_id: &str,
-    ) -> Result<Option<String>, SqliteError> {
-        tx.query_row(
-            "SELECT id FROM ros_messages
-              WHERE json_extract(?4, '$.source') = 'cowork-transcript'
-                AND conversation_id = ?1
-                AND json_extract(metadata, '$.source') = 'cowork-hook'
-                AND role = ?2 AND content = ?3
-              ORDER BY rowid LIMIT 1",
-            params![
-                conversation_id,
-                self.role.to_string(),
-                self.content,
-                self.metadata
-            ],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(SqliteError::query("cowork hook lookup"))
     }
 }
 
@@ -476,7 +531,10 @@ fn stored_metadata(metadata: &StoredMetadata<'_>) -> Result<String, SqliteError>
         column: "metadata",
         source,
     };
-    let merged = serde_json::to_value(metadata).map_err(failed)?;
+    let mut merged = serde_json::to_value(metadata).map_err(failed)?;
+    if let Some(object) = merged.as_object_mut() {
+        object.remove("cowork_transcript_event_id");
+    }
     serde_json::to_string(&merged).map_err(failed)
 }
 

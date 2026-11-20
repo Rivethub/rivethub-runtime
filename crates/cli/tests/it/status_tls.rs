@@ -9,6 +9,8 @@ use rcgen::{
     KeyUsagePurpose,
 };
 use support::{config, home, run};
+
+use crate::facts::{Status, Tls, document};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use wire::gateway::HealthzResponse;
@@ -243,5 +245,87 @@ async fn status_trusts_the_root_the_config_names_without_any_variable() -> Resul
         status.stderr
     );
     served.task.abort();
+    Ok(())
+}
+
+fn fingerprints(pem: &str) -> Result<(String, String)> {
+    use rustls::pki_types::pem::PemObject as _;
+    use sha2::Digest as _;
+    let der = rustls::pki_types::CertificateDer::from_pem_slice(pem.as_bytes())?;
+    let (_, parsed) = x509_parser::parse_x509_certificate(&der)?;
+    Ok((
+        hex::encode(sha2::Sha256::digest(&der)),
+        hex::encode(sha2::Sha256::digest(parsed.public_key().raw)),
+    ))
+}
+
+#[tokio::test]
+async fn tls_fingerprint_is_the_digest_of_the_certificate_file_the_node_serves() -> Result {
+    let served = tls_health("node.mesh.test").await?;
+    let home = home();
+    let dir = home.path().join("tls");
+    let ca = dir.join("ca.pem");
+    let cert = dir.join("node.pem");
+    let env = ::config::Environment::from_vars([
+        ("HOME".as_ref(), home.path().as_os_str()),
+        ("RIVETHUB_TLS_CA".as_ref(), ca.as_os_str()),
+    ]);
+    std::fs::create_dir_all(&dir)?;
+    for (name, body) in [
+        ("ca.pem", &served.ca_pem),
+        ("node.pem", &served.cert_pem),
+        ("node.key", &served.key_pem),
+    ] {
+        std::fs::write(dir.join(name), body)?;
+    }
+    config(
+        &home,
+        &format!(
+            "gateway:\n  host: 0.0.0.0\n  port: {}\n  tls_cert: {}\n  tls_key: {}\n",
+            served.port,
+            cert.display(),
+            dir.join("node.key").display(),
+        ),
+    );
+    let (sha256, spki_sha256) = fingerprints(&served.cert_pem)?;
+
+    let (exit, printed) = document::<Tls>(&["tls", "fingerprint", "--json"], &env).await?;
+    assert_eq!(exit, Exit::Ok);
+    assert_eq!(printed.sha256, sha256);
+    assert_eq!(printed.spki_sha256, spki_sha256);
+    assert_eq!(printed.cert, cert);
+    assert_eq!(printed.ca.as_ref(), Some(&ca));
+    assert!(printed.not_after > jiff::Timestamp::now());
+
+    let (_, status) = document::<Status>(&["status", "--json"], &env).await?;
+    assert!(status.running);
+    assert_eq!(
+        status.origin,
+        format!("https://node.mesh.test:{}", served.port)
+    );
+    assert_eq!(status.tls.as_ref(), Some(&printed));
+
+    let plain = run(&["tls", "fingerprint"], &env).await;
+    assert!(plain.stdout.contains(&sha256), "{}", plain.stdout);
+
+    let renewed = tls_health("node.mesh.test").await?;
+    std::fs::write(&cert, &renewed.cert_pem)?;
+    let (_, reprinted) = document::<Tls>(&["tls", "fingerprint", "--json"], &env).await?;
+    assert_eq!(reprinted.sha256, fingerprints(&renewed.cert_pem)?.0);
+    assert_ne!(reprinted.sha256, printed.sha256);
+    served.task.abort();
+    renewed.task.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn tls_fingerprint_says_a_plain_http_node_has_nothing_to_pin() -> Result {
+    let home = home();
+    let env = ::config::Environment::from_vars([("HOME".as_ref(), home.path().as_os_str())]);
+    config(&home, "gateway:\n  host: 127.0.0.1\n  port: 5174\n");
+    let report = run(&["tls", "fingerprint", "--json"], &env).await;
+    assert_eq!(report.exit, Exit::Failure);
+    assert_eq!(report.stdout, "");
+    assert!(report.stderr.contains("plain HTTP"), "{}", report.stderr);
     Ok(())
 }

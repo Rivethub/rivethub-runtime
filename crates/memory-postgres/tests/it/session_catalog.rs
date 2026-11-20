@@ -460,3 +460,166 @@ async fn a_session_s_messages_are_read_in_order_and_counted_like_the_catalog(
     )
     .await
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn positioned_messages_reach_session_and_summary_readers(pool: PgPool) -> TestResult {
+    let memory = PostgresMemory::new(pool);
+    testkit::session_messages::session_and_summary_readers_use_line_order(&memory, &memory, &memory)
+        .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn inserting_before_the_cursor_requires_restarting_the_session(pool: PgPool) -> TestResult {
+    let memory = PostgresMemory::new(pool);
+    testkit::session_messages::inserting_before_the_cursor_requires_restarting_the_session(
+        &memory, &memory,
+    )
+    .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn deleting_messages_preserves_only_unchanged_positioned_prefixes(
+    pool: PgPool,
+) -> TestResult {
+    let memory = PostgresMemory::new(pool.clone());
+    testkit::session_messages::deleting_messages_preserves_only_unchanged_positioned_prefixes(
+        &memory,
+        &memory,
+        async |id| {
+            sqlx::query("DELETE FROM rh_messages WHERE id = $1")
+                .bind(id)
+                .execute(&pool)
+                .await?;
+            Ok(())
+        },
+    )
+    .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn deleted_unpositioned_cursor_uses_the_timestamp_keyset(pool: PgPool) -> TestResult {
+    let memory = PostgresMemory::new(pool.clone());
+    testkit::session_messages::deleted_unpositioned_cursor_uses_the_timestamp_keyset(
+        &memory,
+        &memory,
+        async |id| {
+            sqlx::query("DELETE FROM rh_messages WHERE id = $1")
+                .bind(id)
+                .execute(&pool)
+                .await?;
+            Ok(())
+        },
+    )
+    .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn scoped_browse_keeps_timestamp_window_order(pool: PgPool) -> TestResult {
+    let memory = PostgresMemory::new(pool);
+    testkit::session_messages::scoped_browse_keeps_timestamp_window_order(&memory, &memory).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn out_of_range_stored_session_timestamp_returns_an_error(pool: PgPool) -> TestResult {
+    use kernel::memory::{MemoryStoreError, MessagesQuery};
+
+    let memory = PostgresMemory::new(pool.clone());
+    let seeded = session_catalog::seed(&memory).await?;
+    let conversation = conversation(&pool, &seeded.alpha).await?;
+    let key = SessionKey::from(&seeded.alpha);
+    for stamp in ["infinity", "9999-12-31 00:00:01+00"] {
+        for metadata in ["{}", r#"{"session_jsonl_line":1}"#] {
+            sqlx::query("UPDATE rh_messages SET created_at = $3::text::timestamptz, metadata = $2::jsonb WHERE conversation_id = $1")
+                .bind(conversation).bind(metadata).bind(stamp).execute(&pool).await?;
+            let page = memory
+                .messages(&key, &MessagesQuery::new(None, Some(1)))
+                .await;
+            assert!(
+                matches!(page, Err(MemoryStoreError::Query { .. })),
+                "{stamp} {metadata}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn new_hook_coordinates_reach_session_and_summary_readers(pool: PgPool) -> TestResult {
+    let memory = PostgresMemory::new(pool);
+    testkit::session_messages::session_and_summary_readers_use_hook_coordinates(
+        &memory, &memory, &memory,
+    )
+    .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_tool_replay_fills_position_and_invalidates_an_earlier_cursor(
+    pool: PgPool,
+) -> TestResult {
+    use kernel::tenancy::{Scope, Viewer};
+
+    let pool = crate::common::probe(&pool).await?;
+    let memory = PostgresMemory::new(pool);
+    Scope::Viewer(Viewer::new(testkit::owner()?, Vec::new()))
+        .run(testkit::session_messages::a_tool_replay_fills_position_and_invalidates_an_earlier_cursor(
+            &memory, &memory, &memory,
+        ))
+        .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn identical_positions_use_the_same_id_tie_break_in_both_readers(pool: PgPool) -> TestResult {
+    use kernel::memory::{CaptureMessage, MessagesQuery, SummaryStore};
+    use wire::message::Role;
+
+    let memory = PostgresMemory::new(pool.clone());
+    let key = "claude-code:00000000-0000-4000-8000-0000000000e7".parse()?;
+    let messages = ["first insert", "second insert"]
+        .into_iter()
+        .map(
+            |content| -> Result<CaptureMessage, Box<dyn std::error::Error>> {
+                Ok(CaptureMessage {
+                    event_id: content.to_owned(),
+                    role: Role::User,
+                    content: content.to_owned(),
+                    tool_name: None,
+                    tool_args: None,
+                    tool_result: None,
+                    metadata: Some(serde_json::from_str(r#"{"session_jsonl_line":0}"#)?),
+                    created_at: Some(at(10)),
+                })
+            },
+        )
+        .collect::<Result<_, _>>()?;
+    testkit::session_messages::capture_session_fixture(&memory, &key, messages).await?;
+    sqlx::query(
+        "UPDATE rh_messages SET created_at = $1, id = CASE content
+             WHEN 'first insert' THEN '90000000-0000-4000-8000-000000000001'::uuid
+             ELSE '10000000-0000-4000-8000-000000000002'::uuid END",
+    )
+    .bind(memory_postgres::time::PgTimestamp::from(at(10)))
+    .execute(&pool)
+    .await?;
+    let first = memory
+        .messages(&key, &MessagesQuery::new(None, Some(1)))
+        .await?;
+    let second = memory
+        .messages(&key, &MessagesQuery::new(first.next, Some(1)))
+        .await?;
+    let panel: Vec<_> = first
+        .items
+        .into_iter()
+        .chain(second.items)
+        .map(|row| row.content)
+        .collect();
+    let id = memory
+        .get(&key)
+        .await?
+        .and_then(|row| row.conversation)
+        .ok_or("conversation")?;
+    let window = memory.conversation(id).await?.ok_or("summary window")?;
+    let summary: Vec<_> = window.messages.into_iter().map(|row| row.content).collect();
+    assert_eq!(panel, ["second insert", "first insert"]);
+    assert_eq!(summary, panel);
+    Ok(())
+}

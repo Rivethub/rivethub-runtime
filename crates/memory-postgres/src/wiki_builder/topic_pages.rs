@@ -27,7 +27,7 @@ impl TopicPageStore for PostgresMemory {
             return self.overlay_page(slug, &placed).await;
         }
         let (home, _) = self.home(slug).await?;
-        let repository = WikiRepository::new(self.wiki_home(&home.directory)?)
+        let repository = WikiRepository::for_store(self.wiki_home(&home.directory)?)
             .lock()
             .await?;
         let read = repository
@@ -67,7 +67,7 @@ impl TopicPageStore for PostgresMemory {
             .scope
             .as_ref()
             .map_or(String::new(), |scope| scope.directory.clone());
-        let mut repository = WikiRepository::new(self.wiki_home(&directory)?)
+        let mut repository = WikiRepository::for_store(self.wiki_home(&directory)?)
             .lock()
             .await?;
         let saved = self.save_locked(&mut repository, page, &placed, now).await;
@@ -91,7 +91,7 @@ impl TopicPageStore for PostgresMemory {
             return Ok(false);
         }
         let (home, scope) = self.home(slug).await?;
-        let mut repository = WikiRepository::new(self.wiki_home(&home.directory)?)
+        let mut repository = WikiRepository::for_store(self.wiki_home(&home.directory)?)
             .lock()
             .await?;
         let placed = Placed {
@@ -119,7 +119,7 @@ impl TopicPageStore for PostgresMemory {
             .scope
             .as_ref()
             .map_or(String::new(), |scope| scope.directory.clone());
-        let mut repository = WikiRepository::new(self.wiki_home(&directory)?)
+        let mut repository = WikiRepository::for_store(self.wiki_home(&directory)?)
             .lock()
             .await?;
         let changed = self
@@ -192,7 +192,7 @@ impl PostgresMemory {
             .wiki_directory
             .as_ref()
             .ok_or(WikiStoreError::DirectoryMissing)?;
-        Ok(WikiRepository::new(directory.clone()).lock().await?)
+        Ok(WikiRepository::for_store(directory.clone()).lock().await?)
     }
 
     async fn row_page(&self, slug: &WikiSlug) -> Result<Option<TopicPage>, WikiStoreError> {
@@ -226,7 +226,7 @@ impl PostgresMemory {
                 ..topic_page(stored)?
             },
             None if !placed.canonical => self
-                .overlay_page(slug, placed)
+                .empty_overlay_page(slug)
                 .await?
                 .ok_or_else(|| WikiStoreError::TopicMissing(slug.as_ref().to_owned()))?,
             None => return Err(WikiStoreError::TopicMissing(slug.as_ref().to_owned())),
@@ -258,6 +258,11 @@ impl PostgresMemory {
         now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         let mut tx = self.pool.begin().await.map_err(query_error)?;
+        if let Some(id) = kernel::wiki::origin::NoteOrigin::current() {
+            crate::summary_replace::shared(&mut tx, &[id])
+                .await
+                .map_err(super::fence_error)?;
+        }
         lock_slug(&mut tx, slug.as_ref()).await?;
         let mut stored = repository
             .read(&placed.local)
@@ -287,6 +292,11 @@ impl PostgresMemory {
         now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         let mut tx = self.pool.begin().await.map_err(query_error)?;
+        if let Some(id) = kernel::wiki::origin::NoteOrigin::current() {
+            crate::summary_replace::shared(&mut tx, &[id])
+                .await
+                .map_err(super::fence_error)?;
+        }
         lock_slug(&mut tx, &placed.key).await?;
         let local = WikiSlug::try_from(placed.local.clone())
             .map_err(|error| WikiStoreError::InvalidPatch(error.to_string()))?;

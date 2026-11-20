@@ -179,13 +179,15 @@ fn ceiling(name: &JobName) -> i32 {
     match name {
         JobName::Fixed(fixed) => match fixed {
             FixedJob::EmbedTarget | FixedJob::SyncTopicPage => 5,
-            FixedJob::SummarizeConversation
+            FixedJob::TitleConversation
+            | FixedJob::SummarizeConversation
             | FixedJob::SynthesizeToolCall
             | FixedJob::DigestDay => 3,
             FixedJob::FileConversation | FixedJob::ExtractWiki | FixedJob::ExtractEntities => 2,
             FixedJob::EnqueueUnembedded
             | FixedJob::EnqueueUnchunked
             | FixedJob::EnqueueIdle
+            | FixedJob::EnqueueOpenings
             | FixedJob::EnqueueWikiBackfill
             | FixedJob::ConsolidateWiki
             | FixedJob::RecompileWiki

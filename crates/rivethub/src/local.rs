@@ -154,7 +154,14 @@ async fn run(
     let _guard = shutdown.clone().drop_guard();
     let embed = crate::service::sqlite_query_embed(config, env, &shutdown, &activities)?;
     let model = crate::service::sqlite_vector_model(config, env);
-    let store = open_store(database, embed, model).await?;
+    let store = open_store(
+        database,
+        embed,
+        model,
+        crate::models::summary_index_key(config, env),
+        config.memory_models_available(),
+    )
+    .await?;
     import::pending(&store, config, &shutdown).await?;
     let switches = config.service_switches();
     let node = bind_node(&store, &switches, config, env, &shutdown, &activities).await?;
@@ -390,6 +397,8 @@ async fn open_store(
     path: PathBuf,
     embed: Option<QueryEmbed>,
     model: Option<String>,
+    index_key: Option<[u8; 32]>,
+    language_available: bool,
 ) -> Result<Arc<SqliteStore>, LocalError> {
     let store = tokio::task::spawn_blocking(move || SqliteStore::open(path)).await??;
     let store = match embed {
@@ -400,6 +409,11 @@ async fn open_store(
         }
         None => store,
     };
+    let store = match index_key {
+        Some(key) => store.with_summary_index_key(key),
+        None => store,
+    };
+    let store = store.with_language_available(language_available);
     Ok(Arc::new(match model {
         Some(model) => store.with_embed_model(&model),
         None => store,
@@ -451,6 +465,7 @@ async fn build_runners(
         ) {
             runner.runner = runner.runner.with_schedules(true).with_schedule_at_start();
         }
+        runner.runner = runner.runner.tuned(env).map_err(worker::RootError::from)?;
         built.push((role, runner));
     }
     Ok(built)

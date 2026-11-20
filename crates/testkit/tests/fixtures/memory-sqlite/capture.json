@@ -62,13 +62,14 @@
             "channel": "cli",
             "channel_id": null,
             "bot_identity": null,
-            "title": null,
+            "title": "how do we deploy the AcmeKit service to staging",
             "settings": "{}",
             "active": 1,
             "task_id": null,
             "created_at": "2026-10-10T12:00:00.000Z",
             "updated_at": "2026-10-10T12:01:00.000Z",
-            "owner_user_id": null
+            "owner_user_id": null,
+            "title_from_capture": 0
           }
         ],
         "ros_messages": [
@@ -200,13 +201,14 @@
             "channel": "cli",
             "channel_id": null,
             "bot_identity": null,
-            "title": null,
+            "title": "how do we deploy the AcmeKit service to staging",
             "settings": "{}",
             "active": 1,
             "task_id": null,
             "created_at": "2026-10-10T12:00:00.000Z",
             "updated_at": "2026-10-10T12:00:00.000Z",
-            "owner_user_id": null
+            "owner_user_id": null,
+            "title_from_capture": 0
           },
           {
             "id": "00000000-0000-4000-8000-000000000006",
@@ -215,13 +217,14 @@
             "channel": "cli",
             "channel_id": null,
             "bot_identity": null,
-            "title": null,
+            "title": "how do we deploy the AcmeKit service to staging",
             "settings": "{}",
             "active": 1,
             "task_id": null,
             "created_at": "2026-10-10T12:00:00.000Z",
             "updated_at": "2026-10-10T12:00:00.000Z",
-            "owner_user_id": null
+            "owner_user_id": null,
+            "title_from_capture": 0
           },
           {
             "id": "00000000-0000-4000-8000-000000000007",
@@ -230,13 +233,14 @@
             "channel": "cli",
             "channel_id": null,
             "bot_identity": null,
-            "title": null,
+            "title": "how do we deploy the AcmeKit service to staging",
             "settings": "{}",
             "active": 1,
             "task_id": null,
             "created_at": "2026-10-10T12:00:00.000Z",
             "updated_at": "2026-10-10T12:00:00.000Z",
-            "owner_user_id": null
+            "owner_user_id": null,
+            "title_from_capture": 0
           }
         ],
         "ros_messages": [
@@ -492,7 +496,8 @@
             "task_id": "T1",
             "created_at": "2026-10-10T12:00:00.000Z",
             "updated_at": "2026-10-10T12:03:00.000Z",
-            "owner_user_id": null
+            "owner_user_id": null,
+            "title_from_capture": 1
           }
         ],
         "ros_messages": [
@@ -654,7 +659,8 @@
             "task_id": null,
             "created_at": "2020-01-01T00:00:00.000Z",
             "updated_at": "2025-03-01T00:00:00.000Z",
-            "owner_user_id": null
+            "owner_user_id": null,
+            "title_from_capture": 0
           }
         ],
         "ros_messages": [
@@ -732,7 +738,8 @@
             "task_id": null,
             "created_at": "2026-10-10T12:00:00.000Z",
             "updated_at": "2026-10-10T12:00:00.000Z",
-            "owner_user_id": null
+            "owner_user_id": null,
+            "title_from_capture": 0
           }
         ],
         "ros_messages": [
@@ -804,13 +811,14 @@
             "channel": "cowork",
             "channel_id": null,
             "bot_identity": null,
-            "title": null,
+            "title": "ship it",
             "settings": "{\"source\":\"cowork-transcript\"}",
             "active": 1,
             "task_id": null,
             "created_at": "2026-10-10T12:00:00.000Z",
             "updated_at": "2026-10-10T12:00:00.000Z",
-            "owner_user_id": null
+            "owner_user_id": null,
+            "title_from_capture": 0
           }
         ],
         "ros_messages": [
@@ -824,7 +832,7 @@
             "tool_name": null,
             "tool_args": null,
             "tool_result": null,
-            "metadata": "{\"source\":\"cowork-transcript\",\"event_id\":\"cowork:sess:uuid-prompt\"}",
+            "metadata": "{\"source\":\"cowork-hook\",\"event_id\":\"cowork:sess:hook:prompt-1\",\"cowork_transcript_event_id\":\"cowork:sess:uuid-prompt\"}",
             "access_count": 0,
             "last_accessed_at": null,
             "created_at": "2026-10-10T12:00:00.000Z",
@@ -844,7 +852,7 @@
             "tool_name": null,
             "tool_args": null,
             "tool_result": null,
-            "metadata": "{\"source\":\"cowork-transcript\",\"event_id\":\"cowork:sess:uuid-reply\"}",
+            "metadata": "{\"source\":\"cowork-hook\",\"event_id\":\"cowork:sess:hook:reply-1\",\"cowork_transcript_event_id\":\"cowork:sess:uuid-reply\"}",
             "access_count": 0,
             "last_accessed_at": null,
             "created_at": "2026-10-10T12:00:00.000Z",
@@ -908,7 +916,8 @@
             "task_id": null,
             "created_at": "2026-10-10T12:00:00.000Z",
             "updated_at": "2026-10-10T12:00:00.000Z",
-            "owner_user_id": null
+            "owner_user_id": null,
+            "title_from_capture": 0
           }
         ],
         "ros_messages": [
@@ -1026,13 +1035,14 @@
             "channel": "cli",
             "channel_id": null,
             "bot_identity": null,
-            "title": null,
+            "title": "how do we deploy the AcmeKit service to staging",
             "settings": "{}",
             "active": 1,
             "task_id": null,
             "created_at": "2026-10-10T12:00:00.000Z",
             "updated_at": "2026-10-10T12:00:00.000Z",
-            "owner_user_id": "alice"
+            "owner_user_id": "alice",
+            "title_from_capture": 0
           },
           {
             "id": "00000000-0000-4000-8000-000000000006",
@@ -1047,7 +1057,8 @@
             "task_id": null,
             "created_at": "2026-10-10T12:00:00.000Z",
             "updated_at": "2026-10-10T12:00:00.000Z",
-            "owner_user_id": "alice"
+            "owner_user_id": "alice",
+            "title_from_capture": 0
           }
         ],
         "ros_messages": [
@@ -2144,7 +2155,8 @@
             "task_id": "00000000-0000-4000-8000-300000000004",
             "created_at": "2026-10-10T12:00:00.000Z",
             "updated_at": "2026-10-10T12:00:02.000Z",
-            "owner_user_id": null
+            "owner_user_id": null,
+            "title_from_capture": 0
           },
           {
             "id": "00000000-0000-4000-8000-000000000006",
@@ -2159,7 +2171,8 @@
             "task_id": "00000000-0000-4000-8000-300000000004",
             "created_at": "2026-10-10T12:00:02.000Z",
             "updated_at": "2026-10-10T12:00:02.000Z",
-            "owner_user_id": null
+            "owner_user_id": null,
+            "title_from_capture": 0
           },
           {
             "id": "00000000-0000-4000-8000-000000000008",
@@ -2174,7 +2187,8 @@
             "task_id": "00000000-0000-4000-8000-300000000004",
             "created_at": "2026-10-10T12:00:02.000Z",
             "updated_at": "2026-10-10T12:00:02.000Z",
-            "owner_user_id": null
+            "owner_user_id": null,
+            "title_from_capture": 0
           },
           {
             "id": "00000000-0000-4000-8000-000000000007",
@@ -2189,7 +2203,8 @@
             "task_id": null,
             "created_at": "2026-10-10T12:00:02.000Z",
             "updated_at": "2026-10-10T12:00:02.000Z",
-            "owner_user_id": null
+            "owner_user_id": null,
+            "title_from_capture": 0
           },
           {
             "id": "00000000-0000-4000-8000-000000000011",
@@ -2204,7 +2219,8 @@
             "task_id": null,
             "created_at": "2026-10-10T12:00:02.000Z",
             "updated_at": "2026-10-10T12:00:02.000Z",
-            "owner_user_id": null
+            "owner_user_id": null,
+            "title_from_capture": 0
           }
         ],
         "ros_messages": [

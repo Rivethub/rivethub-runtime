@@ -5,6 +5,7 @@ use crate::SqliteError;
 enum Kind {
     Bool,
     Vector,
+    Bytea,
     Array,
     Real,
     Integer,
@@ -19,6 +20,12 @@ pub(super) fn field(name: &str, value: Value) -> Result<String, SqliteError> {
     let text = match kind(name) {
         Kind::Bool => boolean(&value)?,
         Kind::Vector => vector(value)?,
+        Kind::Bytea => match value {
+            Value::Blob(bytes) => format!("\\x{}", hex::encode(bytes)),
+            Value::Null | Value::Integer(_) | Value::Real(_) | Value::Text(_) => {
+                return Err(invalid(name));
+            }
+        },
         Kind::Array => array(value)?,
         Kind::Real => real(&value)?,
         Kind::Integer => integer(&value)?,
@@ -30,12 +37,27 @@ pub(super) fn field(name: &str, value: Value) -> Result<String, SqliteError> {
 
 fn kind(name: &str) -> Kind {
     match name {
-        "active" => Kind::Bool,
+        "active" | "range_verified" | "historical_backlog" | "index_needs_repair" => Kind::Bool,
         "embedding" => Kind::Vector,
+        "input_key" | "index_key" | "render_key" => Kind::Bytea,
         "aliases" | "tags" | "entities" | "related" | "topics_touched" => Kind::Array,
         "confidence" => Kind::Real,
-        "access_count" | "embed_failures" | "depth" | "message_count" | "ordinal"
-        | "pipeline_version" | "history_count" => Kind::Integer,
+        "access_count"
+        | "embed_failures"
+        | "depth"
+        | "message_count"
+        | "ordinal"
+        | "pipeline_version"
+        | "history_count"
+        | "summary_ordinal"
+        | "issued_part_ordinal"
+        | "input_token_estimate"
+        | "source_first"
+        | "source_last"
+        | "quality_flags"
+        | "section_char_start"
+        | "section_char_end"
+        | "completed_version" => Kind::Integer,
         "settings" | "metadata" | "tool_args" => Kind::Object,
         _ => Kind::Text,
     }

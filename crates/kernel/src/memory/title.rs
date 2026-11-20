@@ -118,6 +118,45 @@ pub fn spoken_title(text: &str) -> Option<&str> {
     }
 }
 
+pub(super) fn opening_turn(text: &str) -> Option<&str> {
+    let mut rest = text.trim();
+    loop {
+        if let Some(query) = rest.strip_prefix("<user_query>") {
+            rest = query
+                .split_once("</user_query>")
+                .map_or(query, |(body, _)| body)
+                .trim();
+            continue;
+        }
+        if let Some((body, after)) = opening_paste(rest) {
+            rest = if after.trim().is_empty() {
+                body.trim()
+            } else {
+                after.trim()
+            };
+            continue;
+        }
+        match lead(rest) {
+            Lead::Words => {
+                let text = rest
+                    .split_once("\n<system-reminder>")
+                    .map_or(rest, |(request, _)| request)
+                    .trim_end();
+                return names_session(text).then_some(text);
+            }
+            Lead::Block(after) => rest = after.trim(),
+            Lead::Unclosed => return None,
+        }
+    }
+}
+
+fn opening_paste(text: &str) -> Option<(&str, &str)> {
+    let (opening, contents) = text.strip_prefix("<pasted_content")?.split_once('>')?;
+    let (body, closing) = contents.split_once("</pasted_content")?;
+    let (attributes, rest) = closing.split_once('>')?;
+    (attributes.is_empty() || attributes == opening).then_some((body, rest))
+}
+
 #[must_use]
 pub fn summary_title(content: &str) -> Option<String> {
     let mut lines = content

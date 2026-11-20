@@ -4,6 +4,8 @@ pub(super) enum Relation {
     Messages,
     Summaries,
     SummarySources,
+    SummaryPassages,
+    SummaryDeliveries,
     Tags,
     TagTaxonomy,
     WikiTopics,
@@ -14,11 +16,13 @@ pub(super) enum Relation {
 }
 
 impl Relation {
-    pub(super) const ALL: [Self; 11] = [
+    pub(super) const ALL: [Self; 13] = [
         Self::Conversations,
         Self::Messages,
         Self::Summaries,
         Self::SummarySources,
+        Self::SummaryPassages,
+        Self::SummaryDeliveries,
         Self::Tags,
         Self::TagTaxonomy,
         Self::WikiTopics,
@@ -34,6 +38,10 @@ impl Relation {
             Self::Messages => "SELECT count(*)::bigint AS count FROM rh_messages",
             Self::Summaries => "SELECT count(*)::bigint AS count FROM rh_summaries",
             Self::SummarySources => "SELECT count(*)::bigint AS count FROM rh_summary_sources",
+            Self::SummaryPassages => "SELECT count(*)::bigint AS count FROM rh_summary_passages",
+            Self::SummaryDeliveries => {
+                "SELECT count(*)::bigint AS count FROM rh_summary_deliveries"
+            }
             Self::Tags => "SELECT count(*)::bigint AS count FROM rh_tags",
             Self::TagTaxonomy => "SELECT count(*)::bigint AS count FROM rh_tag_taxonomy",
             Self::WikiTopics => "SELECT count(*)::bigint AS count FROM rh_wiki_topics",
@@ -50,6 +58,8 @@ impl Relation {
             Self::Messages => "rh_messages",
             Self::Summaries => "rh_summaries",
             Self::SummarySources => "rh_summary_sources",
+            Self::SummaryPassages => "rh_summary_passages",
+            Self::SummaryDeliveries => "rh_summary_deliveries",
             Self::Tags => "rh_tags",
             Self::TagTaxonomy => "rh_tag_taxonomy",
             Self::WikiTopics => "rh_wiki_topics",
@@ -66,6 +76,8 @@ impl Relation {
             Self::Messages => "messages",
             Self::Summaries => "summaries",
             Self::SummarySources => "summary_sources",
+            Self::SummaryPassages => "summary_passages",
+            Self::SummaryDeliveries => "summary_deliveries",
             Self::Tags => "tags",
             Self::TagTaxonomy => "tag_taxonomy",
             Self::WikiTopics => "wiki_topics",
@@ -82,6 +94,8 @@ impl Relation {
             Self::Messages => "ros_messages",
             Self::Summaries => "ros_summaries",
             Self::SummarySources => "ros_summary_sources",
+            Self::SummaryPassages => "ros_summary_passages",
+            Self::SummaryDeliveries => "ros_summary_deliveries",
             Self::Tags => "ros_tags",
             Self::TagTaxonomy => "ros_tag_taxonomy",
             Self::WikiTopics => "ros_wiki_topics",

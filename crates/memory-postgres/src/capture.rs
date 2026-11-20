@@ -9,6 +9,7 @@ use sqlx::Transaction;
 use sqlx::postgres::Postgres;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::HashSet;
 use uuid::Uuid;
 use wire::JsonObject;
 use wire::message::Role;
@@ -34,6 +35,7 @@ impl CaptureOptions {
 
 #[derive(Debug)]
 pub struct CaptureWriter<'a> {
+    pub(crate) queue_present: bool,
     pub(crate) tx: Transaction<'a, Postgres>,
     undated_from: Timestamp,
 }
@@ -96,6 +98,13 @@ pub struct MessageRow<'a> {
     pub batch_index: i64,
 }
 
+type PositionPatches<'a> = BTreeMap<&'a str, JsonObject>;
+
+pub(crate) struct StagedMessages<'a> {
+    pub(crate) fresh: Vec<(usize, &'a CaptureMessage)>,
+    pub(crate) positions: PositionPatches<'a>,
+}
+
 impl<'a> CaptureWriter<'a> {
     pub async fn begin(pool: &'a PgPool, session_key: &str) -> Result<Self, Error> {
         let mut tx = pool
@@ -135,6 +144,7 @@ impl<'a> CaptureWriter<'a> {
         Ok(Self {
             tx,
             undated_from: undated_from.to_jiff(),
+            queue_present: queued,
         })
     }
 
@@ -304,6 +314,76 @@ impl<'a> CaptureWriter<'a> {
         .await
         .map_err(|source| Error::operation("conversation settings lookup", source))?;
         Ok(stored.map(|settings| settings.0))
+    }
+
+    pub(crate) async fn stage_messages<'m>(
+        &mut self,
+        conversation_id: Uuid,
+        messages: &'m [CaptureMessage],
+    ) -> Result<StagedMessages<'m>, Error> {
+        let event_ids: Vec<String> = messages
+            .iter()
+            .map(|message| message.event_id.clone())
+            .collect();
+        let seen = self.seen_event_ids(conversation_id, &event_ids).await?;
+        let seen: HashSet<_> = seen.iter().map(String::as_str).collect();
+        let mut fresh = Vec::new();
+        let mut positions = PositionPatches::new();
+        for (index, message) in messages.iter().enumerate() {
+            if !seen.contains(message.event_id.as_str()) {
+                fresh.push((index, message));
+                continue;
+            }
+            wire::capture::add_transcript_position(
+                positions.entry(message.event_id.as_str()).or_default(),
+                message.metadata.as_ref(),
+            )?;
+        }
+        positions.retain(|_, patch| !patch.as_map().is_empty());
+        Ok(StagedMessages { fresh, positions })
+    }
+
+    pub(crate) async fn fill_positions(
+        &mut self,
+        conversation_id: Uuid,
+        owner_user_id: &str,
+        positions: &PositionPatches<'_>,
+        compare_order: bool,
+    ) -> Result<bool, Error> {
+        let before = if compare_order {
+            Some(crate::settlement::rendered_order(&mut self.tx, conversation_id).await?)
+        } else {
+            None
+        };
+        let result = sqlx::query(
+            "update rh_messages m set metadata = replay.patch || m.metadata
+               from jsonb_each($3) as replay(event_id, patch)
+               cross join lateral (
+                   select id from rh_messages
+                    where conversation_id = $1 and owner_user_id = $2
+                      and metadata->>'event_id' = replay.event_id
+                    order by created_at, id limit 1
+               ) as stored
+              where m.id = stored.id and m.conversation_id = $1 and m.owner_user_id = $2
+                and exists (
+                    select 1 from jsonb_object_keys(replay.patch) as field(key)
+                     where not (m.metadata ? field.key)
+                )",
+        )
+        .bind(conversation_id)
+        .bind(owner_user_id)
+        .bind(sqlx::types::Json(positions))
+        .execute(&mut *self.tx)
+        .await
+        .map_err(|source| Error::operation("transcript position fill", source))?;
+        if let Some(before) = before
+            && result.rows_affected() > 0
+        {
+            return Ok(
+                before != crate::settlement::rendered_order(&mut self.tx, conversation_id).await?
+            );
+        }
+        Ok(false)
     }
 
     pub async fn seen_event_ids(

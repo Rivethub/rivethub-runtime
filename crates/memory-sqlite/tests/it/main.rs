@@ -1,4 +1,5 @@
 mod common;
+mod search_summary_passages;
 mod search_support;
 
 mod append_imports;
@@ -28,9 +29,13 @@ mod search_parity;
 mod session_catalog;
 mod session_delete;
 mod summary_dag;
-mod summary_title;
+#[path = "summary_title.rs"]
+mod top_down_opening;
+mod top_down_settle;
 mod topics;
 mod unembedded_sweep;
 mod wiki_consolidate;
 mod wiki_imports;
 mod wiki_routes;
+
+mod top_down_references;

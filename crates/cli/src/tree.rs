@@ -71,9 +71,25 @@ pub enum Command {
     Open {
         #[arg(long, help = "Print the login URL and do not launch a browser")]
         no_browser: bool,
+        #[arg(
+            long,
+            help = "Print the origin, login URL, code and expiry as JSON; launches no browser"
+        )]
+        json: bool,
     },
     #[command(about = "Report gateway health")]
-    Status,
+    Status {
+        #[arg(
+            long,
+            help = "Print whether the node runs, its origin, web app and TLS facts as JSON"
+        )]
+        json: bool,
+    },
+    #[command(about = "Inspect the certificate this node serves")]
+    Tls {
+        #[command(subcommand)]
+        command: crate::facts::TlsCommand,
+    },
     #[command(about = "Signal the running instance to stop")]
     Stop,
     #[command(about = "Run a standalone node on SQLite")]

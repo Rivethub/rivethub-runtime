@@ -1,5 +1,5 @@
+use kernel::memory::MemoryDegraded;
 use kernel::memory::MemoryEntry;
-use kernel::memory::{MemoryDegraded, MemoryHitSource};
 use kernel::memory::{MemoryStoreError, SearchOutcome, SearchQuery};
 
 use crate::error::Error;
@@ -28,7 +28,8 @@ impl crate::PostgresMemory {
                 message: "memory synthesis requires a configured summarizer endpoint".to_owned(),
             });
         }
-        let outcome = self.search_outcome_for(&query).await?;
+        let (mut read, options, embed) = self.start_search(&query).await?;
+        let outcome = read.search_outcome(&options, embed).await?;
         let literal_skipped = outcome.literal_skipped;
         let reason = match outcome.degraded {
             Some(reason) => Some(reason),
@@ -42,17 +43,13 @@ impl crate::PostgresMemory {
             }
             None => None,
         };
-        let expand = async {
-            if query.expand == Some(false) {
-                Ok(Vec::new())
-            } else {
-                self.expand_summaries(&outcome.hits, &query)
-                    .await
-                    .map_err(MemoryStoreError::from)
-            }
+        let expanded = if query.expand == Some(false) {
+            Vec::new()
+        } else {
+            read.expand_summaries(&outcome.hits, &query).await?
         };
-        let (expanded, summaries) =
-            tokio::try_join!(expand, self.summary_details(&outcome.hits, &query))?;
+        let summaries = read.summary_details(&outcome.hits, &query).await?;
+        read.finish(&outcome.hits).await?;
         Ok(SearchOutcome {
             summaries,
             results: outcome.hits.into_iter().map(search_result).collect(),
@@ -73,13 +70,15 @@ impl crate::PostgresMemory {
             synthesis: None,
         })
     }
+}
 
+impl crate::search::SearchRead<'_> {
     async fn expand_summaries(
-        &self,
+        &mut self,
         hits: &[crate::search::MemorySearchHit],
         query: &SearchQuery,
     ) -> Result<Vec<MemoryEntry>, Error> {
-        let ids = crate::search::hit_uuids(hits, MemoryHitSource::Summary)?;
+        let ids = crate::search::whole_summary_ids(hits)?;
         if ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -110,7 +109,7 @@ impl crate::PostgresMemory {
         statement.push(" ORDER BY m.created_at, m.id LIMIT 200");
         let rows = statement
             .build_query_as::<MessageEntryRow>()
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *self.tx)
             .await
             .map_err(|source| Error::operation("summary expansion", source))?;
         Ok(crate::read::readable_entries(rows))
@@ -120,6 +119,7 @@ impl crate::PostgresMemory {
 fn search_result(hit: crate::search::MemorySearchHit) -> kernel::memory::MemorySearchResult {
     kernel::memory::MemorySearchResult {
         chunk: hit.chunk,
+        passage: hit.passage,
         id: hit.id,
         source: hit.source,
         content: hit.content,

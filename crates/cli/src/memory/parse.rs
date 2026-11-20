@@ -14,6 +14,8 @@ const REQUEUE_DEFAULT: u32 = 200;
 const REQUEUE_CAP: u32 = 1000;
 
 pub(super) enum MemoryCommand {
+    Settle(super::settle::Args),
+    Resummarize(super::resummarize::Args),
     QueueStatus {
         json: bool,
     },
@@ -86,6 +88,8 @@ pub(super) enum MemoryCommand {
 }
 
 enum Verb {
+    Settle,
+    Resummarize,
     QueueStatus,
     RetryFailed,
     Requeue,
@@ -109,6 +113,8 @@ enum Verb {
 
 fn verb(text: &str) -> Option<Verb> {
     match text {
+        "settle" => Some(Verb::Settle),
+        "resummarize" => Some(Verb::Resummarize),
         "queue-status" => Some(Verb::QueueStatus),
         "retry-failed" => Some(Verb::RetryFailed),
         "requeue" => Some(Verb::Requeue),
@@ -146,6 +152,12 @@ pub(super) fn parse(args: &[String]) -> Result<Option<MemoryCommand>, Error> {
         return Ok(None);
     };
     match verb {
+        Verb::Settle => super::settle::parse(rest)
+            .map(MemoryCommand::Settle)
+            .map(Some),
+        Verb::Resummarize => super::resummarize::parse(rest)
+            .map(MemoryCommand::Resummarize)
+            .map(Some),
         Verb::QueueStatus => queue_status(rest).map(Some),
         Verb::RetryFailed => retry(rest).map(Some),
         Verb::Requeue => requeue(rest).map(Some),

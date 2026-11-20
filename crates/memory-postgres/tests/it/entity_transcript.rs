@@ -94,6 +94,15 @@ async fn entity_transcript_prefers_sources_and_falls_back_to_the_window(
     .await?;
     link(&pool, sourced, sourced_late, 0).await?;
     link(&pool, sourced, sourced_early, 1).await?;
+    sqlx::query(
+        "update rh_messages set metadata = jsonb_build_object(
+        'session_jsonl_line', case when id = $1 then 1 else 2 end)
+        where id in ($1, $2)",
+    )
+    .bind(sourced_late)
+    .bind(sourced_early)
+    .execute(&pool)
+    .await?;
 
     let rows = memory
         .transcript(&[
@@ -114,7 +123,7 @@ async fn entity_transcript_prefers_sources_and_falls_back_to_the_window(
     let ids: Vec<Uuid> = rows.iter().map(|row| row.id).collect();
     assert_eq!(
         ids,
-        vec![sourced_early, sourced_late, window_start, window_end]
+        vec![sourced_late, sourced_early, window_start, window_end]
     );
     assert!(!ids.contains(&outside));
     assert!(!ids.contains(&early));
@@ -136,6 +145,7 @@ async fn entity_transcript_prefers_sources_and_falls_back_to_the_window(
 
 fn leaf(id: Uuid, conversation: Uuid, start: &str, end: &str) -> EntityLeaf {
     EntityLeaf {
+        delivery: None,
         id,
         conversation_id: Some(conversation),
         content: "leaf".to_owned(),

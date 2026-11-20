@@ -170,7 +170,9 @@ fn degraded_reason(error: &MemoryStoreError) -> String {
         MemoryStoreError::Query { message, .. }
         | MemoryStoreError::InvalidRequest { message }
         | MemoryStoreError::Forbidden { message } => message.clone(),
-        MemoryStoreError::TagTablesMissing => error.to_string(),
+        MemoryStoreError::TagTablesMissing | MemoryStoreError::SummaryReference(_) => {
+            error.to_string()
+        }
     };
     format!("database unreachable: {detail}")
 }

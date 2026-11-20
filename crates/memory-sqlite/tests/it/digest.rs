@@ -84,7 +84,7 @@ async fn digests_count_messages_and_dates_per_key() -> TestResult {
             SessionDigest {
                 key: imported_key,
                 conversation_id: Uuid::parse_str(&imported_id)?,
-                title: None,
+                title: Some("said evt-i".to_owned()),
                 agent: "codex".to_owned(),
                 first: instant("2026-09-01T10:00:00.000Z")?,
                 last: instant("2026-09-01T10:00:00.000Z")?,

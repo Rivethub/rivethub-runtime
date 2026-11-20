@@ -53,7 +53,15 @@ async fn recorded_leaf_round_trips_through_the_store() -> TestResult {
     );
     assert_eq!(open.unsummarized, 1);
     let mut ids = common::Ids::default();
-    compare_tables(&fresh.store, &scenario.tables, &mut ids, LEAF).await?;
+    let mut tables = scenario.tables.clone();
+    if let Some(summaries) = tables.get_mut("ros_summaries") {
+        for summary in summaries {
+            let summary = summary.as_object_mut().ok_or("expected summary object")?;
+            let _repair = summary.insert("index_needs_repair".to_owned(), Json::from(0));
+            let _flags = summary.insert("quality_flags".to_owned(), Json::from(0));
+        }
+    }
+    compare_tables(&fresh.store, &tables, &mut ids, LEAF).await?;
     Ok(())
 }
 

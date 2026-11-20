@@ -2,6 +2,7 @@ mod catalog;
 mod columns;
 mod copy;
 mod error;
+mod sql;
 mod values;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -41,6 +42,7 @@ pub enum ImportTable {
     Messages,
     Summaries,
     SummarySources,
+    SummaryDeliveries,
     Tags,
     TagTaxonomy,
     WikiTopics,
@@ -87,6 +89,10 @@ impl ImportTable {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ImportReport {
     pub rows: BTreeMap<ImportTable, u64>,
+    #[serde(default)]
+    pub summary_records_needing_reembedding: u64,
+    #[serde(default)]
+    pub summary_records_losing_passage_vectors: u64,
 }
 
 impl SqliteStore {
@@ -112,12 +118,19 @@ impl SqliteStore {
         cancellation: CancellationToken,
         apply: bool,
     ) -> Result<ImportReport, ImportError> {
+        let index_key = self.summary_index_key;
         let conn = self.conn.clone();
         self.pending
             .spawn_blocking(move || {
                 let file =
                     File::open(&path).map_err(|source| ImportError::File { path, source })?;
-                import(&mut conn.lock(), BufReader::new(file), &cancellation, apply)
+                import(
+                    &mut conn.lock(),
+                    BufReader::new(file),
+                    &cancellation,
+                    apply,
+                    index_key.as_ref(),
+                )
             })
             .await?
     }
@@ -147,34 +160,23 @@ fn import(
     reader: impl BufRead,
     cancellation: &CancellationToken,
     apply: bool,
+    index_key: Option<&[u8; 32]>,
 ) -> Result<ImportReport, ImportError> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     tx.execute_batch("PRAGMA defer_foreign_keys = ON")?;
-    let mut report = ImportReport {
-        rows: BTreeMap::new(),
-    };
-    for table in ImportTable::iter() {
-        let occupied: bool = tx.query_row(
-            &format!(
-                "SELECT EXISTS(SELECT 1 FROM {})",
-                table.compatibility_name()
-            ),
-            [],
-            |row| row.get(0),
-        )?;
-        if occupied {
-            return Err(ImportError::NonEmpty { table });
-        }
-        report.rows.insert(table, 0);
-    }
+    let mut report = empty_report(&tx)?;
     let mut block: Option<columns::Block> = None;
     let mut seen = BTreeSet::new();
     let mut complete = false;
+    let mut passages = PassageImport::default();
     let mut width = None;
     for (index, line) in reader.lines().enumerate() {
         check_cancelled(cancellation)?;
         let line = line?;
         let number = index + 1;
+        if passages.read(&line, number)? {
+            continue;
+        }
         if let Some(active) = &mut block {
             if line == "\\." {
                 block = None;
@@ -196,7 +198,12 @@ fn import(
                     detail: "COPY after dump completion".into(),
                 });
             }
-            let active = columns::Block::parse(&tx, &line, number)?;
+            let (name, fields) = columns::header(&line, number)?;
+            if name == "ros_summary_passages" {
+                passages.begin(fields, number)?;
+                continue;
+            }
+            let active = columns::Block::parse(&tx, name, fields, number)?;
             if !seen.insert(active.table) {
                 return Err(ImportError::DuplicateTable {
                     table: active.table,
@@ -209,10 +216,16 @@ fn import(
             copy::envelope(&line, number)?;
         }
     }
-    if block.is_some() || !complete || seen.is_empty() {
+    if block.is_some() || passages.columns.is_some() || !complete || seen.is_empty() {
         return Err(ImportError::Truncated);
     }
-    finish(&tx, width, &report)?;
+    finish(
+        &tx,
+        width,
+        &mut report,
+        index_key,
+        &passages.embedded_records,
+    )?;
     check_cancelled(cancellation)?;
     if apply {
         tx.commit()?;
@@ -222,11 +235,101 @@ fn import(
     Ok(report)
 }
 
+#[derive(Default)]
+struct PassageImport {
+    columns: Option<PassageColumns>,
+    seen: bool,
+    embedded_records: BTreeSet<String>,
+}
+
+struct PassageColumns {
+    record: Option<usize>,
+    embedding: Option<usize>,
+}
+
+impl PassageImport {
+    fn begin(&mut self, fields: &str, line: usize) -> Result<(), ImportError> {
+        if self.seen {
+            return Err(copy::invalid(line, "duplicate summary passages block"));
+        }
+        let position = |column| {
+            fields
+                .split(", ")
+                .position(|name| name.trim_matches('"') == column)
+        };
+        self.columns = Some(PassageColumns {
+            record: position("record_id"),
+            embedding: position("embedding"),
+        });
+        self.seen = true;
+        Ok(())
+    }
+
+    fn read(&mut self, text: &str, line: usize) -> Result<bool, ImportError> {
+        let Some(columns) = &self.columns else {
+            return Ok(false);
+        };
+        if text == "\\." {
+            self.columns = None;
+        } else if let (Some(record), Some(embedding)) = (columns.record, columns.embedding)
+            && text
+                .split('\t')
+                .nth(embedding)
+                .is_some_and(|value| value != "\\N")
+            && let Some(record_id) = text.split('\t').nth(record)
+            && let Some(id) = copy::field(record_id, line)?
+        {
+            self.embedded_records.insert(id);
+        }
+        Ok(true)
+    }
+}
+
+fn empty_report(conn: &Connection) -> Result<ImportReport, ImportError> {
+    let mut rows = BTreeMap::new();
+    for table in ImportTable::iter() {
+        let occupied: bool = conn.query_row(
+            &format!(
+                "SELECT EXISTS(SELECT 1 FROM {})",
+                table.compatibility_name()
+            ),
+            [],
+            |row| row.get(0),
+        )?;
+        if occupied {
+            return Err(ImportError::NonEmpty { table });
+        }
+        rows.insert(table, 0);
+    }
+    Ok(ImportReport {
+        rows,
+        summary_records_needing_reembedding: 0,
+        summary_records_losing_passage_vectors: 0,
+    })
+}
+
 fn finish(
     tx: &rusqlite::Transaction<'_>,
     width: Option<usize>,
-    report: &ImportReport,
+    report: &mut ImportReport,
+    index_key: Option<&[u8; 32]>,
+    embedded_records: &BTreeSet<String>,
 ) -> Result<(), ImportError> {
+    let invalid: bool = tx.query_row(sql::SUMMARY_GRAPH, [], |row| row.get(0))?;
+    if invalid {
+        return Err(ImportError::SummaryGraph);
+    }
+    mark_index_repairs(tx, report, index_key, embedded_records)?;
+    let foreign_key_violation = tx
+        .query_row(
+            "SELECT 1 FROM pragma_foreign_key_check LIMIT 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    if foreign_key_violation.is_some() {
+        return Err(ImportError::ForeignKeys);
+    }
     if let Some(width) = width {
         let supplied: Option<String> = tx
             .query_row(
@@ -250,6 +353,29 @@ fn finish(
         "INSERT INTO ros_meta(key, value) VALUES (?1, ?2)",
         [RECEIPT_KEY, &serde_json::to_string(report)?],
     )?;
+    Ok(())
+}
+
+fn mark_index_repairs(
+    tx: &rusqlite::Transaction<'_>,
+    report: &mut ImportReport,
+    index_key: Option<&[u8; 32]>,
+    embedded_records: &BTreeSet<String>,
+) -> Result<(), ImportError> {
+    tx.execute(
+        "UPDATE ros_summaries SET embedding = NULL, index_key = ?1, index_needs_repair = 1
+         WHERE kind IN ('session', 'part')
+           AND (embedding IS NULL OR index_key IS NULL OR index_key IS NOT ?1)",
+        [index_key.map(<[_; 32]>::as_slice)],
+    )?;
+    let mut records = tx.prepare(
+        "SELECT id FROM ros_summaries WHERE kind IN ('session','part') AND index_needs_repair",
+    )?;
+    let ids = records.query_map([], |row| row.get::<_, String>(0))?;
+    for id in ids {
+        report.summary_records_needing_reembedding += 1;
+        report.summary_records_losing_passage_vectors += u64::from(embedded_records.contains(&id?));
+    }
     Ok(())
 }
 

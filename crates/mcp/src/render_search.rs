@@ -86,7 +86,7 @@ pub(crate) fn search(
                 .session_id
                 .as_deref()
                 .and_then(|key| found.origins.get(key));
-            let block = if let Some(detail) = outcome.summaries.get(&hit.id) {
+            let block = if let Some(detail) = outcome.summaries.get(hit.detail_id()) {
                 summary(hit, detail, expand, origin, clock, pages)?
             } else {
                 let lead = format!(
@@ -219,15 +219,16 @@ fn empty(query: &SearchQuery) -> String {
             bounds.push(format!("before=\"{}\"", before.rfc3339_z()));
         }
     }
+    let guidance = wire::gateway::memory::SEARCH_QUERY_GUIDANCE;
     if bounds.is_empty() {
         format!(
-            "No results found for query \"{}\".\n\nIf you expected a hit: retry with `mode=\"trigram\"` for literal tokens (IPs, hostnames, error strings), or vary the angle (service / host / subnet / role) and try two more queries before trusting the empty result. For time-bounded questions (\"today\", \"yesterday\", \"last week\"), prefer `memory_browse` with window= — search ANDs the query with any date filter and returns empty when FTS misses.",
+            "No results found for query \"{}\".\n\n{guidance} Try `mode=\"trigram\"` for literal tokens (IPs, hostnames, error strings). For time-bounded questions (\"today\", \"yesterday\", \"last week\"), prefer `memory_browse` with window= — search ANDs the query with any date filter and returns empty when FTS misses.",
             query.text
         )
     } else {
         let bounds = bounds.join(", ");
         format!(
-            "No results found for query \"{}\" with {bounds}.\n\nFor chronological browsing of a date window without a topic filter, call `memory_browse({bounds})` instead — that returns every message in the window, no FTS match required.",
+            "No results found for query \"{}\" with {bounds}.\n\n{guidance} For chronological browsing of a date window without a topic filter, call `memory_browse({bounds})` instead — that returns every message in the window, no FTS match required.",
             query.text
         )
     }
@@ -249,12 +250,15 @@ fn summary(
     clock: Clock<'_>,
     pages: Option<&crate::pages::Pages>,
 ) -> Result<String, Error> {
+    if let Some(passage) = &hit.passage {
+        let block = passage_summary(hit, detail, passage.ordinal, expand, origin, clock)?;
+        return Ok(format!(
+            "{block}{}",
+            session_line(pages, hit.session_id.as_deref())
+        ));
+    }
     let Clock { now, zone } = clock;
-    let tags = if detail.tags.is_empty() {
-        String::new()
-    } else {
-        format!(" tags: {}", render_tags::labels(&detail.tags))
-    };
+    let tags = summary_tags(detail);
     if !expand {
         let lead = format!(
             "- [{}/{}] ({}, score: {:.3}){tags}",
@@ -300,6 +304,68 @@ fn summary(
             )?;
         }
     }
+    source_previews(&mut body, detail)?;
+    text.push('\n');
+    text.push_str(&match origin {
+        Some(provenance) => kernel::memory::quote(provenance, &body),
+        None => body,
+    });
+    text.push_str(&session_line(pages, hit.session_id.as_deref()));
+    Ok(text)
+}
+
+fn passage_summary(
+    hit: &MemorySearchResult,
+    detail: &SummaryDetail,
+    ordinal: u32,
+    expand: bool,
+    origin: Option<&Provenance>,
+    clock: Clock<'_>,
+) -> Result<String, Error> {
+    let tags = summary_tags(detail);
+    let lead = format!(
+        "- [{}/{} · passage {}] ({}, score: {:.3}){tags}",
+        detail.kind,
+        hit.id,
+        u64::from(ordinal) + 1,
+        dated(hit, clock.now, clock.zone),
+        hit.relevance_score,
+    );
+    let mut body = String::new();
+    if let Some(title) = &hit.title {
+        writeln!(body, "{title}")?;
+    }
+    body.push_str(&hit.content);
+    for section in &detail.sections {
+        write!(
+            body,
+            "\n  - Section {} (sources {}–{}{}): {}",
+            section.id,
+            section.source_first,
+            section.source_last,
+            if section.range_verified {
+                ""
+            } else {
+                ", inferred"
+            },
+            section.heading,
+        )?;
+    }
+    if expand {
+        source_previews(&mut body, detail)?;
+    }
+    Ok(attributed(&lead, &body, origin, clock.zone))
+}
+
+fn summary_tags(detail: &SummaryDetail) -> String {
+    if detail.tags.is_empty() {
+        String::new()
+    } else {
+        format!(" tags: {}", render_tags::labels(&detail.tags))
+    }
+}
+
+fn source_previews(body: &mut String, detail: &SummaryDetail) -> Result<(), Error> {
     if !detail.sources.is_empty() {
         write!(
             body,
@@ -322,13 +388,7 @@ fn summary(
             )?;
         }
     }
-    text.push('\n');
-    text.push_str(&match origin {
-        Some(provenance) => kernel::memory::quote(provenance, &body),
-        None => body,
-    });
-    text.push_str(&session_line(pages, hit.session_id.as_deref()));
-    Ok(text)
+    Ok(())
 }
 
 #[cfg(test)]

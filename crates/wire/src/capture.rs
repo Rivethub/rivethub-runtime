@@ -1,9 +1,51 @@
+mod settlement;
+pub use settlement::SessionObservation;
+
 use crate::JsonObject;
 use crate::message::Role;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use sha2::{Digest as _, Sha256};
+
+#[derive(strum::EnumString)]
+#[strum(serialize_all = "snake_case")]
+enum TranscriptPositionKey {
+    SessionJsonlPath,
+    SessionJsonlLine,
+    Ordinal,
+    ToolUseId,
+    AssistantUuid,
+    Uuid,
+    Position,
+    SessionStorePosition,
+    SessionSqlitePath,
+    SessionSqlitePartId,
+    StoreFormat,
+    NativeEventId,
+}
+
+pub fn is_transcript_position_key(key: &str) -> bool {
+    key.parse::<TranscriptPositionKey>().is_ok()
+}
+
+pub fn add_transcript_position(
+    patch: &mut JsonObject,
+    source: Option<&JsonObject>,
+) -> Result<(), serde_json::Error> {
+    let Some(source) = source else {
+        return Ok(());
+    };
+    for (key, value) in source.as_map() {
+        if is_transcript_position_key(key)
+            && patch.get(key).is_none()
+            && (value.is_string() || value.as_u64().is_some())
+        {
+            patch.insert(key, value)?;
+        }
+    }
+    Ok(())
+}
 
 #[serde_as]
 #[serde_with::skip_serializing_none]

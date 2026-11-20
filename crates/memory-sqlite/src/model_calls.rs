@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use kernel::memory::MemoryStoreError;
 use kernel::model_calls::{ModelCall, ModelCallStore, RecordedCalls, TurnMetadata};
 use kernel::owner::Owner;
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use wire::model_call::{CallOutcome, CallUsage};
 use wire::session_id::SessionId;
 
@@ -33,40 +33,12 @@ fn record(
     let transaction = conn.transaction().map_err(SqliteError::query(RECORD))?;
     let mut inserted = 0_u64;
     for call in calls {
-        let usage = call.usage;
-        let turn = call.turn.as_ref();
-        let written = transaction
-            .execute(
-                "INSERT INTO rh_model_calls (call_id, owner_user_id, session_key, turn_id, request_kind,
-                    started_at, finished_at, provider, model_requested, model_served, account,
-                    status_code, outcome, retry_after_secs, input_tokens, output_tokens,
-                    cache_read_tokens, cache_write_tokens, reasoning_tokens)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
-                 ON CONFLICT (owner_user_id, call_id) DO NOTHING",
-                params![
-                    call.call_id,
-                    owner,
-                    call.session.as_ref().map(SessionId::as_str),
-                    turn.and_then(|turn| turn.turn_id.as_deref()),
-                    turn.and_then(|turn| turn.request_kind.as_deref()),
-                    time::stamp(call.started_at),
-                    call.finished_at.map(time::stamp),
-                    call.provider,
-                    call.model_requested,
-                    call.model_served,
-                    call.account,
-                    call.status_code,
-                    call.outcome.to_string(),
-                    call.retry_after_secs.map(signed).transpose()?,
-                    usage.map(|usage| signed(usage.input)).transpose()?,
-                    usage.map(|usage| signed(usage.output)).transpose()?,
-                    usage.map(|usage| signed(usage.cache_read)).transpose()?,
-                    usage.map(|usage| signed(usage.cache_write)).transpose()?,
-                    usage.map(|usage| signed(usage.reasoning)).transpose()?,
-                ],
-            )
-            .map_err(SqliteError::query(RECORD))?;
-        inserted += u64::try_from(written).map_err(SqliteError::Count)?;
+        inserted += insert_call(
+            &transaction,
+            owner,
+            call.session.as_ref().map(SessionId::as_str),
+            call,
+        )?;
     }
     transaction.commit().map_err(SqliteError::query(RECORD))?;
     let total = u64::try_from(calls.len()).map_err(SqliteError::Count)?;
@@ -74,6 +46,71 @@ fn record(
         inserted,
         duplicate: total - inserted,
     })
+}
+
+fn insert_call(
+    conn: &Connection,
+    owner: &str,
+    session: Option<&str>,
+    call: &ModelCall,
+) -> Result<u64, SqliteError> {
+    let usage = call.usage;
+    let turn = call.turn.as_ref();
+    let written = conn
+        .execute(
+            "INSERT INTO rh_model_calls (call_id, owner_user_id, session_key, turn_id, request_kind,
+                started_at, finished_at, provider, model_requested, model_served, account,
+                status_code, outcome, retry_after_secs, input_tokens, output_tokens,
+                cache_read_tokens, cache_write_tokens, reasoning_tokens)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+             ON CONFLICT (owner_user_id, call_id) DO NOTHING",
+            params![
+                call.call_id,
+                owner,
+                session,
+                turn.and_then(|turn| turn.turn_id.as_deref()),
+                turn.and_then(|turn| turn.request_kind.as_deref()),
+                time::stamp(call.started_at),
+                call.finished_at.map(time::stamp),
+                call.provider,
+                call.model_requested,
+                call.model_served,
+                call.account,
+                call.status_code,
+                call.outcome.to_string(),
+                call.retry_after_secs.map(signed).transpose()?,
+                usage.map(|usage| signed(usage.input)).transpose()?,
+                usage.map(|usage| signed(usage.output)).transpose()?,
+                usage.map(|usage| signed(usage.cache_read)).transpose()?,
+                usage.map(|usage| signed(usage.cache_write)).transpose()?,
+                usage.map(|usage| signed(usage.reasoning)).transpose()?,
+            ],
+        )
+        .map_err(SqliteError::query(RECORD))?;
+    u64::try_from(written).map_err(SqliteError::Count)
+}
+
+impl SqliteStore {
+    pub(crate) async fn record_conversation_call(
+        &self,
+        conversation: uuid::Uuid,
+        call: &ModelCall,
+    ) -> Result<(), MemoryStoreError> {
+        let call = call.clone();
+        self.with_conn(move |conn| {
+            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .map_err(SqliteError::query(RECORD))?;
+            let identity: Option<(String, String)> = tx.query_row(
+                "SELECT owner_user_id, session_key FROM ros_conversations WHERE id = ?1 AND owner_user_id IS NOT NULL",
+                [conversation.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            ).optional().map_err(SqliteError::query(RECORD))?;
+            if let Some((owner, session)) = identity {
+                insert_call(&tx, &owner, Some(&session), &call)?;
+            }
+            tx.commit().map_err(SqliteError::query(RECORD))
+        }).await.map_err(Into::into)
+    }
 }
 
 struct Row {

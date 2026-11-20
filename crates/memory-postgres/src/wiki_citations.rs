@@ -5,6 +5,7 @@ use kernel::filing::Filable;
 use kernel::memory::ConversationHead;
 use kernel::memory::Provenance;
 use kernel::wiki::WikiCitation;
+use sqlx::PgConnection;
 use sqlx::types::Json;
 use uuid::Uuid;
 use wire::JsonObject;
@@ -57,24 +58,28 @@ impl CitationRow {
             agent: self.agent.clone()?,
             channel: self.channel.clone()?,
             title: self.title.clone(),
+            trashed: false,
         };
         Filable::of(&head).target(head.id)?.session().cloned()
     }
 }
 
 impl PostgresMemory {
-    pub(crate) async fn read_citations(&self, slug: &str) -> Result<Vec<WikiCitation>, Error> {
+    pub(crate) async fn read_citations(
+        conn: &mut PgConnection,
+        slug: &str,
+    ) -> Result<Vec<WikiCitation>, Error> {
         let rows: Vec<CitationRow> = sqlx::query_as(CITATIONS_SQL)
             .bind(slug)
             .bind(IMPORTED_SESSION_PREFIX)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *conn)
             .await
             .map_err(|source| Error::operation("wiki citations", source))?;
         let sessions: Vec<Option<SessionId>> = rows.iter().map(CitationRow::session).collect();
         let keys: Vec<&str> = sessions.iter().flatten().map(SessionId::as_str).collect();
         let placed: BTreeMap<String, Uuid> = sqlx::query_as::<_, (String, Uuid)>(PLACED_SQL)
             .bind(&keys)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *conn)
             .await
             .map_err(|source| Error::operation("wiki citation placements", source))?
             .into_iter()

@@ -17,6 +17,7 @@ pub trait TimestampFormat {
     fn rfc3339_offset(self) -> String;
     fn rfc3339_z(self) -> String;
     fn rfc3339_millis(self) -> String;
+    fn rfc3339_nanos(self) -> String;
     fn rfc3339_seconds(self) -> String;
     fn utc_date(self) -> Date;
     fn epoch_seconds(self) -> i64;
@@ -93,6 +94,10 @@ impl TimestampFormat for Timestamp {
 
     fn rfc3339_millis(self) -> String {
         legacy_year(format!("{self:.3}"))
+    }
+
+    fn rfc3339_nanos(self) -> String {
+        legacy_year(format!("{self:.9}"))
     }
 
     fn rfc3339_seconds(self) -> String {

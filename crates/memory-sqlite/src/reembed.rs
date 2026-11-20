@@ -67,6 +67,23 @@ fn reset(conn: &Connection, now: Timestamp) -> Result<ReembedReport, SqliteError
             }
         }
     }
+    let mut owners = conn
+        .prepare("SELECT id FROM ros_summaries WHERE kind IN ('session', 'part')")
+        .map_err(SqliteError::query("reembed session records"))?;
+    let ids = owners
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(SqliteError::query("reembed session records"))?;
+    for id in ids {
+        let id = id.map_err(SqliteError::query("reembed session records"))?;
+        conn.execute(
+            "UPDATE ros_summaries SET index_needs_repair = 1 WHERE id = ?1",
+            [&id],
+        )
+        .map_err(SqliteError::query("mark session index"))?;
+        if enqueue_embed(conn, &EmbedTable::Summaries.to_string(), &id, now)? {
+            report.queued += 1;
+        }
+    }
     meta::forget(conn, MetaKey::EmbedModel)?;
     meta::forget(conn, MetaKey::EmbedDims)?;
     Ok(report)
@@ -83,7 +100,8 @@ fn clear(conn: &Connection, table: EmbedTable) -> Result<u64, SqliteError> {
     conn.execute(
         &format!(
             "UPDATE {table} SET embedding = NULL, embed_status = NULL, embed_error = NULL, \
-             embed_failures = 0 WHERE embed_status IS NOT 'unembeddable'"
+             embed_failures = 0 WHERE embed_status IS NOT 'unembeddable'{}",
+            legacy_summaries(table)
         ),
         [],
     )
@@ -94,7 +112,8 @@ fn clear(conn: &Connection, table: EmbedTable) -> Result<u64, SqliteError> {
 fn eligible(conn: &Connection, table: EmbedTable, key: &str) -> Result<Vec<String>, SqliteError> {
     let mut statement = conn
         .prepare(&format!(
-            "SELECT {key} FROM {table} WHERE embed_status IS NOT 'unembeddable' ORDER BY rowid"
+            "SELECT {key} FROM {table} WHERE embed_status IS NOT 'unembeddable'{} ORDER BY rowid",
+            legacy_summaries(table)
         ))
         .map_err(SqliteError::query("reembed targets"))?;
     let ids = statement
@@ -103,4 +122,12 @@ fn eligible(conn: &Connection, table: EmbedTable, key: &str) -> Result<Vec<Strin
         .collect::<Result<Vec<_>, _>>()
         .map_err(SqliteError::query("reembed targets"))?;
     Ok(ids)
+}
+
+fn legacy_summaries(table: EmbedTable) -> &'static str {
+    if table == EmbedTable::Summaries {
+        " AND pipeline_version < 7"
+    } else {
+        ""
+    }
 }

@@ -225,6 +225,18 @@ pub enum CitationKind {
     Branch,
     Root,
     Condensed,
+    Session,
+    Part,
+    Section,
+}
+
+impl CitationKind {
+    #[must_use]
+    pub fn from_label(text: &str) -> Option<Self> {
+        use strum::IntoEnumIterator as _;
+
+        Self::iter().find(|kind| kind.to_string().eq_ignore_ascii_case(text))
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

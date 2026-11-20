@@ -23,23 +23,23 @@ pub(super) async fn select(
     native: &str,
     event: HookEvent,
 ) -> Result<Selection, HookError> {
-    let named = match event {
-        HookEvent::SubagentStop => named(payload, native),
-        HookEvent::Stop | HookEvent::SessionEnd => None,
+    match event {
+        HookEvent::SubagentStop => {
+            let mut files = Vec::new();
+            if let Some(file) = named(payload, native)
+                && tokio::fs::try_exists(&file.path).await?
+            {
+                files.push(file);
+            }
+            return Ok(Selection { files, named: true });
+        }
+        HookEvent::Stop | HookEvent::SessionEnd => {}
         HookEvent::PostToolUse | HookEvent::UserPromptSubmit | HookEvent::Other => {
             return Ok(Selection {
                 files: Vec::new(),
                 named: false,
             });
         }
-    };
-    if let Some(file) = named
-        && tokio::fs::try_exists(&file.path).await?
-    {
-        return Ok(Selection {
-            files: vec![file],
-            named: true,
-        });
     }
     let files = match payload.transcript_path.as_deref().and_then(Path::parent) {
         Some(slug) => session_agents(slug, native)?,
@@ -53,10 +53,13 @@ pub(super) async fn select(
 
 fn named(payload: &HookPayload, native: &str) -> Option<ClaudeFile> {
     let listed = payload.agent_transcript_path.as_deref();
-    let id = listed
-        .and_then(agent_id)
-        .or(payload.agent_id.as_deref())
-        .filter(|id| single_component(id))?;
+    let id = match listed {
+        Some(path) => {
+            agent_id(path).filter(|id| payload.agent_id.as_deref().is_none_or(|named| named == *id))
+        }
+        None => payload.agent_id.as_deref(),
+    }
+    .filter(|id| single_component(id) && *id != native)?;
     let path = match listed {
         Some(path) => path.to_path_buf(),
         None => payload

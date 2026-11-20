@@ -70,6 +70,8 @@ impl Unembeddable {
 
 #[derive(Debug, Error)]
 pub enum EmbeddingStoreError {
+    #[error(transparent)]
+    SummaryReference(#[from] super::summary_reference::SummaryReferenceError),
     #[error("embedding store query failed: {message}")]
     Query {
         message: String,

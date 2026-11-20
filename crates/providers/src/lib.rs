@@ -19,6 +19,7 @@ use kernel::model::Embedding;
 use kernel::model::LlmResponse;
 use kernel::model::LlmResponseKind;
 use kernel::model::ModelChunk;
+use kernel::model::ModelObserver;
 use kernel::model::ModelProvider;
 use kernel::model::ModelProviderError;
 use kernel::model::ModelRequest;
@@ -226,10 +227,61 @@ pub(crate) async fn check_status(
 
 #[async_trait]
 impl ModelProvider for OpenAiCompatible {
+    async fn count_tokens(
+        &self,
+        model: &str,
+        text: &str,
+    ) -> Result<Option<usize>, ModelProviderError> {
+        #[derive(serde::Serialize)]
+        struct Tokenize<'a> {
+            model: &'a str,
+            prompt: &'a str,
+        }
+        #[derive(serde::Deserialize)]
+        struct Count {
+            count: usize,
+        }
+        if self.variant != Variant::Vllm {
+            return Ok(None);
+        }
+        let root = self.base_url.strip_suffix("/v1").unwrap_or(&self.base_url);
+        let url = format!("{root}/tokenize");
+        let body = Tokenize {
+            model,
+            prompt: text,
+        };
+        let response = token::dispatch(&self.auth, || {
+            self.client
+                .post(&url)
+                .timeout(std::time::Duration::from_secs(60))
+                .json(&body)
+        })
+        .await;
+        match response {
+            Ok(response) => response
+                .json::<Count>()
+                .await
+                .map(|reply| Some(reply.count))
+                .map_err(request_error),
+            Err(token::CallError::Status(error)) if matches!(error.code(), 404 | 405 | 501) => {
+                Ok(None)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
     async fn chat(&self, request: ModelRequest) -> Result<LlmResponse, ModelProviderError> {
+        self.chat_observed(request, &|_| {}).await
+    }
+
+    async fn chat_observed(
+        &self,
+        request: ModelRequest,
+        observe: &ModelObserver<'_>,
+    ) -> Result<LlmResponse, ModelProviderError> {
         let finish = Arc::new(AtomicU8::new(0));
         let rx = self.send_chat(&request, Some(Arc::clone(&finish))).await?;
-        let collect = collect_response(rx);
+        let collect = collect_response(rx, observe);
         tokio::pin!(collect);
         let mut response = tokio::select! {
             biased;
@@ -277,12 +329,15 @@ impl ModelProvider for OpenAiCompatible {
 
 pub(crate) async fn collect_response(
     mut rx: Receiver<ModelStreamItem>,
+    observe: &ModelObserver<'_>,
 ) -> Result<LlmResponse, ModelProviderError> {
     let mut content = String::new();
     let mut usage: Option<LlmUsage> = None;
     let mut done = false;
     while let Some(item) = rx.recv().await {
-        match item? {
+        let chunk = item?;
+        observe(&chunk);
+        match chunk {
             ModelChunk::Text { delta } => content.push_str(&delta),
             ModelChunk::Reasoning { delta: _ } => {}
             ModelChunk::Usage { usage: received } => usage = Some(received),

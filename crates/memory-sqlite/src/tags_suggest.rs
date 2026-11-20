@@ -210,8 +210,13 @@ fn store_suggestions(
     }
     let at = time::stamp(write.at);
     let tx = conn
-        .transaction()
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|source| adapt("tag suggestions", source))?;
+    for row in &write.rows {
+        if row.entity_type == kernel::memory::TagEntityType::Summary {
+            crate::tags_write::guard(&tx, row.entity_id)?;
+        }
+    }
     let stored = apply_all(&tx, write, &at)?;
     tx.commit()
         .map_err(|source| adapt("tag suggestions", source))?;

@@ -20,3 +20,15 @@ pub mod spool;
 pub mod store_path;
 pub mod transcript;
 pub mod writer;
+
+fn session_observation(
+    batch: &wire::capture::CaptureBatchRequest,
+) -> Option<wire::capture::SessionObservation> {
+    match batch.session_observation() {
+        Ok(observation) => observation,
+        Err(error) => {
+            tracing::debug!(%error, "ignoring capture observation with an invalid timestamp");
+            None
+        }
+    }
+}

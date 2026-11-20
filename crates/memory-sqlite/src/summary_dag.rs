@@ -28,18 +28,25 @@ const DAG_SQL: &str = "WITH RECURSIVE dag(id, level) AS ( \
         UNION \
         SELECT s.parent_id, dag.level + 1 FROM ros_summaries s JOIN dag ON dag.id = s.id \
          WHERE s.parent_id IS NOT NULL) \
-    SELECT s.id, s.parent_id, max(dag.level) AS level, s.kind, s.content, s.message_count, \
+    SELECT s.id, s.parent_id, CASE WHEN s.pipeline_version = 7 THEN s.depth ELSE max(dag.level) END AS level, s.kind, s.content, s.message_count, \
            s.earliest_at, s.latest_at, s.created_at, \
-           CASE WHEN s.embedding IS NOT NULL THEN 'embedded' \
+           CASE WHEN s.kind = 'section' THEN 'skipped' \
+                WHEN s.index_needs_repair OR (s.kind IN ('session', 'part') AND (s.index_key IS NULL OR (?2 IS NOT NULL AND s.index_key IS NOT ?2))) THEN 'pending' \
+                WHEN s.embedding IS NOT NULL THEN 'embedded' \
                 WHEN s.embed_status = 'failed' THEN 'failed' \
                 WHEN s.embed_status = 'unembeddable' THEN 'skipped' \
-                ELSE 'pending' END AS vector \
+                ELSE 'pending' END AS vector, \
+           s.summary_ordinal, s.source_first, s.source_last, s.range_verified, s.quality_flags \
       FROM dag JOIN ros_summaries s ON s.id = dag.id \
      GROUP BY s.id \
      ORDER BY level DESC, s.latest_at, s.id";
 
-const SOURCES_SQL: &str =
-    "SELECT message_id FROM ros_summary_sources WHERE summary_id = ?1 ORDER BY ordinal";
+const SOURCES_SQL: &str = "SELECT link.message_id FROM ros_summaries node
+     JOIN ros_summary_sources link ON link.summary_id =
+        CASE WHEN node.kind = 'section' THEN node.parent_id ELSE node.id END
+     WHERE node.id = ?1 AND
+        (node.kind <> 'section' OR link.ordinal BETWEEN node.source_first AND node.source_last)
+     ORDER BY link.ordinal, link.message_id";
 
 const TALLY_SQL: &str = "SELECT count(*), \
         count(*) FILTER (WHERE role = 'user'), \
@@ -64,6 +71,11 @@ struct DagRow {
     latest_at: Option<String>,
     created_at: String,
     vector: VectorState,
+    summary_ordinal: Option<u32>,
+    source_first: Option<u32>,
+    source_last: Option<u32>,
+    range_verified: Option<bool>,
+    quality_flags: u32,
 }
 
 impl SqliteStore {
@@ -72,14 +84,19 @@ impl SqliteStore {
         owner: &SummaryOwner,
     ) -> Result<SummaryDag, MemoryStoreError> {
         let owner = owner.clone();
-        self.with_conn(move |conn| summary_dag(conn, owner))
+        let key = self.summary_index_key;
+        self.with_conn(move |conn| summary_dag(conn, owner, key.as_ref()))
             .await
             .map_err(MemoryStoreError::from)
     }
 }
 
-fn summary_dag(conn: &Connection, owner: SummaryOwner) -> Result<SummaryDag, SqliteError> {
-    let (sql, key) = match owner {
+fn summary_dag(
+    conn: &Connection,
+    owner: SummaryOwner,
+    key: Option<&[u8; 32]>,
+) -> Result<SummaryDag, SqliteError> {
+    let (sql, lookup) = match owner {
         SummaryOwner::Session(session) => (
             SESSION_SQL,
             serde_json::to_string(&kernel::filing::stored_keys(&session)).map_err(|source| {
@@ -92,7 +109,7 @@ fn summary_dag(conn: &Connection, owner: SummaryOwner) -> Result<SummaryDag, Sql
         SummaryOwner::Conversation(id) => (CONVERSATION_SQL, id.to_string()),
     };
     let found = conn
-        .query_row(sql, params_from_iter([Value::Text(key)]), |row| {
+        .query_row(sql, params_from_iter([Value::Text(lookup)]), |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
         .optional()
@@ -104,7 +121,10 @@ fn summary_dag(conn: &Connection, owner: SummaryOwner) -> Result<SummaryDag, Sql
         .prepare(DAG_SQL)
         .map_err(SqliteError::query("summary dag"))?;
     let rows = statement
-        .query_map([&conversation], dag_row)
+        .query_map(
+            rusqlite::params![conversation, key.map(<[_; 32]>::as_slice)],
+            dag_row,
+        )
         .map_err(SqliteError::query("summary dag"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(SqliteError::query("summary dag"))?;
@@ -119,7 +139,8 @@ fn summary_dag(conn: &Connection, owner: SummaryOwner) -> Result<SummaryDag, Sql
         session_key: Some(session_key),
         summaries,
         messages: message_tally(conn, &conversation)?,
-    })
+    }
+    .order_top_down())
 }
 
 fn dag_row(row: &Row<'_>) -> rusqlite::Result<DagRow> {
@@ -137,6 +158,11 @@ fn dag_row(row: &Row<'_>) -> rusqlite::Result<DagRow> {
         earliest_at: row.get(6)?,
         latest_at: row.get(7)?,
         created_at: row.get(8)?,
+        summary_ordinal: row.get(10)?,
+        source_first: row.get(11)?,
+        source_last: row.get(12)?,
+        range_verified: row.get(13)?,
+        quality_flags: row.get(14)?,
         vector: vector.parse::<VectorState>().map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(9, Type::Text, Box::new(error))
         })?,
@@ -172,6 +198,11 @@ fn summary_node(
             .map(|text| time::stored(text, "latest_at"))
             .transpose()?,
         created_at: time::stored(&row.created_at, "created_at")?,
+        summary_ordinal: row.summary_ordinal,
+        source_first: row.source_first,
+        source_last: row.source_last,
+        range_verified: row.range_verified,
+        quality_flags: row.quality_flags,
         source_message_ids,
         vector: row.vector,
         truncated: false,

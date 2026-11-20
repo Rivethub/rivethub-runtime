@@ -96,3 +96,39 @@ async fn supported_regex_patterns_match_postgres_case_insensitive(
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn summary_search_hides_the_legacy_rows_of_a_session_tree() -> TestResult {
+    let (_dir, store) = store(None)?;
+    store
+        .with_conn(|conn| {
+            conn.execute_batch(
+                "INSERT INTO ros_conversations (id, session_key, agent, created_at, updated_at)
+                 VALUES ('mixed', 'cli:mixed', 'fixture','2026-10-10T00:00:00Z','2026-10-10T00:00:00Z');
+                 INSERT INTO ros_summaries (id, conversation_id, kind, content, created_at, latest_at)
+                 VALUES ('old', 'mixed', 'leaf', 'invented tray legacy', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+                        ('new', 'mixed', 'session', 'invented tray session', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');",
+            )
+            .map_err(failed)
+        })
+        .await?;
+    for mode in [SearchMode::Fts, SearchMode::Regex] {
+        let result = store
+            .search_at(
+                query("tray", mode),
+                Timestamp::now(),
+                &jiff::tz::TimeZone::UTC,
+            )
+            .await?;
+        assert_eq!(result.results.len(), 1, "{mode}");
+        assert_eq!(
+            result
+                .results
+                .first()
+                .ok_or("expected a session hit")?
+                .content,
+            "invented tray session"
+        );
+    }
+    Ok(())
+}

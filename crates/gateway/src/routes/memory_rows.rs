@@ -13,7 +13,12 @@ pub(super) async fn search_origins(
 ) -> Result<memory_body::Origins, ApiError> {
     memory_body::resolve(
         gateway.store().as_ref(),
-        &outcome.expanded,
+        outcome.expanded.iter().chain(
+            outcome
+                .summaries
+                .values()
+                .flat_map(|detail| &detail.sources),
+        ),
         outcome
             .results
             .iter()
@@ -25,16 +30,32 @@ pub(super) async fn search_origins(
 pub(super) fn search_hit(
     result: kernel::memory::MemorySearchResult,
     origins: &memory_body::Origins,
+    summaries: &std::collections::BTreeMap<String, kernel::memory::SummaryDetail>,
 ) -> MemorySearchHit {
     let origin = result
         .session_id
         .as_deref()
         .and_then(|session| origins.get(session));
+    let detail = result
+        .passage
+        .as_ref()
+        .and_then(|_| summaries.get(result.detail_id()));
     MemorySearchHit {
         owner: origin.and_then(|origin| origin.team_owner.clone()),
         chunk: result
             .chunk
             .map(|chunk| memory_body::memory_chunk_match_body(chunk, origin)),
+        passage: result.passage.map(memory_body::passage_body),
+        sections: detail
+            .into_iter()
+            .flat_map(|detail| &detail.sections)
+            .map(|section| memory_body::passage_section_body(section, origin))
+            .collect(),
+        sources: detail
+            .into_iter()
+            .flat_map(|detail| &detail.sources)
+            .map(|source| memory_body::memory_entry_body(source.clone(), origins))
+            .collect(),
         id: result.id,
         source: memory_body::memory_hit_source_body(result.source),
         content: memory_body::quoted(origin, result.content),
@@ -42,7 +63,7 @@ pub(super) fn search_hit(
         score: result.relevance_score,
         role: result.role,
         agent: result.agent,
-        kind: None,
+        kind: detail.map(|detail| memory_body::summary_kind_body(detail.kind)),
         tool_name: None,
         conversation_id: None,
         session_id: result.session_id,

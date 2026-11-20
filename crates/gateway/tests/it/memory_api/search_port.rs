@@ -187,3 +187,43 @@ fn owner_is_optional_on_own_hits_and_labels_teammate_search_and_browse_hits() {
         Some("ines")
     );
 }
+
+#[test]
+fn passage_search_uses_passage_identity_to_attach_section_provenance() {
+    let (store, app) = seeded().expect("store");
+    let outcome: SearchOutcome = serde_json::from_str(r#"{
+        "results": [
+            {"id":"owner","passage":{"id":"piece-one","ordinal":0},"source":"summary",
+             "content":"The cask valve","createdAt":"2026-10-10T12:00:00Z","relevanceScore":0.5,"title":"Orchard plumbing"},
+            {"id":"owner","passage":{"id":"piece-two","ordinal":1},"source":"summary",
+             "content":"The inlet valve","createdAt":"2026-10-10T12:01:00Z","relevanceScore":0.4,"title":"Orchard plumbing"}
+        ],
+        "summaries": {
+            "piece-one": {"kind":"session","tags":[],"children":[],"sources":[],
+             "sections":[{"id":"section-one","heading":"Cask","sourceFirst":1,"sourceLast":2,"rangeVerified":true}]},
+            "piece-two": {"kind":"session","tags":[],"children":[],"sources":[],
+             "sections":[{"id":"section-two","heading":"Inlet","sourceFirst":3,"sourceLast":4,"rangeVerified":true}]}
+        }
+    }"#).expect("fixture");
+    block_on(store.set_search_outcome(outcome));
+    let response = block_on(answer(
+        app,
+        recorded(
+            "GET",
+            "/api/memory/search?q=valve&scope=summaries",
+            Vec::new(),
+        ),
+    ))
+    .expect("response");
+    assert_eq!(response.status, 200);
+    let response: MemorySearchResponse = serde_json::from_slice(&response.body).expect("hits");
+    let [first, second] = response.results.as_slice() else {
+        panic!("two passage hits");
+    };
+    assert_eq!((first.id.as_str(), second.id.as_str()), ("owner", "owner"));
+    assert_eq!(first.passage.as_ref().expect("passage").id, "piece-one");
+    assert_eq!(second.passage.as_ref().expect("passage").ordinal, 1);
+    assert_eq!(first.sections.first().expect("section").heading, "Cask");
+    assert_eq!(second.sections.first().expect("section").heading, "Inlet");
+    assert_eq!(first.title.as_deref(), Some("Orchard plumbing"));
+}

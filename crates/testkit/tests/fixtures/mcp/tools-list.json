@@ -195,7 +195,7 @@
     },
     {
       "name": "memory_search",
-      "description": "Search RivetOS persistent memory (conversation history + summaries). Hybrid FTS + semantic + temporal scoring with auto-expansion of summary hits to their source messages. Use this to find past decisions, prior context, or \"what did we say about X\" before asking the user. Mirrors the in-process `memory_search` tool exposed to local agents. Truncated hits include a `memory_get_full id=` handle — call that tool to recover the full capture payload. Results carry page links.",
+      "description": "Search RivetOS persistent memory (conversation history + summaries). Hybrid FTS + semantic + temporal scoring with auto-expansion of summary hits to their source messages. Use this to find past decisions and prior context. Use a few specific keywords instead of a full sentence. Include names, identifiers, error text, or the subject, such as \"build cache timeout\". If nothing matches, try a second set of keywords. Truncated hits include a `memory_get_full id=` handle — call that tool to recover the full capture payload. Results carry page links.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
@@ -229,7 +229,7 @@
             "type": "string"
           },
           "query": {
-            "description": "Search query — natural language question or keywords",
+            "description": "Use a few specific keywords instead of a full sentence. Include names, identifiers, error text, or the subject, such as \"build cache timeout\". If nothing matches, try a second set of keywords.",
             "type": "string"
           },
           "role": {

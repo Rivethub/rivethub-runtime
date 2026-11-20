@@ -122,6 +122,7 @@ impl<T: CaptureTransport> Backfill<T> {
                 finalize: false,
                 cwd: None,
                 agent_type: None,
+                event_id: None,
             };
             let built = file_batch(&capture, now)
                 .await

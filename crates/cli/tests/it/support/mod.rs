@@ -56,3 +56,29 @@ pub(crate) async fn run(args: &[&str], env: &Environment) -> Report {
     };
     report
 }
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WebManifest<'a> {
+    pub(crate) schema_version: u32,
+    pub(crate) version: &'a str,
+    pub(crate) commit: &'a str,
+    pub(crate) channel: &'a str,
+    pub(crate) min_rh_version: &'a str,
+    pub(crate) asset: String,
+    pub(crate) sha256: String,
+}
+
+impl<'a> WebManifest<'a> {
+    pub(crate) fn stable(version: &'a str, min_rh_version: &'a str, sha256: String) -> Self {
+        Self {
+            schema_version: 1,
+            version,
+            commit: "0123456789abcdef0123456789abcdef01234567",
+            channel: "stable",
+            min_rh_version,
+            asset: format!("rivethub-web-{version}.tar.gz"),
+            sha256,
+        }
+    }
+}

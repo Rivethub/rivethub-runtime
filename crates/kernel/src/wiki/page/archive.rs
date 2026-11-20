@@ -5,6 +5,8 @@ use values::time::TimestampFormat as _;
 
 use super::bound::{ARCHIVED_TITLE, Archived, blocks, covered, history_line, spill, words};
 use super::limits;
+use super::lines::fence_aware;
+use super::parse_citations;
 use super::{WikiHistoryEntry, WikiPage};
 
 pub const ARCHIVE_DIRECTORY: &str = "archive";
@@ -105,6 +107,28 @@ pub fn archive_header(title: &str, slug: &str, month: &str) -> String {
     format!(
         "# Archive: {title}, {month}\n\nText moved out of [[{slug}]] in {month} when a rewrite removed it or it went over its size budget, oldest first.\n"
     )
+}
+
+#[must_use]
+pub fn without_summary_citations(markdown: &str) -> String {
+    let mut in_citations = false;
+    let mut result = String::with_capacity(markdown.len());
+    for (line, original) in fence_aware(markdown).zip(markdown.split_inclusive('\n')) {
+        if !line.fenced {
+            let text = line.text.trim_end();
+            if let Some(heading) = text
+                .strip_prefix("## ")
+                .or_else(|| text.strip_prefix("### "))
+            {
+                in_citations = heading.trim().eq_ignore_ascii_case("citations");
+            }
+            if in_citations && !parse_citations(text).is_empty() {
+                continue;
+            }
+        }
+        result.push_str(original);
+    }
+    result
 }
 
 #[must_use]

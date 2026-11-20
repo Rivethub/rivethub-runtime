@@ -65,6 +65,11 @@ fn node(
         earliest_at: Some(at("2026-10-10T12:00:00Z")),
         latest_at: Some(at("2026-10-10T12:05:00Z")),
         created_at: at("2026-10-10T12:10:00Z"),
+        summary_ordinal: None,
+        source_first: None,
+        source_last: None,
+        range_verified: None,
+        quality_flags: 0,
         source_message_ids: vec!["00000000-0000-4000-8000-000000000101".to_owned()],
         vector,
         truncated: false,
@@ -326,6 +331,9 @@ fn a_tree_reads_the_top_a_window_at_a_time_then_each_summary_children() {
             leaves: 2,
             branches: 1,
             roots: 0,
+            sessions: 0,
+            parts: 0,
+            sections: 0,
             embedded: 1,
             top: 2,
         })
@@ -361,4 +369,87 @@ fn a_tree_reads_the_top_a_window_at_a_time_then_each_summary_children() {
         .status,
         404
     );
+}
+
+#[test]
+fn top_down_archive_exposes_mixed_counts_explicit_order_and_source_spans()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (gateway, store) = common::gateway();
+    let root = "00000000-0000-4000-8000-000000000020";
+    let part = "00000000-0000-4000-8000-000000000021";
+    let section = "00000000-0000-4000-8000-000000000022";
+    let leaf = "00000000-0000-4000-8000-000000000023";
+    let mut section = node(
+        section,
+        Some(root),
+        0,
+        SummaryKind::Section,
+        VectorState::Skipped,
+    );
+    section.summary_ordinal = Some(0);
+    section.source_first = Some(3);
+    section.source_last = Some(5);
+    section.range_verified = Some(false);
+    section.quality_flags = 2;
+    let mut part = node(part, Some(root), 1, SummaryKind::Part, VectorState::Pending);
+    part.summary_ordinal = Some(1);
+    block_on(store.script_summary_dag(
+        SummaryOwner::Session(SESSION.to_owned()),
+        SummaryDag {
+            session_key: Some(SESSION.to_owned()),
+            summaries: vec![
+                part,
+                node(root, None, 2, SummaryKind::Session, VectorState::Pending),
+                node(leaf, None, 0, SummaryKind::Leaf, VectorState::Embedded),
+                section.clone(),
+            ],
+            messages: MemoryMessageTally::default(),
+        },
+    ));
+    let app = gateway.router(false);
+    let top = get(&app, &format!("/api/memory/summaries/{SESSION}?tree=true"));
+    assert_eq!(top.status, 200);
+    let counts = serde_json::from_slice::<MemorySummaryDagResponse>(&top.body)?
+        .counts
+        .ok_or("tree counts")?;
+    assert_eq!(
+        (
+            counts.leaves,
+            counts.sessions,
+            counts.parts,
+            counts.sections
+        ),
+        (1, 1, 1, 1)
+    );
+    let children = get(
+        &app,
+        &format!("/api/memory/summaries/{SESSION}/{root}/children"),
+    );
+    let children: wire::gateway::memory::MemorySummaryChildren =
+        serde_json::from_slice(&children.body)?;
+    let kinds: Vec<_> = children.summaries.iter().map(|node| node.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            wire::gateway::memory::SummaryKind::Section,
+            wire::gateway::memory::SummaryKind::Part
+        ]
+    );
+    let found = get(
+        &app,
+        &format!("/api/memory/summaries/{SESSION}/{}", section.id),
+    );
+    assert_eq!(found.status, 200);
+    let found: wire::gateway::memory::MemorySummaryNode = serde_json::from_slice(&found.body)?;
+    assert_eq!(found.source_message_ids, section.source_message_ids);
+    assert_eq!(
+        (
+            found.source_first,
+            found.source_last,
+            found.range_verified,
+            found.quality_flags
+        ),
+        (Some(3), Some(5), Some(false), 2)
+    );
+    Ok(())
 }

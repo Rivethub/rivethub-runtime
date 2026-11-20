@@ -1,7 +1,9 @@
+use crate::summary_backend as backend;
 use async_trait::async_trait;
 use jiff::Timestamp;
 use kernel::memory::ConversationHead;
 use kernel::memory::ConversationWindow;
+use kernel::memory::MemoryBrowseOrder;
 use kernel::memory::NewSummary;
 use kernel::memory::PendingConversation;
 use kernel::memory::Provenance;
@@ -12,10 +14,20 @@ use kernel::memory::SummaryStoreError;
 use kernel::memory::SummaryWrite;
 use kernel::memory::ToolUse;
 use kernel::memory::WindowMessage;
+use kernel::memory::settlement::{SettlementPage, SummaryState};
+use kernel::memory::summary_backend::SummaryArtifact;
+use kernel::memory::summary_backend::{SummaryIndex, SummaryRepair};
+use kernel::memory::summary_backend::{SummaryIndexes, SummaryInput, SummaryPermit, SummaryRun};
+use kernel::memory::summary_opening::OpeningTitle;
+use kernel::memory::summary_order::{MessagePosition, order_messages};
+use kernel::memory::summary_reference::PreparedSummaryTree;
+use kernel::queue::Job;
 use sqlx::PgPool;
 use sqlx::Row;
+use sqlx::types::Json;
 use std::str::FromStr;
 use uuid::Uuid;
+use wire::JsonObject;
 use wire::message::Role;
 
 use crate::PostgresMemory;
@@ -24,6 +36,7 @@ const HEAD_SQL: &str = "select id, session_key, agent, channel, title
     from rh_conversations where id = $1";
 
 const MESSAGES_SQL: &str = "select m.id, m.agent, m.role, m.content, m.created_at,
+        case when jsonb_typeof(m.metadata) = 'object' then m.metadata end as metadata,
         case when m.role = 'tool'
              then convert_to(substr(coalesce(m.tool_args::text, ''), 1, $2), 'SQL_ASCII')
         end as tool_input,
@@ -85,6 +98,8 @@ pub(crate) struct HeadRow {
     session_key: String,
     agent: String,
     channel: String,
+    #[sqlx(default)]
+    trashed: bool,
     title: Option<String>,
 }
 
@@ -96,6 +111,7 @@ impl From<HeadRow> for ConversationHead {
             agent: row.agent,
             channel: row.channel,
             title: row.title,
+            trashed: row.trashed,
         }
     }
 }
@@ -129,6 +145,178 @@ struct PendingRow {
 
 #[async_trait]
 impl SummaryStore for PostgresMemory {
+    fn summary_conversion(
+        &self,
+    ) -> Option<&dyn kernel::memory::summary_conversion::SummaryConversion> {
+        Some(self)
+    }
+
+    async fn record_summary_call(
+        &self,
+        conversation: Uuid,
+        call: &kernel::model_calls::ModelCall,
+    ) -> Result<(), kernel::memory::MemoryStoreError> {
+        self.record_conversation_call(conversation, call).await
+    }
+
+    async fn live_candidates(
+        &self,
+        after: Uuid,
+        limit: i64,
+    ) -> Result<Vec<(Uuid, i64)>, SummaryStoreError> {
+        backend::candidates(self, after, limit).await
+    }
+
+    async fn live_input(&self, id: Uuid) -> Result<Option<SummaryInput>, SummaryStoreError> {
+        self.live_source(id).await
+    }
+
+    async fn live_run(&self, id: Uuid) -> Result<Option<SummaryRun>, SummaryStoreError> {
+        backend::run(self, id).await
+    }
+
+    async fn freeze_live_run(
+        &self,
+        id: Uuid,
+        revision: i64,
+        root: Option<Uuid>,
+        manifest: SummaryArtifact,
+    ) -> Result<Uuid, SummaryStoreError> {
+        let mut conn = self.pool.acquire().await.map_err(backend::error)?;
+        backend::freeze(&mut conn, id, revision, root, manifest)
+            .await
+            .map_err(backend::error)
+    }
+
+    async fn live_checkpoint(
+        &self,
+        run: Uuid,
+        key: [u8; 32],
+    ) -> Result<Option<SummaryArtifact>, SummaryStoreError> {
+        sqlx::query_scalar::<_, Json<SummaryArtifact>>(
+            "SELECT artifact FROM rh_summary_checkpoints WHERE run_id = $1 AND artifact_key = $2",
+        )
+        .bind(run)
+        .bind(key.as_slice())
+        .fetch_optional(&self.pool)
+        .await
+        .map(|row| row.map(|Json(artifact)| artifact))
+        .map_err(backend::error)
+    }
+
+    async fn save_live_checkpoint(
+        &self,
+        run: Uuid,
+        revision: i64,
+        key: [u8; 32],
+        artifact: SummaryArtifact,
+    ) -> Result<(), SummaryStoreError> {
+        let exists: bool = sqlx::query_scalar(
+            "WITH live_run AS (
+                SELECT id FROM rh_summary_runs WHERE id = $1 AND revision = $4 FOR SHARE
+             ), saved AS (
+                INSERT INTO rh_summary_checkpoints (run_id, artifact_key, artifact)
+                SELECT id, $2, $3 FROM live_run ON CONFLICT DO NOTHING
+             )
+             SELECT EXISTS (SELECT 1 FROM live_run)",
+        )
+        .bind(run)
+        .bind(key.as_slice())
+        .bind(Json(artifact))
+        .bind(revision)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend::error)?;
+        if exists {
+            Ok(())
+        } else {
+            Err(SummaryStoreError::StaleRun { id: run, revision })
+        }
+    }
+
+    async fn try_summary_permit(
+        &self,
+        limit: u32,
+    ) -> Result<Option<Box<dyn SummaryPermit>>, SummaryStoreError> {
+        use sqlx::Connection as _;
+        let mut conn = sqlx::PgConnection::connect_with(&self.pool.connect_options())
+            .await
+            .map_err(backend::error)?;
+        for slot in 0..i32::try_from(limit).map_err(|_| SummaryStoreError::Count)? {
+            let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(1937075568, $1)")
+                .bind(slot)
+                .fetch_one(&mut conn)
+                .await
+                .map_err(backend::error)?;
+            if locked {
+                return Ok(Some(Box::new(conn)));
+            }
+        }
+        Ok(None)
+    }
+
+    async fn publish_live(
+        &self,
+        tree: PreparedSummaryTree,
+        indexes: SummaryIndexes,
+    ) -> Result<bool, SummaryStoreError> {
+        use crate::summary_replace::ReplaceSummaryError;
+        match self.replace_live_summary(&tree, &indexes).await {
+            Ok(()) => Ok(true),
+            Err(ReplaceSummaryError::Reference(_)) => Ok(false),
+            Err(error) => Err(backend::error(error)),
+        }
+    }
+
+    async fn fail_live(&self, id: Uuid, revision: i64) -> Result<(), SummaryStoreError> {
+        sqlx::query("UPDATE rh_summary_state SET failed_revision = $2 WHERE conversation_id = $1
+            AND input_revision = $2 AND settled_at IS NOT NULL AND summarized_through IS DISTINCT FROM $2")
+            .bind(id).bind(revision).execute(&self.pool).await.map_err(backend::error)?;
+        Ok(())
+    }
+
+    fn live_index_key(&self) -> Option<[u8; 32]> {
+        self.summary_index_key
+    }
+
+    async fn summary_state(&self, id: Uuid) -> Result<Option<SummaryState>, SummaryStoreError> {
+        self.read_summary_state(id).await.map_err(settlement_error)
+    }
+
+    async fn summary_eligible(&self, id: Uuid, revision: i64) -> Result<bool, SummaryStoreError> {
+        self.eligible_summary(id, revision)
+            .await
+            .map_err(settlement_error)
+    }
+
+    async fn expire_summary_page(
+        &self,
+        after: Option<Uuid>,
+        cutoff: Timestamp,
+        now: Timestamp,
+        limit: u32,
+    ) -> Result<SettlementPage, SummaryStoreError> {
+        self.expire_settlement(after, cutoff, now, limit)
+            .await
+            .map_err(settlement_error)
+    }
+
+    async fn repair_candidates(&self, limit: u32) -> Result<Vec<Uuid>, SummaryStoreError> {
+        self.marked_indexes(limit).await
+    }
+
+    async fn repair_input(&self, id: Uuid) -> Result<Option<SummaryRepair>, SummaryStoreError> {
+        self.marked_index(id).await
+    }
+
+    async fn repair_index(
+        &self,
+        expected: SummaryRepair,
+        index: SummaryIndex,
+    ) -> Result<(), SummaryStoreError> {
+        self.replace_index(expected, index).await
+    }
+
     async fn conversation(
         &self,
         id: Uuid,
@@ -161,6 +349,9 @@ impl SummaryStore for PostgresMemory {
             .begin()
             .await
             .map_err(|source| query_err("begin summary write", source))?;
+        crate::summary_replace::shared_conversation(&mut tx, summary.conversation_id)
+            .await
+            .map_err(|source| query_err("lock summary write", source))?;
         sqlx::query(INSERT_SQL)
             .bind(summary.id)
             .bind(summary.conversation_id)
@@ -200,12 +391,6 @@ impl SummaryStore for PostgresMemory {
             }
         }
         let written = if summary.kind == SummaryKind::Leaf {
-            crate::title::title_from_first_leaf(&mut tx, summary.conversation_id)
-                .await
-                .map_err(|error| SummaryStoreError::Query {
-                    message: error.to_string(),
-                    source: Box::new(error),
-                })?;
             let leaves: i64 = sqlx::query_scalar(LEAVES_SQL)
                 .bind(summary.conversation_id)
                 .bind(SummaryKind::Leaf.as_str())
@@ -234,6 +419,39 @@ impl SummaryStore for PostgresMemory {
         Ok(written)
     }
 
+    async fn opening_title(&self, id: Uuid) -> Result<Option<OpeningTitle>, SummaryStoreError> {
+        let mut conn = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|source| query_err("opening title", source))?;
+        crate::title::load(&mut conn, id).await.map_err(opening_err)
+    }
+
+    async fn finish_opening_title(
+        &self,
+        opening: &OpeningTitle,
+        title: Option<&str>,
+    ) -> Result<bool, SummaryStoreError> {
+        self.apply_opening_title(opening, title)
+            .await
+            .map_err(opening_err)
+    }
+
+    async fn opening_filing(&self, id: Uuid) -> Result<Option<bool>, SummaryStoreError> {
+        Self::opening_filing(self, id).await.map_err(opening_err)
+    }
+
+    async fn finish_opening_filing(&self, id: Uuid) -> Result<(), SummaryStoreError> {
+        Self::finish_opening_filing(self, id)
+            .await
+            .map_err(opening_err)
+    }
+
+    async fn undelivered_openings(&self) -> Result<Vec<Job>, SummaryStoreError> {
+        Self::undelivered_openings(self).await.map_err(opening_err)
+    }
+
     async fn retitle(&self, id: Uuid, title: &str) -> Result<bool, SummaryStoreError> {
         let mut conn = self
             .pool
@@ -246,6 +464,13 @@ impl SummaryStore for PostgresMemory {
                 message: error.to_string(),
                 source: Box::new(error),
             })
+    }
+}
+
+fn opening_err(error: crate::Error) -> SummaryStoreError {
+    SummaryStoreError::Query {
+        message: error.to_string(),
+        source: Box::new(error),
     }
 }
 
@@ -323,9 +548,23 @@ async fn load_messages(pool: &PgPool, id: Uuid) -> Result<Vec<WindowMessage>, Su
         .map_err(|source| query_err("load unsummarized messages", source))?;
     let mut messages = Vec::with_capacity(rows.len());
     for row in rows {
-        messages.push(message_from(&row)?);
+        let metadata: Option<Json<JsonObject>> = row
+            .try_get("metadata")
+            .map_err(|source| query_err("read message metadata", source))?;
+        messages.push((message_from(&row)?, metadata));
     }
-    Ok(messages)
+    Ok(
+        order_messages(messages, MemoryBrowseOrder::Asc, |(message, metadata)| {
+            MessagePosition::new(
+                message.created_at,
+                message.role,
+                metadata.as_ref().map(|json| &json.0),
+            )
+        })
+        .into_iter()
+        .map(|(message, _)| message)
+        .collect(),
+    )
 }
 
 fn message_from(row: &sqlx::postgres::PgRow) -> Result<WindowMessage, SummaryStoreError> {
@@ -390,14 +629,9 @@ fn node_from(row: NodeRow) -> Result<SummaryNode, SummaryStoreError> {
 }
 
 fn kind_of(kind: &str) -> Result<SummaryKind, SummaryStoreError> {
-    match kind {
-        "leaf" => Ok(SummaryKind::Leaf),
-        "branch" => Ok(SummaryKind::Branch),
-        "root" => Ok(SummaryKind::Root),
-        other => Err(SummaryStoreError::Kind {
-            kind: other.to_owned(),
-        }),
-    }
+    kind.parse().map_err(|_| SummaryStoreError::Kind {
+        kind: kind.to_owned(),
+    })
 }
 
 fn required_time(value: Option<Timestamp>, id: Uuid) -> Result<Timestamp, SummaryStoreError> {
@@ -410,6 +644,13 @@ fn required_time(value: Option<Timestamp>, id: Uuid) -> Result<Timestamp, Summar
 fn query_err(operation: &'static str, source: sqlx::Error) -> SummaryStoreError {
     SummaryStoreError::Query {
         message: format!("{operation}: {source}"),
+        source: Box::new(source),
+    }
+}
+
+fn settlement_error(source: crate::Error) -> SummaryStoreError {
+    SummaryStoreError::Query {
+        message: "summary settlement".to_owned(),
         source: Box::new(source),
     }
 }

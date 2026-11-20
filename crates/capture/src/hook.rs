@@ -1,7 +1,9 @@
 pub(crate) mod file;
 mod pending;
+mod sequence;
 pub mod store;
 mod subagents;
+mod tool;
 mod transcript_batch;
 
 use jiff::Timestamp;
@@ -18,14 +20,8 @@ use thiserror::Error;
 use tokio::io::AsyncWriteExt as _;
 use wire::JsonObject;
 use wire::capture::CaptureBatchRequest;
-use wire::capture::CaptureMessage;
-use wire::message::Role;
 use wire::session_id::SessionId;
 
-use crate::event_id::OccurrenceKind;
-use crate::event_id::ToolInput;
-use crate::event_id::occurrence_digest;
-use crate::event_id::occurrence_event_id;
 use crate::payload::HookEvent;
 use crate::payload::HookPayload;
 use crate::records::HookEventMetadata;
@@ -156,25 +152,40 @@ impl<T: CaptureTransport> ClaudeHook<T> {
         if !payload.claude_transcript() || payload.subagent_tool_call() {
             return HookRun::done();
         }
-        if event == HookEvent::UserPromptSubmit {
+        if event == HookEvent::SubagentStop {
             return self
-                .hold_prompt(&payload, session.native(), now, ingest_key)
+                .capture_subagents(&payload, session.native(), event, now)
                 .await;
         }
+        if event == HookEvent::UserPromptSubmit {
+            return self.hold_prompt(&payload, &session, now, ingest_key).await;
+        }
+        self.capture_parent(&payload, &session, event, now, ingest_key)
+            .await
+    }
+
+    async fn capture_parent(
+        &self,
+        payload: &HookPayload,
+        session: &SessionId,
+        event: HookEvent,
+        now: Timestamp,
+        ingest_key: &str,
+    ) -> HookRun {
         let transcript = match event {
-            HookEvent::Stop => settled_transcript(&payload).await,
+            HookEvent::Stop => settled_transcript(payload).await,
             HookEvent::PostToolUse
             | HookEvent::SubagentStop
             | HookEvent::SessionEnd
             | HookEvent::UserPromptSubmit
-            | HookEvent::Other => load_transcript(&payload).await,
+            | HookEvent::Other => load_transcript(payload).await,
         };
         let (batch, claim) = match event {
             HookEvent::PostToolUse => (
-                tool_batch(&payload, session.as_str(), &transcript, ingest_key),
+                tool::batch(payload, session, &transcript, ingest_key, &self.pending).await,
                 None,
             ),
-            HookEvent::Stop | HookEvent::SubagentStop | HookEvent::SessionEnd => {
+            HookEvent::Stop | HookEvent::SessionEnd => {
                 match self.pending.claim(session.native()).await {
                     Ok(claim) => (
                         transcript_batch::build(
@@ -189,10 +200,12 @@ impl<T: CaptureTransport> ClaudeHook<T> {
                     Err(error) => return HookRun::failed(error.to_string()),
                 }
             }
-            HookEvent::UserPromptSubmit | HookEvent::Other => return HookRun::done(),
+            HookEvent::SubagentStop | HookEvent::UserPromptSubmit | HookEvent::Other => {
+                return HookRun::done();
+            }
         };
         let batch = batch.and_then(|mut batch| {
-            batch.settings = Some(settings_for(&payload, &session, event, now)?);
+            batch.settings = Some(settings_for(payload, session, event, now)?);
             Ok(batch)
         });
         let batch = match batch {
@@ -207,13 +220,11 @@ impl<T: CaptureTransport> ClaudeHook<T> {
             }
             Err(error) => run.absorb(&HookRun::write_failed(&error)),
         }
-        match self
-            .capture_subagents(&payload, session.native(), event, now)
-            .await
-        {
-            Ok(found) => found.iter().for_each(|found| run.absorb(found)),
-            Err(error) => run.absorb(&HookRun::failed(error.to_string())),
-        }
+        run.absorb(
+            &self
+                .capture_subagents(payload, session.native(), event, now)
+                .await,
+        );
         run
     }
 
@@ -243,15 +254,18 @@ impl<T: CaptureTransport> ClaudeHook<T> {
         native: &str,
         event: HookEvent,
         now: Timestamp,
-    ) -> Result<Vec<HookRun>, HookError> {
-        let selection = subagents::select(payload, native, event).await?;
+    ) -> HookRun {
+        let selection = match subagents::select(payload, native, event).await {
+            Ok(selection) => selection,
+            Err(error) => return HookRun::failed(error.to_string()),
+        };
         let last_event = event.to_string();
-        let mut failures = Vec::new();
+        let mut result = HookRun::done();
         for file in &selection.files {
             let bytes = match tokio::fs::metadata(&file.path).await {
                 Ok(metadata) => metadata.len(),
                 Err(error) => {
-                    failures.push(HookRun::failed(format!(
+                    result.absorb(&HookRun::failed(format!(
                         "subagent {} was not read: {error}",
                         file.id
                     )));
@@ -263,7 +277,7 @@ impl<T: CaptureTransport> ClaudeHook<T> {
                     Ok(true) => continue,
                     Ok(false) => {}
                     Err(error) => {
-                        failures.push(HookRun::failed(format!(
+                        result.absorb(&HookRun::failed(format!(
                             "subagent {} was not checked: {error}",
                             file.id
                         )));
@@ -277,12 +291,13 @@ impl<T: CaptureTransport> ClaudeHook<T> {
                 finalize: selection.named || event == HookEvent::SessionEnd,
                 cwd: payload.cwd.as_ref().map(|path| path.display().to_string()),
                 agent_type: payload.agent_type.as_deref().filter(|_| selection.named),
+                event_id: payload.event_id.as_deref().filter(|_| selection.named),
             };
             let batch = match file::batch(&capture, now).await {
                 Ok(Some(batch)) => batch,
                 Ok(None) => continue,
                 Err(error) => {
-                    failures.push(HookRun::failed(format!("subagent {}: {error}", file.id)));
+                    result.absorb(&HookRun::failed(format!("subagent {}: {error}", file.id)));
                     continue;
                 }
             };
@@ -295,7 +310,7 @@ impl<T: CaptureTransport> ClaudeHook<T> {
                 Err(error) => {
                     let mut run = HookRun::write_failed(error);
                     run.stderr = format!("subagent {}: {}", file.id, run.stderr);
-                    failures.push(run);
+                    result.absorb(&run);
                 }
             }
             let kept = match &written {
@@ -306,13 +321,13 @@ impl<T: CaptureTransport> ClaudeHook<T> {
                 tracing::warn!("subagent {} was not recorded: {error}", file.id);
             }
         }
-        Ok(failures)
+        result
     }
 
     async fn hold_prompt(
         &self,
         payload: &HookPayload,
-        native: &str,
+        session: &SessionId,
         now: Timestamp,
         ingest_key: &str,
     ) -> HookRun {
@@ -327,8 +342,9 @@ impl<T: CaptureTransport> ClaudeHook<T> {
             key: ingest_key.to_owned(),
             prompt: prompt.clone(),
             at: now,
+            position: None,
         };
-        match self.pending.add(native, &pending).await {
+        match self.pending.add(session, pending).await {
             Ok(()) => HookRun::done(),
             Err(error) => HookRun::failed(format!("prompt was not held for capture: {error}")),
         }
@@ -438,7 +454,7 @@ fn settings_for(
         .ok_or(HookError::Missing("claude-code session id"))?
         .to_owned();
     let cwd = payload.cwd.as_ref().map(|path| path.display().to_string());
-    let settings = if event.reads_transcript() {
+    let mut settings = if event.reads_transcript() {
         JsonObject::from_serialize(&TranscriptSettings {
             source: SOURCE,
             file: payload
@@ -461,78 +477,32 @@ fn settings_for(
             last_ingest_at: iso_at(now),
         })?
     };
+    if let Some(id) = &payload.event_id {
+        settings.insert("last_event_id", id)?;
+    }
     Ok(settings)
 }
 
-fn event_metadata(event: &str, ingest_key: &str) -> Result<JsonObject, HookError> {
-    Ok(JsonObject::from_serialize(&HookEventMetadata {
-        source: SOURCE,
-        hook_event: event,
-        ingest_key,
-    })?)
+#[derive(serde::Serialize)]
+struct ObservedHook<'a> {
+    #[serde(flatten)]
+    event: HookEventMetadata<'a>,
+    #[serde(flatten)]
+    position: Option<&'a sequence::Position>,
 }
 
-fn tool_batch(
-    payload: &HookPayload,
-    session_key: &str,
-    transcript: &[Line],
-    ingest_key: &str,
-) -> Result<CaptureBatchRequest, HookError> {
-    let mut batch = base_batch(session_key);
-    batch.title = Some(FALLBACK_TITLE.to_owned());
-    let tool_name = payload
-        .tool_name
-        .as_ref()
-        .ok_or(HookError::Missing("tool_name"))?;
-    let input = payload
-        .tool_input
-        .as_ref()
-        .ok_or(HookError::Missing("tool_input"))?;
-    let content = format!("[tool call] {tool_name}");
-    let event_id = if let Some(id) = &payload.tool_use_id {
-        format!("{session_key}:tool:{id}")
-    } else {
-        let digest = occurrence_digest(OccurrenceKind::Tool, &content, tool_name, Some(input));
-        occurrence_event_id(
-            session_key,
-            &digest,
-            prior_occurrences(transcript, tool_name, input),
-        )
-    };
-    batch.messages.push(CaptureMessage {
-        event_id,
-        role: Role::Tool,
-        content,
-        tool_name: Some(tool_name.clone()),
-        tool_args: Some(input.arguments().clone()),
-        tool_result: tool_result_text(payload)?,
-        metadata: Some(event_metadata("PostToolUse", ingest_key)?),
-        created_at: None,
-    });
-    Ok(batch)
-}
-
-fn prior_occurrences(transcript: &[Line], tool_name: &str, input: &ToolInput) -> usize {
-    transcript
-        .iter()
-        .flat_map(Line::tool_uses)
-        .filter(|tool_use| {
-            tool_use.name == tool_name && tool_use.input.spelling() == input.spelling()
-        })
-        .count()
-}
-
-fn tool_result_text(payload: &HookPayload) -> Result<Option<String>, HookError> {
-    if let Some(result) = &payload.tool_result {
-        return Ok(Some(result.clone()));
-    }
-    let Some(raw) = &payload.tool_response else {
-        return Ok(None);
-    };
-    match serde_json::from_str::<String>(raw.get()) {
-        Ok(text) => Ok(Some(text)),
-        Err(error) if error.is_data() => Ok(Some(serde_json::to_string(raw)?)),
-        Err(error) => Err(error.into()),
+fn observed_hook<'a>(
+    event: &'a str,
+    ingest_key: &'a str,
+    position: Option<&'a sequence::Position>,
+) -> ObservedHook<'a> {
+    ObservedHook {
+        event: HookEventMetadata {
+            source: SOURCE,
+            hook_event: event,
+            ingest_key,
+        },
+        position,
     }
 }
 

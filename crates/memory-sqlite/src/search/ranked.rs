@@ -7,7 +7,7 @@ use kernel::memory_core::{
 };
 
 use super::{
-    Candidate, Kind, Plan, SearchMode, SearchOutcome, SqliteError, bump, fetch, hit_limit,
+    Candidate, Kind, Plan, SearchMode, SearchOutcome, SearchRead, SqliteError, fetch, hit_limit,
 };
 use kernel::memory::{MemoryHitSource, MemoryScope};
 use rusqlite::Connection;
@@ -33,10 +33,10 @@ impl FusionItem for ArmRow {
 }
 
 pub(super) fn execute(
-    conn: &mut Connection,
+    conn: &Connection,
     plan: &Plan,
     vector: Option<&[f32]>,
-) -> Result<SearchOutcome, SqliteError> {
+) -> Result<SearchRead, SqliteError> {
     let rows = load(conn, plan)?;
     let mut fallback = None;
     let scored = match plan.mode {
@@ -85,7 +85,6 @@ pub(super) fn execute(
         .iter()
         .map(|(row, _)| row.candidate.clone())
         .collect();
-    bump(conn, &reinforced, &crate::time::stamp(plan.now))?;
     let results = selected
         .into_iter()
         .map(|(row, score)| {
@@ -94,10 +93,13 @@ pub(super) fn execute(
             result
         })
         .collect();
-    Ok(SearchOutcome {
-        results,
-        fallback,
-        ..SearchOutcome::default()
+    Ok(SearchRead {
+        outcome: SearchOutcome {
+            results,
+            fallback,
+            ..SearchOutcome::default()
+        },
+        reinforced,
     })
 }
 
@@ -347,15 +349,21 @@ fn load(conn: &Connection, plan: &Plan) -> Result<Vec<ArmRow>, SqliteError> {
 const MESSAGE_CANDIDATES: &str = "SELECT id, content, created_at, conversation_id, role, agent, embedding, access_count,
          CASE WHEN role = 'system' THEN 0.5 WHEN tool_name IS NOT NULL THEN 0.3 WHEN role = 'user' THEN 0.7 ELSE 0.6 END,
          (SELECT c.session_key FROM ros_conversations c WHERE c.id = m.conversation_id)
-         FROM ros_messages m WHERE (?1 IS NULL OR agent = ?1) AND (?2 IS NULL OR created_at >= ?2) AND (?3 IS NULL OR created_at < ?3)
+         FROM ros_messages m WHERE (?1 IS NULL OR agent = ?1) AND (?2 IS NULL OR rh_instant(created_at) >= ?2) AND (?3 IS NULL OR rh_instant(created_at) < ?3)
          AND (?4 IS NULL OR role = ?4) AND (?5 IS NULL OR tool_name = ?5)
          AND (?6 IS NULL OR role NOT IN (SELECT value FROM json_each(?6)))
          AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr JOIN ros_conversations tc ON tc.session_key = tr.session_key WHERE tc.id = m.conversation_id)";
 
-const SUMMARY_CANDIDATES: &str = "SELECT id, content, created_at, conversation_id, NULL, NULL, embedding, access_count, 0.6,
+const SUMMARY_CANDIDATES: &str = "SELECT id, content, CASE WHEN kind IN ('session', 'part') THEN latest_at ELSE created_at END AS search_time, conversation_id, NULL, NULL,
+         CASE WHEN kind IN ('session', 'part') AND (index_needs_repair OR index_key IS NULL
+                    OR (?4 IS NOT NULL AND index_key IS NOT ?4)) THEN NULL ELSE embedding END,
+         access_count, 0.6,
          (SELECT c.session_key FROM ros_conversations c WHERE c.id = s.conversation_id)
-         FROM ros_summaries s WHERE (?1 IS NULL OR EXISTS (SELECT 1 FROM ros_conversations c WHERE c.id = s.conversation_id AND c.agent = ?1))
-         AND (?2 IS NULL OR created_at >= ?2) AND (?3 IS NULL OR created_at < ?3)
+         FROM ros_summaries s WHERE kind <> 'section' AND (?1 IS NULL OR EXISTS (SELECT 1 FROM ros_conversations c WHERE c.id = s.conversation_id AND c.agent = ?1))
+         AND (s.kind IN ('session', 'part') OR NOT EXISTS (
+             SELECT 1 FROM ros_summaries session
+             WHERE session.conversation_id = s.conversation_id AND session.kind = 'session'))
+         AND (?2 IS NULL OR rh_instant(search_time) >= ?2) AND (?3 IS NULL OR rh_instant(search_time) < ?3)
          AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr JOIN ros_conversations tc ON tc.session_key = tr.session_key WHERE tc.id = s.conversation_id)";
 
 fn load_table(conn: &Connection, plan: &Plan, message: bool) -> Result<Vec<ArmRow>, SqliteError> {
@@ -368,6 +376,7 @@ fn load_table(conn: &Connection, plan: &Plan, message: bool) -> Result<Vec<ArmRo
         .prepare(sql)
         .map_err(SqliteError::query("search candidates"))?;
     let role = plan.role.map(|role| role.to_string());
+    let key = plan.summary_index_key.as_ref().map(<[_; 32]>::as_slice);
     let filters: Vec<&dyn rusqlite::ToSql> = if message {
         vec![
             &plan.agent,
@@ -378,7 +387,7 @@ fn load_table(conn: &Connection, plan: &Plan, message: bool) -> Result<Vec<ArmRo
             &plan.exclude_roles,
         ]
     } else {
-        vec![&plan.agent, &plan.since, &plan.before]
+        vec![&plan.agent, &plan.since, &plan.before, &key]
     };
     let mapped = statement
         .query_map(filters.as_slice(), |row| {

@@ -1,26 +1,85 @@
+mod arms;
+
 use crate::error::Error;
 use crate::search::ArmKind;
 use crate::search::ArmRow;
-use crate::search::SearchOptions;
 use crate::search::TagFilter;
+use crate::search::{SearchOptions, SearchRead};
 use crate::search_literal::Patience;
 use crate::search_literal::literal_tokens;
+pub(crate) use arms::ArmContext;
 use jiff::Timestamp;
 use kernel::memory::MemoryHitSource;
 use kernel::memory::MemoryScope;
 use kernel::memory_core::hybrid_pool;
 use kernel::memory_core::recency_boost;
 use pgvector::HalfVector;
-use sqlx::QueryBuilder;
+use sqlx::{Acquire as _, QueryBuilder};
 use std::str::FromStr as _;
 use wire::message::Role;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SearchTable {
+    Message,
+    Legacy,
+    Passage,
+}
+
+impl SearchTable {
+    pub(crate) const fn is_message(self) -> bool {
+        matches!(self, Self::Message)
+    }
+
+    pub(crate) const fn alias(self) -> &'static str {
+        match self {
+            Self::Message => "m",
+            Self::Legacy => "s",
+            Self::Passage => "p",
+        }
+    }
+
+    pub(crate) const fn from(self) -> &'static str {
+        match self {
+            Self::Message => "rh_messages m",
+            Self::Legacy => "rh_summaries s",
+            Self::Passage => "rh_summary_passages p JOIN rh_summaries s ON s.id = p.record_id",
+        }
+    }
+
+    pub(crate) const fn time(self) -> &'static str {
+        match self {
+            Self::Message => "m.created_at",
+            Self::Legacy => "s.created_at",
+            Self::Passage => "p.latest_at",
+        }
+    }
+
+    pub(crate) const fn newest(self) -> &'static str {
+        match self {
+            Self::Legacy => "s.latest_at",
+            Self::Message | Self::Passage => self.time(),
+        }
+    }
+
+    pub(crate) fn push_eligibility(self, query: &mut QueryBuilder<sqlx::Postgres>) {
+        query.push(match self {
+            Self::Message => "",
+            Self::Legacy => " AND s.kind IN ('leaf', 'branch', 'root')
+                AND NOT EXISTS (SELECT 1 FROM rh_summaries session
+                                WHERE session.conversation_id = s.conversation_id AND session.kind = 'session')",
+            Self::Passage => " AND s.kind IN ('session', 'part') AND NOT s.index_needs_repair",
+        });
+    }
+}
 
 pub(crate) fn semantic_floor(alias: &str) -> String {
     format!("least(length(btrim({alias}.content)) / 1000.0, 1.0)")
 }
 
-pub(crate) fn recency_columns(alias: &str, is_message: bool) -> String {
-    let (importance, access_table, access_key) = if is_message {
+pub(crate) fn recency_columns(table: SearchTable) -> String {
+    let alias = alias_of(table.is_message());
+    let time = table.time();
+    let (importance, access_table, access_key) = if table.is_message() {
         (
             format!(
                 "(CASE WHEN {alias}.role = 'system' THEN 0.5 \
@@ -35,7 +94,7 @@ pub(crate) fn recency_columns(alias: &str, is_message: bool) -> String {
         ("0.6".to_string(), "rh_summary_access", "summary_id")
     };
     format!(
-        "(EXTRACT(EPOCH FROM (now() - {alias}.created_at)) / 86400.0)::float8 AS age_days, \
+        "(EXTRACT(EPOCH FROM (now() - {time})) / 86400.0)::float8 AS age_days, \
          COALESCE((SELECT a.access_count FROM {access_table} a WHERE a.{access_key} = {alias}.id), \
                   {alias}.access_count, 0) AS access_count, \
          ({importance})::float8 AS importance"
@@ -81,14 +140,15 @@ impl TagFilter {
 pub(crate) fn push_time_conditions(
     query: &mut QueryBuilder<sqlx::Postgres>,
     options: &SearchOptions,
-    alias: &str,
+    table: SearchTable,
 ) {
+    let time = table.time();
     if let Some(since) = options.since {
-        query.push(format!(" AND {alias}.created_at >= "));
+        query.push(format!(" AND {time} >= "));
         query.push_bind(crate::time::BindTime::bind_time(since));
     }
     if let Some(before) = options.before {
-        query.push(format!(" AND {alias}.created_at < "));
+        query.push(format!(" AND {time} < "));
         query.push_bind(crate::time::BindTime::bind_time(before));
     }
 }
@@ -162,22 +222,25 @@ fn like_escaped(token: &str) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LiteralText {
     Summary,
+    Passage,
     Message,
     MessageAndResult,
 }
 
 impl LiteralText {
-    pub(crate) fn of(options: &SearchOptions, is_message: bool) -> Self {
-        match (is_message, options.admits(Role::Tool)) {
-            (false, _) => Self::Summary,
-            (true, true) => Self::MessageAndResult,
-            (true, false) => Self::Message,
+    pub(crate) fn of(options: &SearchOptions, table: SearchTable) -> Self {
+        match table {
+            SearchTable::Legacy => Self::Summary,
+            SearchTable::Passage => Self::Passage,
+            SearchTable::Message if options.admits(Role::Tool) => Self::MessageAndResult,
+            SearchTable::Message => Self::Message,
         }
     }
 
     const fn columns(self) -> &'static [&'static str] {
         match self {
             Self::Summary => &["s.content"],
+            Self::Passage => &["p.content"],
             Self::Message => &["m.content"],
             Self::MessageAndResult => &["m.content", "coalesce(m.tool_result, '')"],
         }
@@ -238,9 +301,14 @@ fn push_literal_match(
     tokens: &[String],
     text: LiteralText,
 ) {
-    if text == LiteralText::Summary {
+    let summary_column = match text {
+        LiteralText::Summary => Some("s.content"),
+        LiteralText::Passage => Some("p.content"),
+        LiteralText::Message | LiteralText::MessageAndResult => None,
+    };
+    if let Some(column) = summary_column {
         query.push(" AND ");
-        push_any_contains(query, "s.content", tokens);
+        push_any_contains(query, column, tokens);
         return;
     }
     query.push(" AND m.id IN (SELECT hit.id FROM rh_messages hit WHERE ");
@@ -271,6 +339,8 @@ fn push_pattern_match(query: &mut QueryBuilder<sqlx::Postgres>, pattern: &str, t
 pub(crate) struct ArmSqlRow {
     chunk: Option<sqlx::types::Json<kernel::memory::MemoryChunkMatch>>,
     id: String,
+    record_id: Option<String>,
+    passage_ordinal: Option<i32>,
     content_key: String,
     reasoning: bool,
     role_or_kind: Option<String>,
@@ -281,6 +351,8 @@ pub(crate) struct ArmSqlRow {
     session_channel: Option<String>,
     #[sqlx(try_from = "jiff_sqlx::Timestamp")]
     created_at: Timestamp,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    newest: Option<Timestamp>,
     score: f64,
     semantic: f64,
     age_days: f64,
@@ -298,7 +370,17 @@ impl ArmSqlRow {
         };
         Ok(ArmRow {
             chunk: self.chunk.map(|chunk| chunk.0),
+            passage: self
+                .passage_ordinal
+                .map(|ordinal| {
+                    Ok::<_, Error>(kernel::memory::SummaryPassage {
+                        id: self.id.clone(),
+                        ordinal: u32::try_from(ordinal)?,
+                    })
+                })
+                .transpose()?,
             id: self.id,
+            record_id: self.record_id,
             reasoning: self.reasoning,
             source: if is_message {
                 MemoryHitSource::Message
@@ -315,6 +397,7 @@ impl ArmSqlRow {
                 .session_id
                 .map(|key| kernel::filing::session_key(self.session_channel.as_deref(), &key)),
             created_at: self.created_at,
+            newest: self.newest,
             arm_score: self.score,
             semantic: self.semantic,
             boost: recency_boost(self.age_days, self.access_count, self.importance),
@@ -324,7 +407,7 @@ impl ArmSqlRow {
 
 pub(crate) fn push_select_prefix(
     query: &mut QueryBuilder<sqlx::Postgres>,
-    is_message: bool,
+    table: SearchTable,
     chunk: bool,
 ) {
     query.push("SELECT ");
@@ -333,10 +416,15 @@ pub(crate) fn push_select_prefix(
     } else {
         "NULL::jsonb AS chunk, "
     });
-    if is_message {
+    if table == SearchTable::Passage {
+        query.push("p.id::text, s.id::text AS record_id, p.ordinal AS passage_ordinal, '' AS content_key, ");
+    } else {
+        let alias = table.alias();
+        query.push(format!("{alias}.id::text, NULL::text AS record_id, NULL::int4 AS passage_ordinal, md5({alias}.content) AS content_key, "));
+    }
+    if table.is_message() {
         query.push(
-            "m.id::text, md5(m.content) AS content_key, \
-             (left(m.content, 10) = '[thinking]') AS reasoning, \
+            "(left(m.content, 10) = '[thinking]') AS reasoning, \
              m.role AS role_or_kind, m.agent, m.tool_name, \
              m.conversation_id::text AS conversation_id, \
              (SELECT conv.session_key FROM rh_conversations conv WHERE conv.id = m.conversation_id) AS session_id, \
@@ -345,13 +433,14 @@ pub(crate) fn push_select_prefix(
         );
     } else {
         query.push(
-            "s.id::text, md5(s.content) AS content_key, false AS reasoning, \
+            "false AS reasoning, \
              s.kind AS role_or_kind, NULL AS agent, \
              NULL AS tool_name, s.conversation_id::text AS conversation_id, \
              (SELECT conv.session_key FROM rh_conversations conv WHERE conv.id = s.conversation_id) AS session_id, \
              (SELECT conv.channel FROM rh_conversations conv WHERE conv.id = s.conversation_id) AS session_channel, \
-             s.created_at, ",
+",
         );
+        query.push(format!("{} AS created_at, ", table.time()));
     }
 }
 
@@ -368,228 +457,4 @@ pub(crate) fn push_embedded_semantic(
     query.push("), ");
     query.push(semantic_floor(alias));
     query.push(")::float8 AS semantic, ");
-}
-
-pub(crate) struct ArmContext<'a> {
-    pub(crate) options: &'a SearchOptions,
-    pub(crate) tag_filter: Option<&'a TagFilter>,
-    pub(crate) patience: Patience,
-}
-
-impl crate::PostgresMemory {
-    pub(crate) async fn arm_rows(
-        &self,
-        options: &SearchOptions,
-        kind: ArmKind,
-        tag_filter: Option<&TagFilter>,
-        query_vector: Option<&[f32]>,
-    ) -> Result<Vec<ArmRow>, Error> {
-        self.arm_rows_with(options, kind, tag_filter, query_vector, Patience::Asked)
-            .await
-    }
-
-    pub(crate) async fn optional_literal_rows(
-        &self,
-        options: &SearchOptions,
-        tag_filter: Option<&TagFilter>,
-        query_vector: Option<&[f32]>,
-    ) -> Result<Option<Vec<ArmRow>>, Error> {
-        match self
-            .arm_rows_with(
-                options,
-                ArmKind::Trigram,
-                tag_filter,
-                query_vector,
-                Patience::Optional,
-            )
-            .await
-        {
-            Ok(rows) => Ok(Some(rows)),
-            Err(error) if error.timed_out() => Ok(None),
-            Err(error) => Err(error),
-        }
-    }
-
-    async fn arm_rows_with(
-        &self,
-        options: &SearchOptions,
-        kind: ArmKind,
-        tag_filter: Option<&TagFilter>,
-        query_vector: Option<&[f32]>,
-        patience: Patience,
-    ) -> Result<Vec<ArmRow>, Error> {
-        let context = ArmContext {
-            options,
-            tag_filter,
-            patience,
-        };
-        let messages = async {
-            if matches!(options.scope, MemoryScope::Messages | MemoryScope::Both) {
-                self.arm_table(&context, kind, true, query_vector).await
-            } else {
-                Ok(Vec::new())
-            }
-        };
-        let summaries = async {
-            if matches!(options.scope, MemoryScope::Summaries | MemoryScope::Both) {
-                self.arm_table(&context, kind, false, query_vector).await
-            } else {
-                Ok(Vec::new())
-            }
-        };
-        let (mut rows, summary_rows) = tokio::try_join!(Box::pin(messages), Box::pin(summaries))?;
-        rows.extend(summary_rows);
-        rows.sort_by(|a, b| {
-            let by_score = b.arm_score.total_cmp(&a.arm_score);
-            if kind == ArmKind::Trigram {
-                by_score.then_with(|| b.created_at.cmp(&a.created_at))
-            } else {
-                by_score
-            }
-        });
-        Ok(rows)
-    }
-
-    #[expect(clippy::too_many_lines)]
-    async fn arm_table(
-        &self,
-        context: &ArmContext<'_>,
-        kind: ArmKind,
-        is_message: bool,
-        query_vector: Option<&[f32]>,
-    ) -> Result<Vec<ArmRow>, Error> {
-        let options = context.options;
-        let tag_filter = context.tag_filter;
-        let pool = hybrid_pool(options.limit);
-        let alias = if is_message { "m" } else { "s" };
-        let literal = LiteralText::of(options, is_message);
-        let tokens = if kind == ArmKind::Trigram {
-            literal_tokens(&options.text, context.patience)
-        } else {
-            Vec::new()
-        };
-        if kind == ArmKind::Trigram && tokens.is_empty() {
-            return Ok(Vec::new());
-        }
-        if kind == ArmKind::Trigram
-            && is_message
-            && let Some(rows) = self
-                .recent_literals(context, &tokens, query_vector, pool)
-                .await?
-        {
-            return Ok(rows);
-        }
-        let text_search = matches!(kind, ArmKind::Fts | ArmKind::FtsExplicit);
-        let candidates = if text_search {
-            self.capped_candidates(context, is_message, kind == ArmKind::Fts)
-                .await?
-        } else {
-            None
-        };
-        let mut query = QueryBuilder::new("");
-        push_select_prefix(&mut query, is_message, false);
-        match kind {
-            ArmKind::Fts | ArmKind::FtsExplicit => {
-                query.push(format!(
-                    "ts_rank_cd({alias}.content_tsv, plainto_tsquery('english', "
-                ));
-                query.push_bind(options.text.clone());
-                query.push(if is_message {
-                    "), 32)::float8"
-                } else {
-                    "))::float8"
-                });
-            }
-            ArmKind::Trigram => push_literal_score(&mut query, &tokens, literal),
-            ArmKind::Regex => {
-                query.push("1.0::float8");
-            }
-        }
-        query.push(" AS score, ");
-        if let Some(vector) = query_vector.map(HalfVector::from_f32_slice) {
-            let distance = format!("{alias}.embedding");
-            push_embedded_semantic(&mut query, &distance, alias, &vector);
-        } else {
-            query.push(semantic_floor(alias));
-            query.push("::float8 AS semantic, ");
-        }
-        query.push(format!("{} FROM ", recency_columns(alias, is_message)));
-        query.push(if is_message {
-            "rh_messages m"
-        } else {
-            "rh_summaries s"
-        });
-        if text_search {
-            crate::search_fts::push_fts_where(
-                &mut query,
-                context,
-                is_message,
-                kind == ArmKind::Fts,
-            );
-            if let Some(candidates) = &candidates {
-                query.push(format!(" AND {alias}.id = ANY("));
-                query.push_bind(candidates.clone());
-                query.push(")");
-            }
-        } else {
-            query.push(" WHERE ");
-            if let Some(filter) = tag_filter {
-                filter.push_condition(&mut query, is_message);
-            } else {
-                query.push("true");
-            }
-            match kind {
-                ArmKind::Trigram => push_literal_match(&mut query, &tokens, literal),
-                ArmKind::Regex => push_pattern_match(&mut query, &options.text, literal),
-                ArmKind::Fts | ArmKind::FtsExplicit => {}
-            }
-            push_time_conditions(&mut query, options, alias);
-            push_scope_conditions(&mut query, options, is_message);
-        }
-        query.push(" ORDER BY ");
-        if kind == ArmKind::FtsExplicit && is_message {
-            query.push("reasoning, ");
-        }
-        if candidates.is_some() {
-            query.push(format!(
-                "score DESC, {} DESC LIMIT {pool}",
-                crate::search_cap::newest_column(is_message)
-            ));
-        } else if kind == ArmKind::Trigram {
-            query.push(format!("score DESC, {alias}.created_at DESC LIMIT {pool}"));
-        } else {
-            query.push(format!("score DESC LIMIT {pool}"));
-        }
-        let fetched = if matches!(kind, ArmKind::Trigram | ArmKind::Regex) {
-            let mut tx = self
-                .pool
-                .begin()
-                .await
-                .map_err(|source| Error::operation("search", source))?;
-            sqlx::query("select set_config('statement_timeout', $1, true)")
-                .bind(context.patience.statement_timeout())
-                .execute(&mut *tx)
-                .await
-                .map_err(|source| Error::operation("search", source))?;
-            let rows = query
-                .build_query_as::<ArmSqlRow>()
-                .fetch_all(&mut *tx)
-                .await
-                .map_err(|source| Error::operation("search", source))?;
-            tx.commit()
-                .await
-                .map_err(|source| Error::operation("search", source))?;
-            rows
-        } else {
-            query
-                .build_query_as::<ArmSqlRow>()
-                .fetch_all(&self.pool)
-                .await
-                .map_err(|source| Error::operation("search", source))?
-        };
-        fetched
-            .into_iter()
-            .map(|row| row.into_arm(is_message))
-            .collect()
-    }
 }

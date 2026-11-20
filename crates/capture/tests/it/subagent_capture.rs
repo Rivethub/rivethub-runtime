@@ -221,8 +221,77 @@ async fn a_subagent_stop_captures_the_subagents_own_transcript() -> TestResult {
             .iter()
             .all(|message| message.event_id.starts_with(&prefix))
     );
-    let parent = the(&batches, &format!("claude-code:{PARENT}"))?;
-    assert_eq!(setting(parent, "parent_session_id"), None);
+    assert_eq!(batches.len(), 1);
+    assert!(
+        child
+            .session_observation()?
+            .is_some_and(|observation| observation.end_key.is_some())
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn nearby_stops_target_each_named_child_and_a_nested_stop_targets_the_grandchild()
+-> TestResult {
+    let store = Store::new()?;
+    let explorer = store.explorer()?;
+    let workflow = store.workflow_agent()?;
+    let gateway = Gateway::default();
+    let hook = store.hook(&gateway)?;
+    for (id, path) in [(EXPLORER, &explorer), (WORKFLOW, &workflow)] {
+        let payload = store.stdin(
+            "SubagentStop",
+            &format!(
+                r#","agent_id":"{id}","agent_transcript_path":"{}","event_id":"stop-{id}""#,
+                path.display()
+            ),
+        );
+        assert_eq!(hook.run(&payload, now()?, "invented").await.stderr, "");
+        let batches = gateway.take();
+        assert_eq!(batches.len(), 1);
+        let batch = the(&batches, &format!("claude-code:{id}"))?;
+        assert_eq!(
+            setting(batch, "last_event_id"),
+            Some(format!("stop-{id}").as_str())
+        );
+    }
+    let nested = "anested";
+    let path = Store::agent(&store.session_dir().join("subagents"), nested, "{}")?;
+    let payload = format!(
+        r#"{{"session_id":"{EXPLORER}","transcript_path":"{}","agent_id":"{nested}","agent_transcript_path":"{}","hook_event_name":"SubagentStop"}}"#,
+        explorer.display(),
+        path.display()
+    );
+    assert_eq!(hook.run(&payload, now()?, "invented").await.stderr, "");
+    let batches = gateway.take();
+    assert_eq!(batches.len(), 1);
+    let batch = the(&batches, &format!("claude-code:{nested}"))?;
+    assert_eq!(setting(batch, "parent_session_id"), Some(EXPLORER));
+    assert!(
+        batch
+            .session_observation()?
+            .and_then(|end| end.end_key)
+            .is_some()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn conflicting_or_missing_stop_identity_leaves_other_transcripts_alone() -> TestResult {
+    let store = Store::new()?;
+    store.explorer()?;
+    let workflow = store.workflow_agent()?;
+    let gateway = Gateway::default();
+    let hook = store.hook(&gateway)?;
+    let conflict = format!(
+        r#","agent_id":"{EXPLORER}","agent_transcript_path":"{}""#,
+        workflow.display()
+    );
+    for extra in ["", &conflict, r#","agent_id":"missing""#] {
+        let payload = store.stdin("SubagentStop", extra);
+        assert_eq!(hook.run(&payload, now()?, "invented").await.stderr, "");
+    }
+    assert_eq!(gateway.keys(), Vec::<String>::new());
     Ok(())
 }
 
@@ -363,8 +432,7 @@ fn spooled_keys(home: &Path) -> Result<Vec<String>, Box<dyn std::error::Error>> 
 }
 
 #[tokio::test]
-async fn a_subagent_stop_during_an_outage_spools_the_subagent_as_well_as_the_parent() -> TestResult
-{
+async fn a_subagent_stop_during_an_outage_spools_only_the_subagent() -> TestResult {
     let store = Store::new()?;
     store.explorer()?;
     let env = environment(store.home.path());
@@ -385,10 +453,7 @@ async fn a_subagent_stop_during_an_outage_spools_the_subagent_as_well_as_the_par
     .await;
     assert_eq!(
         spooled_keys(store.home.path())?,
-        vec![
-            format!("claude-code:{PARENT}"),
-            format!("claude-code:{EXPLORER}")
-        ]
+        vec![format!("claude-code:{EXPLORER}")]
     );
     Ok(())
 }

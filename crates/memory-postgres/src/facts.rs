@@ -273,8 +273,35 @@ pub(crate) async fn insert_claim(
 impl FactStore for PostgresMemory {
     async fn assert_facts(&self, claims: &[NewClaim]) -> Result<(), FactError> {
         let mut tx = self.pool.begin().await.map_err(failed("fact claim"))?;
+        let ids: Vec<_> = claims
+            .iter()
+            .filter_map(|claim| match &claim.said {
+                Said::Writer { summary, .. } => Some(*summary),
+                Said::You { .. } => None,
+            })
+            .collect();
+        let inputs = crate::summary_replace::shared(&mut tx, &ids)
+            .await
+            .map_err(|error| match error {
+                crate::summary_replace::FenceError::Reference(error) => {
+                    FactError::SummaryReference(error)
+                }
+                crate::summary_replace::FenceError::Query(error) => failed("fact source")(error),
+            })?;
         let now = Timestamp::now();
         for claim in claims {
+            if let Said::Writer { summary, .. } = &claim.said
+                && let Some(input) = inputs.iter().find(|input| input.id == *summary)
+                && claim
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.as_str() != input.owner_user_id)
+            {
+                return Err(
+                    kernel::memory::summary_reference::SummaryReferenceError::Stale(*summary)
+                        .into(),
+                );
+            }
             insert_claim(&mut tx, claim, now).await?;
         }
         tx.commit().await.map_err(failed("fact claim"))

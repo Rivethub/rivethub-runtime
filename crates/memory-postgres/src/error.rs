@@ -4,6 +4,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error(transparent)]
+    Cursor(#[from] kernel::memory::CursorError),
     #[error("wiki page escapes its directory")]
     WikiContainment,
     #[error("wiki file access failed: {0}")]
@@ -125,7 +127,8 @@ impl From<Error> for MemoryStoreError {
             Error::NotAdopted => Self::Unavailable(Box::new(Error::NotAdopted)),
             error @ Error::BypassingLogin { .. } => Self::Unavailable(Box::new(error)),
             Error::QueueAbsent => Self::Unavailable(Box::new(Error::QueueAbsent)),
-            Error::MissingChannel
+            Error::Cursor(_)
+            | Error::MissingChannel
             | Error::ReceivedSession
             | Error::WikiContainment
             | Error::UnresolvedWindow
@@ -204,7 +207,8 @@ impl From<Error> for JobQueueError {
             Error::NotAdopted => Self::Unavailable(Box::new(Error::NotAdopted)),
             error @ Error::BypassingLogin { .. } => Self::Unavailable(Box::new(error)),
             Error::QueueAbsent => Self::Unavailable(Box::new(Error::QueueAbsent)),
-            Error::MissingChannel
+            Error::Cursor(_)
+            | Error::MissingChannel
             | Error::ReceivedSession
             | Error::WikiContainment
             | Error::WikiIo(_)

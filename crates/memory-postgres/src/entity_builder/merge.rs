@@ -16,7 +16,6 @@ pub(super) async fn merge_pair(
     right: Uuid,
     now: Timestamp,
 ) -> Result<(Option<EntityMerge>, Option<PageFile>), sqlx::Error> {
-    lock_pair(tx, left, right).await?;
     let found_left = load_side(tx, left).await?;
     let found_right = load_side(tx, right).await?;
     match (found_left, found_right) {
@@ -75,7 +74,7 @@ fn older(left: TopicSide, right: TopicSide) -> (TopicSide, TopicSide) {
     }
 }
 
-async fn lock_pair(
+pub(super) async fn lock_pair(
     tx: &mut Transaction<'_, Postgres>,
     left: Uuid,
     right: Uuid,

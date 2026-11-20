@@ -4,6 +4,8 @@ use std::collections::BTreeSet;
 fn row(id: &str, session: &str) -> ArmRow {
     ArmRow {
         chunk: None,
+        passage: None,
+        record_id: None,
         id: id.into(),
         source: MemoryHitSource::Message,
         content_key: id.into(),
@@ -15,6 +17,7 @@ fn row(id: &str, session: &str) -> ArmRow {
         conversation_id: None,
         session_id: Some(session.into()),
         created_at: jiff::Timestamp::UNIX_EPOCH,
+        newest: None,
         arm_score: 1.0,
         semantic: 0.0,
         boost: 0.0,

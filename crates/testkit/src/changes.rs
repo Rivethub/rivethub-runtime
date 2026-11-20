@@ -15,10 +15,10 @@ use kernel::facts::FactStore;
 use kernel::facts::FactValue;
 use kernel::facts::NewClaim;
 use kernel::facts::Said;
-use kernel::memory::MemoryStore;
 use kernel::memory::TagAdd;
 use kernel::memory::TagEntity;
 use kernel::memory::TagEntityType;
+use kernel::memory::{MemoryStore, SummaryStore};
 use kernel::owner::Owner;
 use kernel::topics::Decision;
 use kernel::topics::DecisionStore;
@@ -31,7 +31,6 @@ use kernel::topics::TopicId;
 use kernel::topics::TopicKind;
 use kernel::topics::TopicName;
 use kernel::topics::TopicStore;
-use uuid::Uuid;
 use wire::session_id::SessionId;
 
 use crate::topics::Outcome;
@@ -91,9 +90,10 @@ fn shown(changes: &[Change]) -> Vec<(ChangeKind, String, Option<String>)> {
 
 async fn seed<S>(store: &S) -> Result<(SessionId, TopicId), Box<dyn std::error::Error>>
 where
-    S: TopicStore + FactStore + DecisionStore,
+    S: TopicStore + FactStore + DecisionStore + MemoryStore + SummaryStore,
 {
     let filed = session(FILED)?;
+    let summary = crate::facts::summarized(store, &filed, "Review backup retention").await?;
     let backups = topic(store, "Backups", TopicKind::Work, None, 1).await?;
     let jobs = topic(store, "Backup jobs", TopicKind::Work, None, 2).await?;
     let nas = topic(
@@ -120,7 +120,7 @@ where
             value: FactValue::new("14 days")?,
             said: Said::Writer {
                 session: filed.clone(),
-                summary: Uuid::new_v4(),
+                summary,
                 evidence: Evidence::quote("raised retention to 14 days"),
                 settled: false,
             },
@@ -143,7 +143,7 @@ where
 
 pub async fn changes_list_what_the_day_recorded<S>(store: &S) -> Outcome
 where
-    S: TopicStore + FactStore + DecisionStore + ChangeFeed,
+    S: TopicStore + FactStore + DecisionStore + ChangeFeed + MemoryStore + SummaryStore,
 {
     let (filed, nas) = seed(store).await?;
     let source = Some(filed.to_string());

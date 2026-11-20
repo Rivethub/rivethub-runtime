@@ -109,25 +109,7 @@ impl GraphileQueue {
         if job.key_mode == JobKeyMode::Arm {
             return self.arm(job).await;
         }
-        let payload = sqlx::types::Json(&job.payload);
-        let queued: QueuedJob = sqlx::query_as(
-            "select (graphile_worker.add_job($1, $2::json, $8, $3, $4, $5, $6, null::text[], $7)).id",
-        )
-        .bind(job.name.to_string())
-        .bind(payload)
-        .bind(crate::time::BindTime::bind_time(job.run_at))
-        .bind(match job.max_attempts {
-            Some(attempts) => attempts,
-            None => attempts_for(&job.name),
-        })
-        .bind(&job.key)
-        .bind(i32::from(job.priority))
-        .bind(key_mode(job.key_mode))
-        .bind(single_flight(job))
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|source| Error::operation("enqueue", source))?;
-        Ok(JobId::new(queued.id))
+        enqueue_on(&self.pool, job).await
     }
 
     async fn arm(&self, job: &Job) -> Result<JobId, Error> {
@@ -209,11 +191,30 @@ impl GraphileQueue {
         id: JobId,
         delay: Option<std::time::Duration>,
     ) -> Result<u64, Error> {
-        let released: i64 = sqlx::query_scalar(crate::graphile_sql::RELEASE)
-            .bind(i64::from(id))
-            .bind(format!("{}-", self.worker))
-            .bind(delay.map(|delay| delay.as_secs_f64()))
-            .fetch_one(&self.pool)
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|source| Error::operation("release", source))?;
+        let worker = format!("{}-", self.worker);
+        let id = i64::from(id);
+        let live = crate::flagged::live_jobs(&mut tx, &[id]).await?;
+        let released: i64 = if live.is_empty() {
+            sqlx::query_scalar(crate::graphile_sql::COMPLETE)
+                .bind(id)
+                .bind(&worker)
+                .fetch_one(&mut *tx)
+                .await
+        } else {
+            sqlx::query_scalar(crate::graphile_sql::RELEASE)
+                .bind(id)
+                .bind(&worker)
+                .bind(delay.map(|delay| delay.as_secs_f64()))
+                .fetch_one(&mut *tx)
+                .await
+        }
+        .map_err(|source| Error::operation("release", source))?;
+        tx.commit()
             .await
             .map_err(|source| Error::operation("release", source))?;
         count(released)
@@ -369,7 +370,14 @@ fn key_mode(mode: JobKeyMode) -> &'static str {
 }
 
 fn single_flight(job: &Job) -> Option<&str> {
-    if job.name == JobName::Fixed(FixedJob::SummarizeConversation) {
+    if matches!(
+        job.name,
+        JobName::Fixed(
+            FixedJob::SummarizeConversation
+                | FixedJob::TitleConversation
+                | FixedJob::FileConversation
+        )
+    ) {
         job.key.as_deref()
     } else {
         None
@@ -380,13 +388,15 @@ pub(crate) fn attempts_for(name: &JobName) -> i32 {
     match name {
         JobName::Fixed(fixed) => match fixed {
             FixedJob::EmbedTarget | FixedJob::SyncTopicPage => 5,
-            FixedJob::SummarizeConversation
+            FixedJob::TitleConversation
+            | FixedJob::SummarizeConversation
             | FixedJob::SynthesizeToolCall
             | FixedJob::DigestDay => 3,
             FixedJob::FileConversation | FixedJob::ExtractWiki | FixedJob::ExtractEntities => 2,
             FixedJob::EnqueueUnembedded
             | FixedJob::EnqueueUnchunked
             | FixedJob::EnqueueIdle
+            | FixedJob::EnqueueOpenings
             | FixedJob::EnqueueWikiBackfill
             | FixedJob::ConsolidateWiki
             | FixedJob::RecompileWiki
@@ -399,4 +409,29 @@ pub(crate) fn attempts_for(name: &JobName) -> i32 {
             | FixedJob::PurgeDeletedSessions => 25,
         },
     }
+}
+
+pub(crate) async fn enqueue_on<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    job: &Job,
+) -> Result<JobId, Error> {
+    let payload = sqlx::types::Json(&job.payload);
+    let queued: QueuedJob = sqlx::query_as(
+        "select (graphile_worker.add_job($1, $2::json, $8, $3, $4, $5, $6, null::text[], $7)).id",
+    )
+    .bind(job.name.to_string())
+    .bind(payload)
+    .bind(crate::time::BindTime::bind_time(job.run_at))
+    .bind(match job.max_attempts {
+        Some(attempts) => attempts,
+        None => attempts_for(&job.name),
+    })
+    .bind(&job.key)
+    .bind(i32::from(job.priority))
+    .bind(key_mode(job.key_mode))
+    .bind(single_flight(job))
+    .fetch_one(executor)
+    .await
+    .map_err(|source| Error::operation("enqueue", source))?;
+    Ok(JobId::new(queued.id))
 }

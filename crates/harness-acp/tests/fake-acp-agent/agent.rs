@@ -4,10 +4,10 @@ use std::sync::atomic::Ordering;
 
 use agent_client_protocol::Agent;
 use agent_client_protocol::Client;
-use agent_client_protocol::ConnectionTo;
-use agent_client_protocol::Responder;
 use agent_client_protocol::Stdio;
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::v1::ConnectionTo;
+use agent_client_protocol::v1::Responder;
+use agent_client_protocol::v1::schema as acp;
 use clap::Parser;
 use parking_lot::Mutex;
 use tokio::sync::Notify;
@@ -117,7 +117,7 @@ fn on_initialize(
     state: &AgentState,
     request: &acp::InitializeRequest,
     responder: Responder<acp::InitializeResponse>,
-) -> Result<(), acp::Error> {
+) -> Result<(), agent_client_protocol::Error> {
     responder.respond(
         acp::InitializeResponse::new(request.protocol_version).agent_capabilities(
             acp::AgentCapabilities::new().session_capabilities(
@@ -134,21 +134,21 @@ fn on_initialize(
     )
 }
 
-fn record(path: &std::path::Path, line: &str) -> Result<(), acp::Error> {
+fn record(path: &std::path::Path, line: &str) -> Result<(), agent_client_protocol::Error> {
     use std::io::Write as _;
     std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(path)
         .and_then(|mut file| writeln!(file, "{line}"))
-        .map_err(|error| acp::Error::internal_error().data(error.to_string()))
+        .map_err(|error| agent_client_protocol::Error::internal_error().data(error.to_string()))
 }
 
 fn on_new_session(
     state: &AgentState,
     request: &acp::NewSessionRequest,
     responder: Responder<acp::NewSessionResponse>,
-) -> Result<(), acp::Error> {
+) -> Result<(), agent_client_protocol::Error> {
     if let Some(path) = &state.record_new {
         record(path, &request.cwd.display().to_string())?;
     }
@@ -162,7 +162,7 @@ fn on_set_config(
     request: acp::SetSessionConfigOptionRequest,
     responder: Responder<acp::SetSessionConfigOptionResponse>,
     connection: &ConnectionTo<Client>,
-) -> Result<(), acp::Error> {
+) -> Result<(), agent_client_protocol::Error> {
     let echo = {
         let mut selection = state.selection.lock();
         match script::apply_selection(&mut selection, &request) {
@@ -186,7 +186,7 @@ fn spawn_prompt(
     request: acp::PromptRequest,
     responder: Responder<acp::PromptResponse>,
     connection: &ConnectionTo<Client>,
-) -> Result<(), acp::Error> {
+) -> Result<(), agent_client_protocol::Error> {
     let task_connection = connection.clone();
     connection.spawn(async move {
         let session_id = request.session_id;
@@ -215,7 +215,7 @@ async fn execute_prompt(
     state: &AgentState,
     connection: &ConnectionTo<Client>,
     session_id: &acp::SessionId,
-) -> Result<acp::StopReason, acp::Error> {
+) -> Result<acp::StopReason, agent_client_protocol::Error> {
     if matches!(state.crash_on, Some(CrashPoint::Prompt)) {
         match state.crash().await {}
     }
@@ -248,7 +248,7 @@ fn on_cancel(state: &AgentState) {
     state.cancel_notify.notify_one();
 }
 
-async fn serve(state: Arc<AgentState>) -> Result<(), acp::Error> {
+async fn serve(state: Arc<AgentState>) -> Result<(), agent_client_protocol::Error> {
     let initialize_state = Arc::clone(&state);
     let new_state = Arc::clone(&state);
     let config_state = Arc::clone(&state);
@@ -256,7 +256,7 @@ async fn serve(state: Arc<AgentState>) -> Result<(), acp::Error> {
     let cancel_state = Arc::clone(&state);
     let delete_state = Arc::clone(&state);
     Agent
-        .builder()
+        .v1()
         .name("fake-acp-agent")
         .on_receive_request(
             async move |request: acp::InitializeRequest, responder, _connection| {

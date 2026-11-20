@@ -41,6 +41,16 @@ impl JsonObject {
     }
 
     #[must_use]
+    pub fn get_str(&self, key: &str) -> Option<&str> {
+        self.get(key).and_then(Value::as_str)
+    }
+
+    #[must_use]
+    pub fn get_bool(&self, key: &str) -> Option<bool> {
+        self.get(key).and_then(Value::as_bool)
+    }
+
+    #[must_use]
     pub fn as_map(&self) -> &Map<String, Value> {
         &self.0
     }

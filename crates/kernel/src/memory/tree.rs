@@ -4,9 +4,9 @@ use std::collections::HashSet;
 
 use super::MemoryMessageTally;
 use super::MemorySummaryNode;
-use super::SummaryDag;
 use super::SummaryKind;
 use super::VectorState;
+use super::{SUMMARY_PREVIEW_BYTES, SummaryDag};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TreeWindow {
@@ -26,6 +26,9 @@ pub struct SummaryCounts {
     pub leaves: u64,
     pub branches: u64,
     pub roots: u64,
+    pub sessions: u64,
+    pub parts: u64,
+    pub sections: u64,
     pub embedded: u64,
     pub top: u64,
 }
@@ -44,6 +47,7 @@ pub struct SummaryShape {
     pub id: String,
     pub parent_id: Option<String>,
     pub kind: SummaryKind,
+    pub summary_ordinal: Option<u32>,
     pub embedded: bool,
     pub earliest_at: Option<Timestamp>,
     pub latest_at: Option<Timestamp>,
@@ -55,6 +59,7 @@ impl From<&MemorySummaryNode> for SummaryShape {
             id: node.id.clone(),
             parent_id: node.parent_id.clone(),
             kind: node.kind,
+            summary_ordinal: node.summary_ordinal,
             embedded: node.vector == VectorState::Embedded,
             earliest_at: node.earliest_at,
             latest_at: node.latest_at,
@@ -85,6 +90,9 @@ pub fn cut(shapes: &[SummaryShape], parent: Option<&str>, window: TreeWindow) ->
             SummaryKind::Leaf => counts.leaves += 1,
             SummaryKind::Branch => counts.branches += 1,
             SummaryKind::Root => counts.roots += 1,
+            SummaryKind::Session => counts.sessions += 1,
+            SummaryKind::Part => counts.parts += 1,
+            SummaryKind::Section => counts.sections += 1,
         }
         if shape.embedded {
             counts.embedded += 1;
@@ -106,8 +114,16 @@ pub fn cut(shapes: &[SummaryShape], parent: Option<&str>, window: TreeWindow) ->
         }
     }
     siblings.sort_by(|left, right| {
-        (left.earliest_at.or(left.latest_at), &left.id)
-            .cmp(&(right.earliest_at.or(right.latest_at), &right.id))
+        (
+            left.summary_ordinal,
+            left.earliest_at.or(left.latest_at),
+            &left.id,
+        )
+            .cmp(&(
+                right.summary_ordinal,
+                right.earliest_at.or(right.latest_at),
+                &right.id,
+            ))
     });
     let total = siblings.iter().fold(0, |total, _| total + 1);
     let ids = siblings
@@ -165,6 +181,75 @@ impl SummaryDag {
     }
 }
 
+impl SummaryDag {
+    #[must_use]
+    pub fn outline(mut self) -> Self {
+        for node in &mut self.summaries {
+            node.source_message_ids.clear();
+            if node.content.len() > SUMMARY_PREVIEW_BYTES {
+                let mut end = SUMMARY_PREVIEW_BYTES;
+                while !node.content.is_char_boundary(end) {
+                    end -= 1;
+                }
+                node.content.truncate(end);
+                node.truncated = true;
+            }
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn order_top_down(mut self) -> Self {
+        if let Some(root) = self
+            .summaries
+            .iter()
+            .find(|node| node.kind == SummaryKind::Session)
+            .map(|node| node.id.clone())
+        {
+            let position = |node: &MemorySummaryNode| {
+                if !node.kind.is_top_down() {
+                    0
+                } else if node.kind == SummaryKind::Session {
+                    1
+                } else if node.parent_id.as_deref() == Some(root.as_str()) {
+                    2
+                } else {
+                    3
+                }
+            };
+            self.summaries.sort_by(|left, right| {
+                position(left).cmp(&position(right)).then_with(|| {
+                    if left.kind.is_top_down() && right.kind.is_top_down() {
+                        (&left.parent_id, left.summary_ordinal, &left.id).cmp(&(
+                            &right.parent_id,
+                            right.summary_ordinal,
+                            &right.id,
+                        ))
+                    } else {
+                        std::cmp::Ordering::Equal
+                    }
+                })
+            });
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn latest(mut self, limit: usize) -> Self {
+        self.summaries.sort_by(|left, right| {
+            (right.kind == SummaryKind::Session)
+                .cmp(&(left.kind == SummaryKind::Session))
+                .then_with(|| right.latest_at.cmp(&left.latest_at))
+                .then_with(|| {
+                    (right.kind == SummaryKind::Leaf).cmp(&(left.kind == SummaryKind::Leaf))
+                })
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        self.summaries.truncate(limit);
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,6 +266,11 @@ mod tests {
             earliest_at: at,
             latest_at: at,
             created_at: Timestamp::UNIX_EPOCH,
+            summary_ordinal: None,
+            source_first: None,
+            source_last: None,
+            range_verified: None,
+            quality_flags: 0,
             source_message_ids: Vec::new(),
             vector: if kind == SummaryKind::Leaf {
                 VectorState::Pending
@@ -231,6 +321,7 @@ mod tests {
                 roots: 1,
                 embedded: 2,
                 top: 3,
+                ..SummaryCounts::default()
             }
         );
         let whole = dag().tree(None, TreeWindow::ALL).expect("the top");

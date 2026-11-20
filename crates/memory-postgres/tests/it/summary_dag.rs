@@ -261,3 +261,242 @@ async fn a_tree_reads_one_level_at_a_time_as_the_outline_would(pool: PgPool) -> 
     );
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_archive_resolves_ranges_and_keeps_filtered_copy_closed(
+    pool: PgPool,
+) -> TestResult {
+    use tokio_util::sync::CancellationToken;
+
+    let fixture = std::fs::read_to_string(testkit::recording("summary-archive/top-down.txt"))?;
+    let memory = PostgresMemory::new(pool.clone());
+    let cancel = CancellationToken::new();
+    memory.import_memory_dump(&fixture, false, &cancel).await?;
+    let owner = SummaryOwner::Session("cli:top-down".to_owned());
+    let section = assert_mixed_tree(&memory, &owner).await?;
+    let deferred: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM rh_summaries WHERE index_needs_repair")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(deferred, 2);
+
+    let dump = export_fixture(&memory, &fixture, &cancel).await?;
+    let target = crate::merge::source_database(&pool).await?;
+    let imported = PostgresMemory::new(target.clone());
+    let invalid = dump.replace(
+        "00000000-0000-4000-8000-000000000103\t3",
+        "00000000-0000-4000-8000-000000000103\t2",
+    );
+    assert!(matches!(
+        imported.import_memory_dump(&invalid, true, &cancel).await,
+        Err(memory_postgres::Error::DumpMessage(_))
+    ));
+    let report = imported.import_memory_dump(&dump, false, &cancel).await?;
+    assert_eq!(report.rows.get("summaries").copied(), Some(4));
+    assert_eq!(
+        report.rows.get("messages").copied(),
+        Some(4),
+        "completed receipt adds its source"
+    );
+    assert_eq!(report.rows.get("summary_sources").copied(), Some(5));
+    assert_eq!(report.rows.get("summary_passages").copied(), Some(1));
+    assert_eq!(report.rows.get("summary_deliveries").copied(), Some(2));
+    assert_eq!(
+        imported.summary_node(&owner, &section.id).await?,
+        Some(section)
+    );
+
+    let rejected = sqlx::query(
+        "INSERT INTO rh_summaries (conversation_id, depth, content, kind, message_count, earliest_at,
+             latest_at, pipeline_version, summary_ordinal, source_first, source_last, input_key, owner_user_id)
+         SELECT conversation_id, depth, content, kind, message_count, earliest_at, latest_at,
+             pipeline_version, summary_ordinal, source_first, source_last, input_key, owner_user_id
+         FROM rh_summaries WHERE kind = 'session'",
+    ).execute(&pool).await;
+    assert!(
+        matches!(rejected, Err(sqlx::Error::Database(error)) if error.constraint() == Some("rh_summary_one_session"))
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn split_session_source_without_part_is_not_covered(pool: PgPool) -> TestResult {
+    use kernel::memory::summary_conversion::{ConversionControl, SummaryConversion};
+    use kernel::tenancy::Scope;
+    use tokio_util::sync::CancellationToken;
+
+    let fixture = std::fs::read_to_string(testkit::recording("summary-archive/top-down.txt"))?;
+    let store = PostgresMemory::new(pool.clone());
+    store
+        .import_memory_dump(&fixture, false, &CancellationToken::new())
+        .await?;
+    let deliveries = "INSERT INTO rh_summary_deliveries
+        (conversation_id, consumer, message_id, historical_backlog) VALUES
+        ('00000000-0000-4000-8000-000000000001', 'wiki', '00000000-0000-4000-8000-000000000101', true),
+        ('00000000-0000-4000-8000-000000000001', 'wiki', '00000000-0000-4000-8000-000000000102', true)";
+    sqlx::query(deliveries).execute(&pool).await?;
+
+    let before = Scope::Maintenance.run(store.status()).await?;
+    assert_eq!(before.delivery_rows_not_covered, 1);
+    assert_eq!(before.delivery_rows_waiting_for_release, 1);
+
+    let conversation = uuid::Uuid::parse_str("00000000-0000-4000-8000-000000000001")?;
+    let after = Scope::Maintenance
+        .run(store.control(ConversionControl::Release { conversation }))
+        .await?;
+    assert_eq!(after.delivery_rows_not_covered, 1);
+    assert_eq!(after.delivery_rows_waiting_for_release, 0);
+    Ok(())
+}
+
+async fn assert_mixed_tree(
+    memory: &PostgresMemory,
+    owner: &SummaryOwner,
+) -> Result<kernel::memory::MemorySummaryNode, Box<dyn std::error::Error>> {
+    let tree = memory
+        .summary_tree(owner, None, TreeWindow::ALL)
+        .await?
+        .ok_or("expected tree")?;
+    assert_eq!(
+        (
+            tree.counts.sessions,
+            tree.counts.parts,
+            tree.counts.sections
+        ),
+        (1, 1, 2)
+    );
+    assert_eq!(
+        (tree.counts.leaves, tree.counts.branches, tree.counts.roots),
+        (1, 1, 1)
+    );
+    let latest = memory.summary_latest(owner, 1).await?;
+    let session = latest.summaries.first().ok_or("expected session")?;
+    assert_eq!(session.kind, SummaryKind::Session);
+    let children = memory
+        .summary_tree(owner, Some(&session.id), TreeWindow::ALL)
+        .await?
+        .ok_or("expected children")?;
+    let [section, part] = children.summaries.as_slice() else {
+        return Err("expected a section and a part".into());
+    };
+    assert_eq!(
+        (section.kind, part.kind),
+        (SummaryKind::Section, SummaryKind::Part)
+    );
+    let section = memory
+        .summary_node(owner, &section.id)
+        .await?
+        .ok_or("expected section")?;
+    assert_eq!(
+        section.source_message_ids,
+        ["00000000-0000-4000-8000-000000000103"]
+    );
+    assert_eq!(
+        (
+            section.summary_ordinal,
+            section.source_first,
+            section.range_verified,
+            section.quality_flags
+        ),
+        (Some(0), Some(3), Some(true), 1)
+    );
+    Ok(section)
+}
+
+async fn export_fixture(
+    memory: &PostgresMemory,
+    fixture: &str,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Result<String, Box<dyn std::error::Error>> {
+    use kernel::memory::{DumpOrigin, DumpSource};
+    use memory_postgres::dump::CopySource;
+    let headers = fixture
+        .lines()
+        .filter_map(|line| line.strip_prefix("COPY public.ros_"))
+        .filter_map(|line| line.strip_suffix(") FROM stdin;"))
+        .filter_map(|line| line.split_once(" ("))
+        .map(|(name, columns)| {
+            (
+                format!("rh_{name}"),
+                format!("ros_{name}"),
+                columns.split(", ").collect::<Vec<_>>(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let tables = headers
+        .iter()
+        .map(|(relation, compatibility, columns)| CopySource {
+            relation,
+            compatibility,
+            columns,
+        })
+        .collect::<Vec<_>>();
+    Ok(String::from_utf8(
+        memory
+            .export_memory_dump(
+                &tables,
+                Some(at("2026-10-11T00:00:00Z")),
+                &DumpOrigin {
+                    source: DumpSource::Datahub,
+                    host: "fixture".to_owned(),
+                },
+                cancel,
+            )
+            .await?,
+    )?)
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn summary_search_uses_the_session_passage_when_both_trees_exist(pool: PgPool) -> TestResult {
+    use kernel::memory::{Limit, MemoryScope, SearchMode, SearchQuery};
+
+    sqlx::raw_sql(
+        "SET rivet.defer_embed_enqueue = 'on';
+         INSERT INTO rh_conversations (id, session_key, agent, owner_user_id)
+         VALUES ('00000000-0000-0000-0000-000000000001', 'cli:mixed', 'fixture', 'owner');
+         INSERT INTO rh_summaries (id, conversation_id, depth, content, kind, message_count,
+                earliest_at, latest_at, pipeline_version, summary_ordinal, source_first, source_last,
+                input_key, index_key, owner_user_id)
+         VALUES ('00000000-0000-0000-0000-000000000010', '00000000-0000-0000-0000-000000000001',
+                 0, 'invented tray legacy', 'leaf', 1, now(), now(), 6, NULL, NULL, NULL, NULL, NULL, 'owner'),
+                ('00000000-0000-0000-0000-000000000020', '00000000-0000-0000-0000-000000000001',
+                 2, 'invented tray session', 'session', 1, now(), now(), 7, 0, 1, 1,
+                 decode(repeat('ab',32),'hex'), decode(repeat('ab',32),'hex'), 'owner');
+         INSERT INTO rh_summary_passages
+                (record_id, id, ordinal, char_start, char_end, content, earliest_at, latest_at, index_key, embedding)
+         SELECT id, '00000000-0000-0000-0000-000000000030', 0, 0, length(content), content,
+                earliest_at, latest_at, index_key, array_fill(0.5::real, ARRAY[1024])::halfvec
+           FROM rh_summaries WHERE kind = 'session';",
+    )
+    .execute(&pool)
+    .await?;
+    let memory = PostgresMemory::new(pool).with_summary_index_key([0xab; 32]);
+    let outcome = memory
+        .search(SearchQuery {
+            text: "tray".to_owned(),
+            mode: SearchMode::Fts,
+            scope: MemoryScope::Summaries,
+            agent: None,
+            role: None,
+            exclude_roles: vec![],
+            tool_name: None,
+            tag: None,
+            limit: Limit::clamped(Some(20), 10, 1..=50),
+            since: None,
+            before: None,
+            window: None,
+            expand: Some(false),
+            synthesize: Some(false),
+        })
+        .await?;
+    assert_eq!(outcome.results.len(), 1);
+    assert_eq!(
+        outcome
+            .results
+            .first()
+            .ok_or("expected session passage")?
+            .content,
+        "invented tray session"
+    );
+    Ok(())
+}

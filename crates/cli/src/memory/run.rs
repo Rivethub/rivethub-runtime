@@ -33,6 +33,8 @@ pub(super) async fn run(
     stdout_is_terminal: bool,
 ) -> Result<Report, Error> {
     match command {
+        MemoryCommand::Settle(args) => super::settle::run(args, env).await,
+        MemoryCommand::Resummarize(args) => super::resummarize::run(args, env, shutdown).await,
         MemoryCommand::QueueStatus { json } => queue_status(json, env).await,
         MemoryCommand::Retry {
             tasks,
@@ -359,7 +361,13 @@ async fn import_postgres(
         .await?
         .import_memory_dump(text, dry_run, shutdown)
         .await?;
-    io::summary_report(origin, imported.rows, dry_run)
+    io::summary_report(
+        origin,
+        imported.rows,
+        imported.summary_records_needing_reembedding,
+        None,
+        dry_run,
+    )
 }
 
 async fn import_sqlite(
@@ -377,7 +385,13 @@ async fn import_sqlite(
     } else {
         store.import_pg_dump(dump, shutdown.clone()).await?
     };
-    io::summary_report(origin, io::sqlite_rows(report.rows), dry_run)
+    io::summary_report(
+        origin,
+        io::sqlite_rows(report.rows),
+        report.summary_records_needing_reembedding,
+        Some(report.summary_records_losing_passage_vectors),
+        dry_run,
+    )
 }
 
 async fn publish(out: Option<PathBuf>, bytes: Vec<u8>, tty: bool) -> Result<Report, Error> {
