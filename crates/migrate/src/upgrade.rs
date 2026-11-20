@@ -92,6 +92,7 @@ fn step(conn: &mut Connection, to: SchemaVersion, now: Timestamp) -> Result<(), 
         }),
         SchemaVersion::V39 => in_transaction(conn, to, add_transcript_time),
         SchemaVersion::V40 => in_transaction(conn, to, add_conversion_second_pass),
+        SchemaVersion::V41 => in_transaction(conn, to, add_opening_checked_user_count),
         SchemaVersion::V37 => in_transaction(conn, to, add_opening_work),
         SchemaVersion::V35 => in_transaction(conn, to, |tx| {
             tx.execute_batch(include_str!("schema/model_calls_v35.sql"))
@@ -102,6 +103,15 @@ fn step(conn: &mut Connection, to: SchemaVersion, now: Timestamp) -> Result<(), 
 pub(crate) fn add_conversion_second_pass(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     if !column_present(tx, "rh_summary_conversion_items", "second_pass_at")? {
         tx.execute_batch("ALTER TABLE rh_summary_conversion_items ADD COLUMN second_pass_at TEXT")?;
+    }
+    Ok(())
+}
+
+pub(crate) fn add_opening_checked_user_count(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    if !column_present(tx, "rh_summary_state", "opening_checked_user_count")? {
+        tx.execute_batch(
+            "ALTER TABLE rh_summary_state ADD COLUMN opening_checked_user_count INTEGER",
+        )?;
     }
     Ok(())
 }

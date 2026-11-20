@@ -287,18 +287,19 @@ impl PostgresMemory {
         .fetch_all(&mut *tx)
         .await
         .map_err(failure)?;
-        let candidates: Vec<(Uuid, bool)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "SELECT c.id, missing.opening FROM rh_conversations c
+        let candidates: Vec<(Uuid, Option<i64>)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT c.id, missing.user_count FROM rh_conversations c
              LEFT JOIN rh_summary_state s ON s.conversation_id = c.id
              LEFT JOIN rh_summary_openings o ON o.conversation_id = c.id
-             CROSS JOIN LATERAL (
-                 SELECT o.conversation_id IS NULL AND EXISTS (
-                     SELECT 1 FROM rh_messages m WHERE m.conversation_id = c.id
-                       AND m.role = 'user' AND m.content <> ''
-                 ) AS opening
-             ) missing
+             LEFT JOIN LATERAL (
+                 SELECT count(*) AS user_count
+                 FROM rh_messages m
+                 WHERE o.conversation_id IS NULL AND m.conversation_id = c.id AND m.role = 'user'
+                 HAVING count(*) > 0 AND count(*) IS DISTINCT FROM s.opening_checked_user_count
+             ) missing ON true
              WHERE c.id = ANY($1) AND {INCLUDED}
-               AND (s.input_revision IS NULL OR (s.settled_at IS NULL AND s.last_input_at <= $2) OR missing.opening)
+               AND (s.input_revision IS NULL OR (s.settled_at IS NULL AND s.last_input_at <= $2)
+                    OR missing.user_count IS NOT NULL)
              ORDER BY c.id FOR UPDATE OF c"
         )))
         .bind(&page)
@@ -308,9 +309,9 @@ impl PostgresMemory {
         .map_err(failure)?;
         let ids: Vec<_> = candidates.iter().map(|(id, _)| *id).collect();
         seed_ids(&mut tx, &ids).await?;
-        for (id, needs_opening) in candidates {
-            if needs_opening {
-                crate::summary_opening::seed_historical(&mut tx, id).await?;
+        for (id, user_count) in candidates {
+            if let Some(user_count) = user_count {
+                check_historical_opening(&mut tx, id, user_count).await?;
             }
         }
         let settled = sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -331,6 +332,28 @@ impl PostgresMemory {
             settled,
         })
     }
+}
+
+async fn check_historical_opening(
+    conn: &mut PgConnection,
+    id: Uuid,
+    user_count: i64,
+) -> Result<(), Error> {
+    let changed = sqlx::query(
+        "UPDATE rh_summary_state SET opening_checked_user_count = $2
+         WHERE conversation_id = $1 AND opening_checked_user_count IS DISTINCT FROM $2
+           AND NOT EXISTS (SELECT 1 FROM rh_summary_openings WHERE conversation_id = $1)",
+    )
+    .bind(id)
+    .bind(user_count)
+    .execute(&mut *conn)
+    .await
+    .map_err(failure)?
+    .rows_affected();
+    if changed != 0 {
+        crate::summary_opening::seed_historical(conn, id).await?;
+    }
+    Ok(())
 }
 
 async fn seed_ids(conn: &mut PgConnection, ids: &[Uuid]) -> Result<(), Error> {

@@ -126,6 +126,7 @@ async fn config_warnings_print_once_and_config_parses_after_the_subcommand(
     );
     fs::write(&config, text)?;
     let config = config.to_string_lossy();
+    let required = migrate::required()?;
     for args in [
         vec!["postgres", "--config", config.as_ref()],
         vec!["--config", config.as_ref(), "postgres"],
@@ -146,7 +147,7 @@ async fn config_warnings_print_once_and_config_parses_after_the_subcommand(
         );
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
-            stdout.contains("current 79") && stdout.contains("pending 0"),
+            stdout.contains(&format!("current {required}")) && stdout.contains("pending 0"),
             "the config's postgres url must be used: {stdout}"
         );
     }

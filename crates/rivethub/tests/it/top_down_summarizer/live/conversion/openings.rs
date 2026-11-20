@@ -205,3 +205,103 @@ async fn top_down_arm_opening_diagnostics_sqlite() -> TestResult {
         .await?;
     verify_arm_diagnostics(&store).await
 }
+
+fn non_request_dump() -> String {
+    dump().replace(
+        "assistant\tAn assistant-only note.",
+        "user\t/model choose a different model",
+    )
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_sweep_skips_examined_non_request_postgres(pool: sqlx::PgPool) -> TestResult {
+    let scoped = memory_postgres::scoped(sqlx::postgres::PgPoolOptions::new())
+        .connect_with(pool.connect_options().as_ref().clone())
+        .await?;
+    let store = memory_postgres::PostgresMemory::new(scoped);
+    Scope::Maintenance.run(async {
+        store.import_memory_dump(&non_request_dump(), false, &CancellationToken::new()).await?;
+        let now = Timestamp::now();
+        testkit::settlement::expire(&store, now, 2).await?;
+        assert!(store.opening_title(NO_REQUEST).await?.is_none());
+
+        let mut lock = pool.begin().await?;
+        sqlx::query("SELECT id FROM rh_conversations WHERE id = $1 FOR UPDATE")
+            .bind(NO_REQUEST).execute(&mut *lock).await?;
+        tokio::time::timeout(Duration::from_secs(2), testkit::settlement::expire(&store, now, 2))
+            .await
+            .map_err(|_| "second sweep tried to lock a conversation it had already examined")??;
+        lock.rollback().await?;
+
+        sqlx::query(
+            "INSERT INTO rh_messages (id, conversation_id, agent, channel, role, content, created_at, owner_user_id)
+             VALUES ($1, $2, 'fixture', 'cli', 'user', 'Review the copper tags', '2023-12-31', 'alice')",
+        )
+        .bind(Uuid::from_u128(108))
+        .bind(NO_REQUEST)
+        .execute(&pool)
+        .await?;
+        testkit::settlement::expire(&store, now, 2).await?;
+        let opening = store.opening_title(NO_REQUEST).await?.ok_or("opening after new user message")?;
+        assert_eq!(opening.content, "Review the copper tags");
+        assert!(!opening.armed);
+        Ok(())
+    }).await
+}
+
+#[tokio::test]
+async fn top_down_sweep_skips_examined_non_request_sqlite() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("s.sqlite");
+    migrate::sqlite(&path)?;
+    let store = memory_sqlite::SqliteStore::open(&path)?;
+    let archive = dir.path().join("dump.sql");
+    std::fs::write(&archive, non_request_dump())?;
+    store
+        .import_pg_dump(archive, CancellationToken::new())
+        .await?;
+    let now = Timestamp::now();
+    testkit::settlement::expire(&store, now, 2).await?;
+    assert!(store.opening_title(NO_REQUEST).await?.is_none());
+
+    store
+        .with_conn(|conn| {
+            let checked: i64 = conn.query_row(
+            "SELECT opening_checked_user_count FROM rh_summary_state WHERE conversation_id = ?1",
+            [NO_REQUEST.to_string()],
+            |row| row.get(0),
+        ).map_err(|source| memory_sqlite::SqliteError::Query { operation: "read examined user count", source })?;
+            assert_eq!(checked, 1);
+            conn.execute_batch(
+                "CREATE TEMP TRIGGER reject_reexamining_openings
+             BEFORE UPDATE OF opening_checked_user_count ON rh_summary_state
+             BEGIN SELECT raise(ABORT, 'opening already examined'); END;",
+            )
+            .map_err(|source| memory_sqlite::SqliteError::Query {
+                operation: "guard examined user count",
+                source,
+            })?;
+            Ok(())
+        })
+        .await?;
+    testkit::settlement::expire(&store, now, 2).await?;
+
+    store.with_conn(|conn| {
+        conn.execute_batch("DROP TRIGGER reject_reexamining_openings")
+            .map_err(|source| memory_sqlite::SqliteError::Query { operation: "remove examined user count guard", source })?;
+        conn.execute(
+            "INSERT INTO ros_messages (id, conversation_id, agent, channel, role, content, created_at)
+             VALUES (?1, ?2, 'fixture', 'cli', 'user', 'Review the copper tags', '2023-12-31T00:00:00Z')",
+            [Uuid::from_u128(108).to_string(), NO_REQUEST.to_string()],
+        ).map_err(|source| memory_sqlite::SqliteError::Query { operation: "append a qualifying user message", source })?;
+        Ok(())
+    }).await?;
+    testkit::settlement::expire(&store, now, 2).await?;
+    let opening = store
+        .opening_title(NO_REQUEST)
+        .await?
+        .ok_or("opening after new user message")?;
+    assert_eq!(opening.content, "Review the copper tags");
+    assert!(!opening.armed);
+    Ok(())
+}

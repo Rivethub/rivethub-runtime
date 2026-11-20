@@ -268,11 +268,14 @@ impl SqliteStore {
             }
             let page = tx
                 .prepare(&format!(
-                    "SELECT c.id, {INCLUDED}, o.conversation_id IS NULL AND EXISTS (
-                    SELECT 1 FROM ros_messages m WHERE m.conversation_id = c.id
-                      AND m.role = 'user' AND m.content <> ''
-                 ) FROM ros_conversations c
+                    "SELECT c.id, {INCLUDED},
+                     CASE WHEN o.conversation_id IS NULL THEN (
+                         SELECT count(*) FROM ros_messages m WHERE m.conversation_id = c.id AND m.role = 'user'
+                         HAVING count(*) > 0 AND count(*) IS NOT s.opening_checked_user_count
+                     ) END
+                 FROM ros_conversations c
                  LEFT JOIN rh_summary_openings o ON o.conversation_id = c.id
+                 LEFT JOIN rh_summary_state s ON s.conversation_id = c.id
                  WHERE c.id > ?1 ORDER BY c.id LIMIT ?2"
                 ))
                 .map_err(failure)?
@@ -282,7 +285,7 @@ impl SqliteStore {
                         Ok((
                             row.get::<_, String>(0)?,
                             row.get::<_, bool>(1)?,
-                            row.get::<_, bool>(2)?,
+                            row.get::<_, Option<i64>>(2)?,
                         ))
                     },
                 )
@@ -290,17 +293,21 @@ impl SqliteStore {
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(failure)?;
             let mut settled = 0;
-            for (id, included, needs_opening) in &page {
+            for (id, included, user_count) in &page {
                 if !included {
                     continue;
-                }
-                if *needs_opening {
-                    crate::summary_opening::seed_historical(&tx, id)?;
                 }
                 let mut current = state(&tx, id)?;
                 if current.is_none() {
                     seed(&tx, id, None)?;
                     current = state(&tx, id)?;
+                }
+                if let Some(user_count) = user_count {
+                    crate::summary_opening::seed_historical(&tx, id)?;
+                    tx.execute(
+                        "UPDATE rh_summary_state SET opening_checked_user_count = ?2 WHERE conversation_id = ?1",
+                        params![id, user_count],
+                    ).map_err(failure)?;
                 }
                 if let Some(mut current) = current
                     && current.settled_at.is_none()
