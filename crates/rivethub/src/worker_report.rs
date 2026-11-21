@@ -66,15 +66,17 @@ pub fn roles(
 
 #[must_use]
 pub fn hub_embedder(config: &Config, env: &Environment) -> HubEmbedder {
-    HubEmbedder {
-        label: config
-            .memory_embed_endpoint(env)
-            .map(|endpoint| ModelLabel {
-                provider: Some(trimmed(&endpoint)),
-                model: config.memory_embed_model(env),
-            }),
-        index_key: crate::models::summary_index_key(config, env).map(hex::encode),
-    }
+    let label = config
+        .memory_embed_endpoint(env)
+        .map(|endpoint| ModelLabel {
+            provider: Some(trimmed(&endpoint)),
+            model: config.memory_embed_model(env),
+        });
+    let index_key = label
+        .as_ref()
+        .and_then(|_| crate::models::summary_index_key(config, env))
+        .map(hex::encode);
+    HubEmbedder { label, index_key }
 }
 
 pub(crate) async fn warn_on_embedder_mismatch(
@@ -82,12 +84,18 @@ pub(crate) async fn warn_on_embedder_mismatch(
     hub: HubEmbedder,
     cancel: CancellationToken,
 ) {
-    tokio::select! {
+    if hub.index_key.is_none() {
+        return;
+    }
+    let reports = tokio::select! {
         biased;
         () = cancel.cancelled() => return,
-        () = tokio::time::sleep(REPORT_INTERVAL) => {}
-    }
-    match store.newest_first(REPORT_FRESH).await {
+        reports = async {
+            tokio::time::sleep(REPORT_INTERVAL).await;
+            store.newest_first(REPORT_FRESH).await
+        } => reports,
+    };
+    match reports {
         Ok(reports) => {
             let mismatch = reports
                 .iter()
@@ -203,7 +211,10 @@ memory:
                 ),
             ]
         );
-        assert_eq!(super::hub_embedder(&config, &env).label, None);
+        assert_eq!(
+            super::hub_embedder(&config, &env),
+            gateway::HubEmbedder::default()
+        );
         Ok(())
     }
 }
