@@ -197,8 +197,9 @@ async fn wiki_topic(home: &Path, database: &Path) -> TestResult {
     )
     .await?;
     let title = topic_title(database);
-    stop(started).await?;
+    let logs = stop(started).await?;
     assert_eq!(title?, "AcmeKit deploys");
+    assert!(!logs.contains("memory job dependencies"), "{logs}");
     Ok(())
 }
 
