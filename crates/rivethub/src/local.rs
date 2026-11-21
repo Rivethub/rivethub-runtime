@@ -289,13 +289,6 @@ impl NodeBoot<'_> {
             .await?;
         }
         if self.switches.contains(&ServiceSwitch::Wiki) {
-            enqueue_sweep(
-                self.store,
-                FixedJob::EnqueueWikiBackfill,
-                "wiki-backfill",
-                MAINTENANCE_PRIORITY,
-            )
-            .await?;
             enqueue_sweep(self.store, FixedJob::ConsolidateWiki, "wiki-consolidate", 5).await?;
         }
         spawn_workers(self.tracker, self.failed, self.shutdown, runners);
