@@ -34,6 +34,7 @@ url.workspace = true
 wire.workspace = true
 config = { workspace = true }
 gateway = { workspace = true }
+hex = { workspace = true }
 kernel = { workspace = true }
 mcp = { workspace = true }
 memory-postgres = { workspace = true }
@@ -52,7 +53,6 @@ uuid = { workspace = true }
 [dev-dependencies]
 serde_with.workspace = true
 flate2 = { workspace = true }
-hex = { workspace = true }
 sha2 = { workspace = true }
 rusqlite = { workspace = true }
 futures.workspace = true

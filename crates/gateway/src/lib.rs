@@ -23,6 +23,7 @@ mod store_ports;
 pub mod tenancy;
 pub mod tls;
 mod tls_resolve;
+mod worker_models;
 
 use std::sync::Arc;
 
@@ -41,13 +42,14 @@ use crate::auth::DenialLog;
 
 pub use crate::login::AuthPolicy;
 pub use crate::models::ModelAssignment;
-pub use crate::models::WorkerReporting;
-pub use crate::models::embedder_mismatch;
 pub use crate::settings::{
     REQUEST_DEADLINE, Settings, SettingsError, explicit_static_dir, managed_web_link, state_dir,
 };
 pub use crate::store_ports::StorePorts;
 pub use crate::tls_resolve::private_ca;
+pub use crate::worker_models::HubEmbedder;
+pub use crate::worker_models::WorkerReporting;
+pub use crate::worker_models::embedder_mismatch;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const REVISION: Option<&str> = option_env!("RIVETHUB_BUILD_REVISION");
@@ -86,7 +88,7 @@ pub struct Gateway {
     upkeep: Option<Arc<dyn kernel::tidy::UpkeepStore>>,
     flagged: Option<Arc<dyn kernel::flagged::FlaggedJobs>>,
     model_assignments: Vec<ModelAssignment>,
-    worker_reports: Option<models::WorkerReporting>,
+    worker_reports: Option<WorkerReporting>,
     plugins: Option<Arc<plugins::PluginHost>>,
     summaries: Option<Arc<dyn kernel::memory::SummaryWatch>>,
     deletions: Option<Arc<dyn kernel::memory::SessionDeletion>>,

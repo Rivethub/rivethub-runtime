@@ -402,6 +402,7 @@ async fn drive_reported<Q: JobQueue + 'static>(
             .name,
         roles: crate::worker_report::roles(config, env, &role.selected())
             .map_err(|error| RootError::Invalid(error.to_string()))?,
+        index_key: crate::models::summary_index_key(config, env).map(hex::encode),
         outage: runner.runner.outage(),
     };
     let reporting = shutdown.child_token();

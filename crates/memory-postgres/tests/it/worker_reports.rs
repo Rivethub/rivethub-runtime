@@ -15,6 +15,7 @@ fn report(node: &str, role: WorkerRole, model: &str, outage: Option<&str>) -> Wo
         provider: Some("http://models.example/v1".to_owned()),
         model: Some(model.to_owned()),
         outage: outage.map(str::to_owned),
+        index_key: Some(format!("key-of-{model}")),
     }
 }
 

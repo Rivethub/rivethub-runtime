@@ -11,6 +11,7 @@ BEGIN
         provider TEXT,
         model TEXT,
         outage TEXT,
+        index_key TEXT,
         reported_at TIMESTAMPTZ NOT NULL,
         PRIMARY KEY (node, role)
     );

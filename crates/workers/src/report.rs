@@ -23,6 +23,7 @@ pub struct Reporter {
     pub store: Arc<dyn WorkerReportStore>,
     pub node: String,
     pub roles: Vec<(WorkerRole, ModelLabel)>,
+    pub index_key: Option<String>,
     pub outage: watch::Receiver<Option<OutageCause>>,
 }
 
@@ -37,6 +38,7 @@ impl Reporter {
                 provider: label.provider.clone(),
                 model: label.model.clone(),
                 outage: outage.clone(),
+                index_key: self.index_key.clone(),
             })
             .collect()
     }
@@ -44,7 +46,12 @@ impl Reporter {
     pub async fn run(mut self, cancel: CancellationToken) {
         loop {
             let reports = self.reports();
-            if let Err(error) = self.store.report(&reports).await {
+            let written = tokio::select! {
+                biased;
+                () = cancel.cancelled() => return,
+                written = self.store.report(&reports) => written,
+            };
+            if let Err(error) = written {
                 tracing::warn!("worker report was not written: {error}");
             }
             tokio::select! {

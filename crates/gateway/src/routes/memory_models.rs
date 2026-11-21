@@ -26,9 +26,9 @@ pub(super) async fn list(
             .await
             .map_err(super::tidy::error)?;
         if !reports.is_empty() || !assignments.is_empty() {
-            return Ok(Json(crate::models::reported(
+            return Ok(Json(crate::worker_models::reported(
                 &reports,
-                reporting.hub_embedder.as_ref(),
+                &reporting.hub,
                 &tasks,
             )));
         }

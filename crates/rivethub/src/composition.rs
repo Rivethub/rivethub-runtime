@@ -219,7 +219,7 @@ impl Composition {
             sessions: Some(SessionStore::Postgres(Arc::clone(memory))),
             reports: Some(gateway::WorkerReporting {
                 store: memory.clone(),
-                hub_embedder: crate::worker_report::hub_embedder(config, env),
+                hub: crate::worker_report::hub_embedder(config, env),
             }),
         };
         let factory =
@@ -231,15 +231,13 @@ impl Composition {
         composition
             .tasks
             .spawn(async move { summaries.await.map_err(ComposeError::Task) });
-        if let Some(own) = crate::worker_report::hub_embedder(config, env) {
-            composition
-                .background
-                .spawn(crate::worker_report::warn_on_embedder_mismatch(
-                    memory.clone(),
-                    own,
-                    shutdown.child_token(),
-                ));
-        }
+        composition
+            .background
+            .spawn(crate::worker_report::warn_on_embedder_mismatch(
+                memory.clone(),
+                crate::worker_report::hub_embedder(config, env),
+                shutdown.child_token(),
+            ));
         Ok(composition)
     }
 

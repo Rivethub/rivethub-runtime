@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use config::provider::ProviderBody;
 use config::{Config, Environment, ModelChoice, ModelsError};
+use gateway::HubEmbedder;
 use kernel::queue::WorkerRole;
 use kernel::tidy::{ModelLabel, REPORT_FRESH, REPORT_INTERVAL, WorkerReportStore};
 use tokio_util::sync::CancellationToken;
@@ -49,7 +50,13 @@ pub fn roles(
                 }
                 WorkerRole::Embedder => match &embedder {
                     Some(label) => label.clone(),
-                    None => chat(config, &models.default),
+                    None => chat(
+                        config,
+                        &ModelChoice {
+                            model: None,
+                            ..models.default.clone()
+                        },
+                    ),
                 },
             };
             (role, label)
@@ -58,17 +65,21 @@ pub fn roles(
 }
 
 #[must_use]
-pub fn hub_embedder(config: &Config, env: &Environment) -> Option<ModelLabel> {
-    let endpoint = config.memory_embed_endpoint(env)?;
-    Some(ModelLabel {
-        provider: Some(trimmed(&endpoint)),
-        model: config.memory_embed_model(env),
-    })
+pub fn hub_embedder(config: &Config, env: &Environment) -> HubEmbedder {
+    HubEmbedder {
+        label: config
+            .memory_embed_endpoint(env)
+            .map(|endpoint| ModelLabel {
+                provider: Some(trimmed(&endpoint)),
+                model: config.memory_embed_model(env),
+            }),
+        index_key: crate::models::summary_index_key(config, env).map(hex::encode),
+    }
 }
 
 pub(crate) async fn warn_on_embedder_mismatch(
     store: Arc<dyn WorkerReportStore>,
-    own: ModelLabel,
+    hub: HubEmbedder,
     cancel: CancellationToken,
 ) {
     tokio::select! {
@@ -80,8 +91,8 @@ pub(crate) async fn warn_on_embedder_mismatch(
         Ok(reports) => {
             let mismatch = reports
                 .iter()
-                .find(|report| report.role == WorkerRole::Embedder)
-                .and_then(|report| gateway::embedder_mismatch(&own, report));
+                .filter(|report| report.role == WorkerRole::Embedder)
+                .find_map(|report| gateway::embedder_mismatch(&hub, report));
             if let Some(mismatch) = mismatch {
                 tracing::warn!("{mismatch}");
             }
@@ -157,7 +168,42 @@ memory:
                 (WorkerRole::Embedder, embedder.clone()),
             ]
         );
-        assert_eq!(super::hub_embedder(&config, &env), Some(embedder));
+        let hub = super::hub_embedder(&config, &env);
+        assert_eq!(hub.label, Some(embedder));
+        assert_eq!(hub.index_key.map(|key| key.len()), Some(64));
+        Ok(())
+    }
+
+    #[test]
+    fn a_worker_without_an_embedder_names_the_model_its_provider_embeds_with()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let env = Environment::default();
+        let yaml = WORKER
+            .replace("    embed_endpoint: http://embed.example:9402/\n", "")
+            .replace("    embed_model: qwen3-embedding-0.6b\n", "")
+            .replace(
+                "    default:\n      provider: local\n",
+                "    default:\n      provider: local\n      model: chat-override\n",
+            );
+        let config = Config::from_str(&env, &yaml)?.config;
+        assert_eq!(
+            super::roles(
+                &config,
+                &env,
+                &[WorkerRole::Summarizer, WorkerRole::Embedder]
+            )?,
+            [
+                (
+                    WorkerRole::Summarizer,
+                    label("http://gpu.example:8003/v1", "chat-override")
+                ),
+                (
+                    WorkerRole::Embedder,
+                    label("http://gpu.example:8003/v1", "flash")
+                ),
+            ]
+        );
+        assert_eq!(super::hub_embedder(&config, &env).label, None);
         Ok(())
     }
 }

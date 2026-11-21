@@ -72,11 +72,12 @@ impl OutageGate {
             return;
         }
         let _previous = self.down.send_replace(false);
+        let cause = self.cause.send_replace(None);
         if self.holders.load(Ordering::Acquire) != 0 {
             let _previous = self.down.send_replace(true);
+            let _cleared = self.cause.send_replace(cause);
             return;
         }
-        let _cause = self.cause.send_replace(None);
         if recovered {
             tracing::info!("model provider recovered; the worker resumed claiming");
         }

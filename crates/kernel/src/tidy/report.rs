@@ -21,6 +21,7 @@ pub struct WorkerReport {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub outage: Option<String>,
+    pub index_key: Option<String>,
 }
 
 #[async_trait]
