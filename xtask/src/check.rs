@@ -220,13 +220,13 @@ pub fn commit_msg(root: &Path, file: &Path) -> Result<()> {
     let email = git(root, &["config", "user.email"])?.trim().to_owned();
     let text = std::fs::read_to_string(file)?;
     let mut findings = Vec::new();
-    crate::manifests::commit_message(root, &mut findings, &text, Some((&name, &email)))?;
+    crate::authorship::commit_message(&mut findings, &text, Some((&name, &email)));
     finish("commit-msg", &findings)
 }
 
 pub fn commits(root: &Path, range: &str) -> Result<()> {
     let mut findings = Vec::new();
-    crate::manifests::commits(root, range, &mut findings)?;
+    crate::authorship::commits(root, range, &mut findings)?;
     finish(&format!("commits {range}"), &findings)
 }
 

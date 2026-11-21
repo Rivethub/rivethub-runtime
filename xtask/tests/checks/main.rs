@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
+use xtask::authorship;
 use xtask::baseline;
 use xtask::check;
 use xtask::code;
@@ -152,11 +153,6 @@ fn installed_hooks_reject_and_accept_commits() -> Result<(), Box<dyn std::error:
     repo.write("crates/wire/src/lib.rs", "pub fn start() {}\n")?;
     repo.write("xtask/data/privacy-denylist.json", "{\"sha256\": []}")?;
     repo.write("xtask/data/secret-denylist.json", "{\"sha256\": []}")?;
-    let digest = privacy::sha256("test user <test@example.com>");
-    repo.write(
-        "xtask/data/house-identities.json",
-        &format!("{{\"sha256\": [\"{digest}\"]}}"),
-    )?;
     repo.track()?;
     let hook_binary = std::env::vars_os()
         .find(|(name, _)| name == std::ffi::OsStr::new("CARGO_BIN_EXE_xtask"))
@@ -173,12 +169,12 @@ fn installed_hooks_reject_and_accept_commits() -> Result<(), Box<dyn std::error:
             "-q",
             "--allow-empty",
             "-m",
-            "build: x\n\nCo-authored-by: Claude <noreply@example.com>\n",
+            "build: x\n\nCo-authored-by: Claude <noreply@anthropic.com>\n",
         ],
     );
     assert!(
         bad.is_err(),
-        "an attribution trailer must be rejected by the installed commit-msg hook"
+        "an AI co-author trailer must be rejected by the installed commit-msg hook"
     );
 
     let good = git(
@@ -193,7 +189,7 @@ fn installed_hooks_reject_and_accept_commits() -> Result<(), Box<dyn std::error:
     );
     assert!(
         good.is_ok(),
-        "a house commit must pass the installed hooks: {good:?}"
+        "a person's commit must pass the installed hooks: {good:?}"
     );
     Ok(())
 }
@@ -674,65 +670,64 @@ fn lint_policy_fires_and_passes() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn authorship(text: &str, author: Option<(&str, &str)>) -> Vec<String> {
+    let mut findings = Vec::new();
+    authorship::commit_message(&mut findings, text, author);
+    findings
+}
+
 #[test]
-fn identity_foreign_fails_house_passes() -> Result<(), Box<dyn std::error::Error>> {
-    let repo = Repo::new()?;
-    let digest = privacy::sha256("test user <test@example.com>");
-    repo.write(
-        "xtask/data/house-identities.json",
-        &format!("{{\"sha256\": [\"{digest}\"]}}"),
-    )?;
-    repo.track()?;
-    let mut findings = Vec::new();
-    manifests::commit_message(
-        repo.root(),
-        &mut findings,
-        "build: a house commit\n",
-        Some(("Test User", "test@example.com")),
-    )?;
-    assert!(
-        findings.is_empty(),
-        "the house identity passes: {findings:?}"
-    );
-
-    let mut findings = Vec::new();
-    manifests::commit_message(
-        repo.root(),
-        &mut findings,
-        "build: a foreign commit\n",
-        Some(("Foreign Bot", "bot@foreign.dev")),
-    )?;
-    assert!(
-        findings
-            .iter()
-            .any(|finding| finding.contains("is not a house identity")),
-        "a foreign identity fails: {findings:?}"
-    );
-
-    let mut findings = Vec::new();
-    manifests::commit_message(
-        repo.root(),
-        &mut findings,
-        "build: x\n\nCo-authored-by: Claude <noreply@anthropic.com>\n",
+fn any_person_may_author_and_be_credited() {
+    for author in [
+        ("Foreign Dev", "dev@foreign.example"),
+        ("Claude Dupont", "claude@dupont.example"),
+        ("octocat", "583231+octocat@users.noreply.github.com"),
+    ] {
+        let findings = authorship("fix: move the cursor to the row end\n", Some(author));
+        assert!(findings.is_empty(), "{author:?} passes: {findings:?}");
+    }
+    let findings = authorship(
+        "fix: move the cursor to the row end\n\nCo-authored-by: Ada Lovelace <ada@example.org>\nSigned-off-by: Ada Lovelace <ada@example.org>\n",
         None,
-    )?;
-    assert!(
-        findings
-            .iter()
-            .any(|finding| finding.contains("Co-authored-by")),
-        "an attribution trailer fails: {findings:?}"
     );
-    Ok(())
+    assert!(findings.is_empty(), "a person is credited: {findings:?}");
+}
+
+#[test]
+fn ai_products_may_not_author_or_be_credited() {
+    for author in [
+        ("Claude", "noreply@anthropic.com"),
+        ("Cursor Agent", "cursoragent@cursor.com"),
+        ("Copilot", "198982749+Copilot@users.noreply.github.com"),
+        ("Claude Opus 5.5", "someone@example.org"),
+    ] {
+        let findings = authorship("fix: a change\n", Some(author));
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.contains("is an AI product")),
+            "{author:?} fails: {findings:?}"
+        );
+    }
+    for text in [
+        "fix: x\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n",
+        "fix: x\n\nCo-authored-by: Cursor Agent <cursoragent@cursor.com>\n",
+        "fix: x\n\nClaude-Session: https://claude.ai/code/session_01\n",
+        "fix: x\n\nGenerated with [Claude Code](https://claude.com/claude-code)\n",
+    ] {
+        let findings = authorship(text, None);
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.starts_with("AUTHORSHIP ")),
+            "{text:?} fails: {findings:?}"
+        );
+    }
 }
 
 #[test]
 fn commits_mode_reports_range() -> Result<(), Box<dyn std::error::Error>> {
     let repo = Repo::new()?;
-    let digest = privacy::sha256("test user <test@example.com>");
-    repo.write(
-        "xtask/data/house-identities.json",
-        &format!("{{\"sha256\": [\"{digest}\"]}}"),
-    )?;
     repo.track()?;
     let output = std::process::Command::new("git")
         .current_dir(repo.root())
@@ -758,9 +753,9 @@ fn commits_mode_reports_range() -> Result<(), Box<dyn std::error::Error>> {
         String::from_utf8_lossy(&output.stderr)
     );
     let mut findings = Vec::new();
-    let count = manifests::commits(repo.root(), "HEAD", &mut findings)?;
+    let count = authorship::commits(repo.root(), "HEAD", &mut findings)?;
     assert_eq!(count, 1);
-    assert!(findings.is_empty(), "house commits pass: {findings:?}");
+    assert!(findings.is_empty(), "a person's commits pass: {findings:?}");
     Ok(())
 }
 
