@@ -30,4 +30,5 @@ pub enum HarnessId {
     Dsh,
     Cursor,
     Cowork,
+    Antigravity,
 }

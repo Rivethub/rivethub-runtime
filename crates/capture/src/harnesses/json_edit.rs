@@ -89,12 +89,15 @@ pub(super) fn remove_members(
     matches: impl Fn(&str) -> bool,
 ) -> Result<String, EditError> {
     let mut root = parse_root(text)?;
-    let Some(node) = existing(&mut root, path) else {
-        return Ok(text.to_owned());
+    let members = if path.is_empty() {
+        &mut root
+    } else {
+        let Some(node) = existing(&mut root, path) else {
+            return Ok(text.to_owned());
+        };
+        node.as_object_mut()
+            .ok_or_else(|| EditError::Shape(path.join("."), "an object"))?
     };
-    let members = node
-        .as_object_mut()
-        .ok_or_else(|| EditError::Shape(path.join("."), "an object"))?;
     let before = members.len();
     members.retain(|name, _| !matches(name));
     if members.len() == before {

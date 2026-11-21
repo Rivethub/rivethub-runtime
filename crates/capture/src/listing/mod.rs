@@ -1,4 +1,5 @@
 mod ancestors;
+mod antigravity;
 mod claude;
 pub(crate) mod codex;
 pub(crate) mod cowork;
@@ -42,7 +43,7 @@ pub use transcripts::StoreTranscriptReader;
 
 use crate::readers::blocking;
 
-pub const LISTING_ORDER: [HarnessId; 9] = [
+pub const LISTING_ORDER: [HarnessId; 10] = [
     HarnessId::ClaudeCode,
     HarnessId::GrokBuild,
     HarnessId::Hermes,
@@ -52,6 +53,7 @@ pub const LISTING_ORDER: [HarnessId; 9] = [
     HarnessId::Omp,
     HarnessId::Cursor,
     HarnessId::Cowork,
+    HarnessId::Antigravity,
 ];
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -66,6 +68,7 @@ pub struct StoreRoots {
     pub cursor: Option<PathBuf>,
     pub cowork: Vec<PathBuf>,
     pub dsh: Option<PathBuf>,
+    pub antigravity: Vec<PathBuf>,
 }
 
 impl StoreRoots {
@@ -79,7 +82,7 @@ impl StoreRoots {
             HarnessId::Opencode => self.opencode.as_deref(),
             HarnessId::Omp => self.omp.as_deref(),
             HarnessId::Cursor => self.cursor.as_deref(),
-            HarnessId::Dsh | HarnessId::Cowork => None,
+            HarnessId::Dsh | HarnessId::Cowork | HarnessId::Antigravity => None,
         }
     }
 }
@@ -168,6 +171,7 @@ fn list_harness(
         }
         HarnessId::Cowork => Ok(cowork::list(&roots.cowork, limit)),
         HarnessId::Dsh => absent_store(roots.dsh.as_deref(), |root| dsh::list(root, limit)),
+        HarnessId::Antigravity => antigravity::list(&roots.antigravity, limit),
     }
 }
 
@@ -203,6 +207,7 @@ fn describe_harness(
         }),
         HarnessId::Cowork => Ok(cowork::describe(&roots.cowork, native)),
         HarnessId::Dsh => Ok(None),
+        HarnessId::Antigravity => antigravity::describe(&roots.antigravity, native),
     }
 }
 
@@ -226,7 +231,8 @@ fn describe_many_harness(
         | HarnessId::Omp
         | HarnessId::Dsh
         | HarnessId::Cursor
-        | HarnessId::Cowork => natives
+        | HarnessId::Cowork
+        | HarnessId::Antigravity => natives
             .iter()
             .filter_map(|native| describe_harness(roots, spawns, harness, native, None).transpose())
             .collect(),
@@ -243,6 +249,9 @@ fn store_cwd_of(
             claude::store_cwd(root, native)
         }),
         HarnessId::Cowork => Ok(cowork::describe(&roots.cowork, native).and_then(|row| row.cwd)),
+        HarnessId::Antigravity => {
+            Ok(antigravity::describe(&roots.antigravity, native)?.and_then(|row| row.cwd))
+        }
         HarnessId::GrokBuild
         | HarnessId::Hermes
         | HarnessId::KimiCode
@@ -271,7 +280,8 @@ fn permission_mode_of(
         | HarnessId::Omp
         | HarnessId::Dsh
         | HarnessId::Cursor
-        | HarnessId::Cowork => Ok(None),
+        | HarnessId::Cowork
+        | HarnessId::Antigravity => Ok(None),
     }
 }
 
@@ -298,7 +308,8 @@ fn rename_harness(
         | HarnessId::Omp
         | HarnessId::Dsh
         | HarnessId::Cursor
-        | HarnessId::Cowork => return Err(SessionRenameError::Unsupported(harness)),
+        | HarnessId::Cowork
+        | HarnessId::Antigravity => return Err(SessionRenameError::Unsupported(harness)),
     };
     renamed.ok_or(SessionRenameError::Missing)
 }

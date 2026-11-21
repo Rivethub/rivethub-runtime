@@ -39,6 +39,25 @@ fn cowork_roots(env: &Environment) -> Vec<PathBuf> {
     roots
 }
 
+fn antigravity_roots(env: &Environment) -> Vec<PathBuf> {
+    if let Some(explicit) = setting(env, "ANTIGRAVITY_HOME") {
+        return vec![PathBuf::from(explicit)];
+    }
+    let mut roots = Vec::new();
+    for relative in [
+        ".gemini/antigravity-cli",
+        ".gemini/antigravity",
+        ".gemini/antigravity-ide",
+    ] {
+        if let Some(root) = home_dir(env, relative)
+            && !roots.contains(&root)
+        {
+            roots.push(root);
+        }
+    }
+    roots
+}
+
 #[must_use]
 pub fn store_roots(env: &Environment) -> StoreRoots {
     StoreRoots {
@@ -53,6 +72,7 @@ pub fn store_roots(env: &Environment) -> StoreRoots {
         cursor: home_dir(env, ".cursor"),
         cowork: cowork_roots(env),
         dsh: overridable(env, "DSH_HOME", ".dsh"),
+        antigravity: antigravity_roots(env),
     }
 }
 

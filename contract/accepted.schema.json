@@ -3029,7 +3029,8 @@
         "omp",
         "dsh",
         "cursor",
-        "cowork"
+        "cowork",
+        "antigravity"
       ],
       "type": "string"
     },
@@ -5904,7 +5905,8 @@
         "healthy",
         "slow",
         "failing",
-        "unconfigured"
+        "unconfigured",
+        "not-running"
       ],
       "type": "string"
     },
@@ -5925,6 +5927,12 @@
             "null"
           ]
         },
+        "outage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "provider": {
           "type": [
             "string",
@@ -5935,6 +5943,12 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "reportedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "role": {
           "$ref": "#/$defs/ModelRole"
@@ -5955,6 +5969,7 @@
         "summarizer",
         "categorizer",
         "wiki-writer",
+        "entity-builder",
         "embedder"
       ],
       "type": "string"

@@ -12,17 +12,18 @@ pub struct ModelAssignment {
     pub inherits_default: bool,
 }
 
-const fn worker_role(role: ModelRole) -> Option<WorkerRole> {
+pub(crate) const fn worker_role(role: ModelRole) -> Option<WorkerRole> {
     match role {
         ModelRole::Default => None,
         ModelRole::Summarizer => Some(WorkerRole::Summarizer),
         ModelRole::Categorizer => Some(WorkerRole::Categorizer),
         ModelRole::WikiWriter => Some(WorkerRole::WikiBuilder),
+        ModelRole::EntityBuilder => Some(WorkerRole::EntityBuilder),
         ModelRole::Embedder => Some(WorkerRole::Embedder),
     }
 }
 
-const UNCONFIGURED: [(ModelRole, &str); 5] = [
+const UNCONFIGURED: [(ModelRole, &str); 6] = [
     (ModelRole::Default, "no memory job has a model"),
     (
         ModelRole::Summarizer,
@@ -33,6 +34,10 @@ const UNCONFIGURED: [(ModelRole, &str); 5] = [
         "entities, tags and topic filing are off",
     ),
     (ModelRole::WikiWriter, "wiki pages are off"),
+    (
+        ModelRole::EntityBuilder,
+        "entity pages and merge decisions are off",
+    ),
     (
         ModelRole::Embedder,
         "embeddings are off and search ranks by keywords only",
@@ -59,6 +64,8 @@ pub(crate) fn unconfigured(tasks: &[TaskActivity]) -> Vec<ModelJob> {
                 health: ModelHealth::Unconfigured,
                 detail: format!("no model is configured: {off}{parked}"),
                 queued: activity.queued,
+                outage: None,
+                reported_by: None,
             }
         })
         .collect()
@@ -123,6 +130,8 @@ fn job(
         health,
         detail: detail(assignment, all, trouble.as_ref(), activity),
         queued: activity.queued,
+        outage: None,
+        reported_by: None,
     }
 }
 

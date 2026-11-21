@@ -47,5 +47,6 @@ mod wiki_bounded;
 mod wiki_imports;
 mod wiki_routes;
 mod wiki_writer;
+mod worker_reports;
 
 mod top_down_references;

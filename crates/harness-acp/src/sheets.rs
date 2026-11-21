@@ -294,7 +294,7 @@ fn static_sheet(harness: HarnessId) -> StaticSheet {
         HarnessId::Opencode => flagged("--model", Some("--variant")),
         HarnessId::Omp => flagged("--model", Some("--thinking")),
         HarnessId::Cursor => cursor_sheet(),
-        HarnessId::Dsh | HarnessId::Cowork => flagged_empty(),
+        HarnessId::Dsh | HarnessId::Cowork | HarnessId::Antigravity => flagged_empty(),
     }
 }
 

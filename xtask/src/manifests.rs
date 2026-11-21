@@ -2,13 +2,9 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use regex::Regex;
 use serde::Deserialize;
-use std::sync::LazyLock;
 
 use crate::error::{Error, Result};
-use crate::git::git;
-use crate::privacy;
 
 #[derive(Debug, Deserialize)]
 struct PolicyFile {
@@ -256,88 +252,4 @@ fn render(value: &toml::Value) -> String {
             format!("[{}]", parts.join(","))
         }
     }
-}
-
-pub fn identity_ok(root: &Path, name: &str, email: &str) -> Result<bool> {
-    let path = root
-        .join("xtask")
-        .join("data")
-        .join("house-identities.json");
-    let file: crate::privacy::IdentityFile =
-        serde_json::from_str(&std::fs::read_to_string(&path)?)?;
-    let identity = format!(
-        "{} <{}>",
-        name.trim().to_lowercase(),
-        email.trim().to_lowercase()
-    );
-    let digest = privacy::sha256(&identity);
-    Ok(file.sha256.contains(&digest))
-}
-
-#[expect(clippy::expect_used)]
-static BLOCKED_TRAILERS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?im)^(Co-authored-by|Claude-Session|Signed-off-by):")
-        .expect("the blocked-trailer pattern is a constant")
-});
-#[expect(clippy::expect_used)]
-static BLOCKED_TEXT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(claude|anthropic|cursor|copilot|chatgpt|openai|generated with)")
-        .expect("the blocked-text pattern is a constant")
-});
-#[expect(clippy::expect_used)]
-static AI_TEXT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(generated with|session_|co-authored)")
-        .expect("the AI-text pattern is a constant")
-});
-
-pub fn commit_message(
-    root: &Path,
-    findings: &mut Vec<String>,
-    text: &str,
-    author: Option<(&str, &str)>,
-) -> Result<()> {
-    if BLOCKED_TRAILERS.is_match(text) {
-        findings.push(
-            "AUTHORSHIP commit message carries a Co-authored-by / Claude-Session / Signed-off-by trailer"
-                .to_owned(),
-        );
-    }
-    if BLOCKED_TEXT.is_match(text) && AI_TEXT.is_match(text) {
-        findings.push("AUTHORSHIP commit message carries AI attribution text".to_owned());
-    }
-    if let Some((name, email)) = author
-        && !identity_ok(root, name, email)?
-    {
-        findings.push(format!(
-            "AUTHORSHIP {name} <{email}> is not a house identity"
-        ));
-    }
-    Ok(())
-}
-
-pub fn commits(root: &Path, range: &str, findings: &mut Vec<String>) -> Result<usize> {
-    let out = git(root, &["log", "--format=%H%x1f%an%x1f%ae%x1f%B%x1e", range])?;
-    let mut count = 0;
-    for record in out.split('\u{1e}') {
-        let record = record.trim_matches('\n');
-        if record.is_empty() {
-            continue;
-        }
-        let mut parts = record.split('\u{1f}');
-        let (Some(hash), Some(name), Some(email), Some(body)) =
-            (parts.next(), parts.next(), parts.next(), parts.next())
-        else {
-            continue;
-        };
-        count += 1;
-        let before = findings.len();
-        commit_message(root, findings, body, Some((name, email)))?;
-        let suffix = hash.get(..8).unwrap_or(hash).to_owned();
-        for finding in findings.iter_mut().skip(before) {
-            finding.push_str(" (");
-            finding.push_str(&suffix);
-            finding.push(')');
-        }
-    }
-    Ok(count)
 }
