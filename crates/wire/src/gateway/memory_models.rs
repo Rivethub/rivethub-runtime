@@ -22,6 +22,7 @@ pub enum ModelRole {
     Summarizer,
     Categorizer,
     WikiWriter,
+    EntityBuilder,
     Embedder,
 }
 
@@ -32,6 +33,8 @@ pub enum ModelHealth {
     Slow,
     Failing,
     Unconfigured,
+    #[serde(rename = "not-running")]
+    NotRunning,
 }
 
 #[serde_with::skip_serializing_none]
@@ -47,4 +50,8 @@ pub struct ModelJob {
     pub health: ModelHealth,
     pub detail: String,
     pub queued: u64,
+    #[serde(default)]
+    pub outage: Option<String>,
+    #[serde(default)]
+    pub reported_by: Option<String>,
 }

@@ -153,7 +153,7 @@ pub enum JobKeyMode {
     Arm,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString, strum::EnumIter)]
 #[strum(serialize_all = "kebab-case")]
 pub enum WorkerRole {
     Embedder,

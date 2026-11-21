@@ -1,5 +1,3 @@
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use kernel::model::ModelCallFailure;
@@ -26,28 +24,43 @@ pub enum OutageCause {
 }
 
 #[derive(Debug)]
+struct Held {
+    holders: usize,
+    down: watch::Sender<Option<OutageCause>>,
+}
+
+#[derive(Debug)]
 pub(crate) struct OutageGate {
-    holders: AtomicUsize,
-    down: watch::Sender<bool>,
+    held: parking_lot::Mutex<Held>,
+    state: watch::Receiver<Option<OutageCause>>,
 }
 
 impl OutageGate {
     pub(crate) fn new() -> Self {
-        let (down, _) = watch::channel(false);
+        let (down, state) = watch::channel(None);
         Self {
-            holders: AtomicUsize::new(0),
-            down,
+            held: parking_lot::Mutex::new(Held { holders: 0, down }),
+            state,
         }
     }
 
+    pub(crate) fn cause(&self) -> watch::Receiver<Option<OutageCause>> {
+        self.state.clone()
+    }
+
     pub(crate) fn is_down(&self) -> bool {
-        *self.down.borrow()
+        self.state.borrow().is_some()
     }
 
     pub(crate) fn enter(&self, cause: OutageCause) {
-        let previous = self.holders.fetch_add(1, Ordering::AcqRel);
-        if previous == 0 {
-            let _previous = self.down.send_replace(true);
+        let mut held = self.held.lock();
+        held.holders += 1;
+        let first = held.holders == 1;
+        if first {
+            let _previous = held.down.send_replace(Some(cause));
+        }
+        drop(held);
+        if first {
             tracing::warn!(
                 "model provider is {cause}; the worker stopped claiming until it recovers"
             );
@@ -55,20 +68,16 @@ impl OutageGate {
     }
 
     pub(crate) fn leave(&self, recovered: bool) {
-        let previous = self.holders.fetch_sub(1, Ordering::AcqRel);
-        if previous == 0 {
-            let _restored = self.holders.fetch_add(1, Ordering::AcqRel);
+        let mut held = self.held.lock();
+        let Some(remaining) = held.holders.checked_sub(1) else {
             return;
+        };
+        held.holders = remaining;
+        if remaining == 0 {
+            let _previous = held.down.send_replace(None);
         }
-        if previous != 1 || self.holders.load(Ordering::Acquire) != 0 {
-            return;
-        }
-        let _previous = self.down.send_replace(false);
-        if self.holders.load(Ordering::Acquire) != 0 {
-            let _previous = self.down.send_replace(true);
-            return;
-        }
-        if recovered {
+        drop(held);
+        if remaining == 0 && recovered {
             tracing::info!("model provider recovered; the worker resumed claiming");
         }
     }
@@ -77,11 +86,11 @@ impl OutageGate {
         &self,
         cancel: &CancellationToken,
     ) -> Result<bool, crate::error::WorkerError> {
-        let mut down = self.down.subscribe();
+        let mut down = self.state.clone();
         tokio::select! {
             biased;
             () = cancel.cancelled() => Ok(false),
-            result = down.wait_for(|down| !*down) => {
+            result = down.wait_for(Option::is_none) => {
                 result.map(|_| true).map_err(|_| crate::error::WorkerError::Closed)
             }
         }
@@ -201,8 +210,29 @@ mod tests {
     use std::time::Duration;
 
     use super::CEILING;
+    use super::OutageCause;
+    use super::OutageGate;
     use super::next_delay;
     use super::pause_for;
+
+    #[test]
+    fn the_gate_is_down_with_the_first_cause_until_the_last_holder_leaves() {
+        let gate = OutageGate::new();
+        let cause = gate.cause();
+        gate.leave(true);
+        assert!(!gate.is_down());
+        gate.enter(OutageCause::Unreachable);
+        gate.enter(OutageCause::Throttled);
+        assert_eq!(*cause.borrow(), Some(OutageCause::Unreachable));
+        gate.leave(false);
+        assert!(gate.is_down());
+        assert_eq!(*cause.borrow(), Some(OutageCause::Unreachable));
+        gate.leave(true);
+        assert!(!gate.is_down());
+        assert_eq!(*cause.borrow(), None);
+        gate.enter(OutageCause::Throttled);
+        assert_eq!(*cause.borrow(), Some(OutageCause::Throttled));
+    }
 
     #[test]
     fn the_backoff_stops_growing_at_the_ceiling() {
