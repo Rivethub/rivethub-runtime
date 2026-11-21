@@ -96,7 +96,7 @@ impl AiVendor {
 #[expect(clippy::expect_used)]
 static AI_NAME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?i)^(claude (code|opus|sonnet|haiku|fable|mythos|\d)\b.*|cursor( agent)?( v?[\d.]+)?|(github )?copilot\b.*|(openai )?codex\b.*|chatgpt\b.*|gemini( (cli|code assist|pro|flash|ultra|nano|\d)\b.*)?|devin ai\b.*|grok( .*)?|aider\b.*|.*\(aider\)|opencode( .*)?|openhands|windsurf|antigravity|warp|factory droid)$",
+        r"(?i)^(claude (code|opus|sonnet|haiku|fable|mythos|\d+)\b.*|cursor( agent)?( v?[\d.]+)?|(github )?copilot\b.*|(openai )?codex\b.*|chatgpt\b.*|gemini( (cli|code assist|pro|flash|ultra|nano|\d+)\b.*)?|devin ai\b.*|grok( .*)?|aider\b.*|.*\(aider\)|opencode( .*)?|openhands|windsurf|antigravity|warp|factory droid)$",
     )
     .expect("the AI-name pattern is a constant")
 });
@@ -119,11 +119,17 @@ static MARKDOWN_LINK: LazyLock<Regex> = LazyLock::new(|| {
 });
 #[expect(clippy::expect_used)]
 static URL_HOST: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)https?://([^/\s:)>\]]+)").expect("the URL pattern is a constant")
+    Regex::new(r"(?i)https?://([^/\s:?#)>\]]+)").expect("the URL pattern is a constant")
 });
 
 const SCISSORS: &str = "# ------------------------ >8 ------------------------";
-const FOOTER_WORDS: usize = 4;
+#[expect(clippy::expect_used)]
+static FOOTER_PRODUCT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)^(claude( code)?|cursor( agent)?|(github )?copilot|(openai )?codex|chatgpt|gemini( cli)?|devin( ai)?|aider|amp|opencode|openhands|windsurf|grok|warp)( v?[\d.]+)?$",
+    )
+    .expect("the footer-product pattern is a constant")
+});
 
 #[derive(Debug, Clone, Copy, strum::EnumString)]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
@@ -210,13 +216,14 @@ fn ai_trailer(line: &str) -> Option<String> {
 }
 
 fn footer_credits_ai(credit: &str) -> bool {
-    match MARKDOWN_LINK.captures(credit.trim()) {
-        Some(link) => [link.get(1), link.get(2)]
+    if let Some(link) = MARKDOWN_LINK.captures(credit.trim()) {
+        return [link.get(1), link.get(2)]
             .into_iter()
             .flatten()
-            .any(|part| credits_ai(part.as_str())),
-        None => credit.split_whitespace().count() <= FOOTER_WORDS && credits_ai(credit),
+            .any(|part| credits_ai(part.as_str()));
     }
+    let credit = credit.trim().trim_end_matches('.');
+    FOOTER_PRODUCT.is_match(credit) || (URL_HOST.is_match(credit) && credits_ai(credit))
 }
 
 fn ai_footer(text: &str) -> Option<String> {
@@ -279,7 +286,7 @@ pub fn commits(root: &Path, range: &str, findings: &mut Vec<String>) -> Result<u
         if record.is_empty() {
             continue;
         }
-        let mut parts = record.split('\u{1f}');
+        let mut parts = record.splitn(6, '\u{1f}');
         let (Some(hash), Some(name), Some(email), Some(committer), Some(committed_as), Some(body)) = (
             parts.next(),
             parts.next(),
