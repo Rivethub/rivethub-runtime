@@ -3029,7 +3029,8 @@
         "omp",
         "dsh",
         "cursor",
-        "cowork"
+        "cowork",
+        "antigravity"
       ],
       "type": "string"
     },

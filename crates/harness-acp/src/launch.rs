@@ -175,7 +175,9 @@ fn sheet_chat(harness: HarnessId) -> bool {
 fn entry_for(config: &Config, harness: HarnessId) -> LaunchEntry {
     match harness {
         HarnessId::Cursor => LaunchEntry::Unsupported(ChatUnsupportedReason::TerminalOnly),
-        HarnessId::Cowork => LaunchEntry::Unsupported(ChatUnsupportedReason::CaptureOnly),
+        HarnessId::Cowork | HarnessId::Antigravity => {
+            LaunchEntry::Unsupported(ChatUnsupportedReason::CaptureOnly)
+        }
         HarnessId::GrokBuild => LaunchEntry::Launch(AcpLaunch::Native(acp_command(
             config,
             harness,
