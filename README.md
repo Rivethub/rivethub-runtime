@@ -104,33 +104,52 @@ A shared hub keeps three kinds of database login apart:
 
 | Login | Role memberships | Used by |
 |---|---|---|
-| Owner | owns the schema and every table; `NOLOGIN`, or used only by an administrator | `rivethub-migrate` |
+| Owner | owns the schema and every table; `NOLOGIN`, or used only by an administrator | `rivethub-migrate`, `rh db migrate` |
 | Serving | `rh_gateway` and `rh_maintenance`; not the owner, `NOSUPERUSER NOBYPASSRLS` | the gateway |
-| Worker | `rh_gateway` and `rh_maintenance`; not the owner, `NOSUPERUSER NOBYPASSRLS` | `rh worker` |
+| Worker | its own login with `rh_gateway` and `rh_maintenance`; not the owner, `NOSUPERUSER NOBYPASSRLS` | `rh worker` |
 
-A login pinned to a person in `rh_role_principals` needs neither role. The database believes the person and spaces
-a connection names only when its login is a member of `rh_gateway`, and turns maintenance on only for members of
-`rh_maintenance`. The gateway and workers refuse to start under a login that owns the memory tables, bypasses
-row-level security, or is neither pinned nor a member of `rh_gateway`. They warn about every unpinned login that can
-act as a person or turn on maintenance.
+A login pinned to a person in `rh_role_principals` needs neither role and stays pinned even when it holds them. The
+database believes the person and spaces a connection names only when its login is a member of `rh_gateway`, and turns
+maintenance on only when the login itself is a member of `rh_maintenance`; `SET ROLE` does not change either answer.
+The gateway and workers refuse to start under a login that owns the memory schema or tables, bypasses row-level
+security, or is neither pinned nor a member of `rh_gateway`. They warn about every unpinned login that can act as a
+person or turn on maintenance.
 
-Upgrading a hub from schema 80:
+The same checks run before anything is migrated: `rh doctor` fails its memory check, `rh update` stops before
+migrating, and `rivethub-migrate` refuses to apply this change while no login that could serve afterwards is a member
+of `rh_gateway`. A hub that serves as its owner, including a single-person hub, has to create a serving login first.
+Admin commands that open memory directly (`rh memory ...`, `rh db ...`) run as whatever login they are given and do not
+apply the serving checks.
+
+Upgrading a hub from schema 80 or 81:
 
 1. As a role administrator, create the groups: `CREATE ROLE rh_gateway NOLOGIN; CREATE ROLE rh_maintenance NOLOGIN;`.
-   The migration creates them itself when the migrating login has `CREATEROLE`.
-2. If the gateway or workers log in as the owner, create a separate login for each
-   (`CREATE ROLE <name> LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '...'`).
+   The migration creates them itself when the migrating login has `CREATEROLE`, and otherwise stops with this hint.
+2. Create a serving login for the gateway and a separate login for each worker
+   (`CREATE ROLE <name> LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '...'`). Neither may own the schema or its tables.
 3. Grant both groups to the serving and worker logins: `GRANT rh_gateway, rh_maintenance TO <login>;`. Grant nothing
    to any other login.
-4. Run `rh db migrate` as the owner. It grants the groups the table, sequence and function privileges they
-   need, and default privileges for later migrations.
+4. Run `rh db migrate` as the owner. It grants the groups the table and sequence privileges they need, `EXECUTE` on
+   the schema's ordinary functions (never on `SECURITY DEFINER` ones), and default table and sequence privileges for
+   later migrations.
 5. Point the gateway and workers at their own logins and restart them.
+
+Always migrate as the same owner login. Default privileges only follow tables created by the login that set them, so a
+table created by a different login is not readable by the serving logins. Once the configured URL is the serving
+login, set `RIVETHUB_MIGRATION_URL` to the owner's URL when running `rh update` so the update migrates as the owner;
+a serving login can confirm a schema that is already current but cannot apply migrations.
 
 Until step 3 is done, a login that is neither pinned nor in the groups sees no rows once the migration has run.
 
 A hub that serves as the owner login keeps working on the migrated schema with the previous `rh` release, because the
 owner still passes every check. Migrate and switch the logins first, then install this release: it refuses to serve
 as the owner and names the login it refused.
+
+What this does not cover: any member of `rh_gateway` can still read and write every person's rows by naming that
+person, so the serving and worker logins must be treated as trusted with the whole hub. The serving login also holds
+`rh_maintenance` because the gateway runs upkeep in process. The planned next step is a gateway-only serving login with
+that upkeep moved behind `SECURITY DEFINER` functions; the full answer is a login per person or a signed assertion
+of who is asking, so the database does not have to trust the gateway's word.
 
 ## Layout
 
