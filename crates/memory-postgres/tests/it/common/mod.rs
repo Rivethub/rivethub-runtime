@@ -14,6 +14,7 @@ pub(crate) async fn probe(pool: &PgPool) -> Result<PgPool, Box<dyn std::error::E
         format!("GRANT USAGE ON SCHEMA public TO {PROBE}"),
         format!("GRANT ALL ON ALL TABLES IN SCHEMA public TO {PROBE}"),
         format!("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO {PROBE}"),
+        format!("GRANT rh_gateway, rh_maintenance TO {PROBE}"),
     ] {
         sqlx::query(sqlx::AssertSqlSafe(grant))
             .execute(pool)

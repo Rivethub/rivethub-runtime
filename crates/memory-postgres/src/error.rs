@@ -48,6 +48,14 @@ pub enum Error {
         "the memory database login {login} is a superuser or bypasses row-level security, so it would show every person's rows to everyone; serve memory with an ordinary login (docs/OPERATIONS.md) and keep this one for rh db migrate and administration"
     )]
     BypassingLogin { login: String },
+    #[error(
+        "the memory database login {login} owns the memory tables, so it could rewrite their row-level security; serve memory with a login that does not own them and is a member of rh_gateway, and keep the owner for rh db migrate"
+    )]
+    OwningLogin { login: String },
+    #[error(
+        "the memory database login {login} is neither pinned to a person nor a member of rh_gateway, so the database would ignore the person it serves and show it nothing; grant rh_gateway to it"
+    )]
+    UntrustedLogin { login: String },
     #[error("the graphile_worker schema is absent on this database")]
     QueueAbsent,
     #[error("Postgres dump line {line}: {detail}")]
@@ -125,7 +133,9 @@ impl From<Error> for MemoryStoreError {
                 Self::Unavailable(Box::new(Error::SchemaBehind { found, required }))
             }
             Error::NotAdopted => Self::Unavailable(Box::new(Error::NotAdopted)),
-            error @ Error::BypassingLogin { .. } => Self::Unavailable(Box::new(error)),
+            error @ (Error::BypassingLogin { .. }
+            | Error::OwningLogin { .. }
+            | Error::UntrustedLogin { .. }) => Self::Unavailable(Box::new(error)),
             Error::QueueAbsent => Self::Unavailable(Box::new(Error::QueueAbsent)),
             Error::Cursor(_)
             | Error::MissingChannel
@@ -205,7 +215,9 @@ impl From<Error> for JobQueueError {
                 Self::Unavailable(Box::new(Error::SchemaBehind { found, required }))
             }
             Error::NotAdopted => Self::Unavailable(Box::new(Error::NotAdopted)),
-            error @ Error::BypassingLogin { .. } => Self::Unavailable(Box::new(error)),
+            error @ (Error::BypassingLogin { .. }
+            | Error::OwningLogin { .. }
+            | Error::UntrustedLogin { .. }) => Self::Unavailable(Box::new(error)),
             Error::QueueAbsent => Self::Unavailable(Box::new(Error::QueueAbsent)),
             Error::Cursor(_)
             | Error::MissingChannel

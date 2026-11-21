@@ -107,18 +107,30 @@ impl TestDb {
         )))
         .execute(&self.pool)
         .await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DO $$ BEGIN CREATE ROLE {SERVING} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '{SERVING}'; \
+             EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
+        )))
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "GRANT rh_gateway, rh_maintenance TO {SERVING}"
+        )))
+        .execute(&self.pool)
+        .await?;
         let options = self
             .pool
             .connect_options()
             .as_ref()
             .clone()
-            .username(SERVICE)
-            .password(SERVICE);
+            .username(SERVING)
+            .password(SERVING);
         Ok(options.to_url_lossy().to_string())
     }
 }
 
 pub(crate) const SERVICE: &str = "rh_test_service";
+const SERVING: &str = "rh_test_serving";
 
 pub(crate) async fn install_queue(pool: &PgPool) -> Result<(), sqlx::Error> {
     let present: bool =

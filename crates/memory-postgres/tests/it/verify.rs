@@ -129,6 +129,9 @@ async fn a_serving_login_that_bypasses_row_security_is_refused(pool: PgPool) -> 
         )))
         .execute(&pool)
         .await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!("GRANT rh_gateway TO {role}")))
+            .execute(&pool)
+            .await?;
     }
     let pooling = memory_postgres::Pooling::OnDemand;
     for (url, refused) in [
@@ -152,5 +155,44 @@ async fn a_serving_login_that_bypasses_row_security_is_refused(pool: PgPool) -> 
         }
     }
     PostgresMemory::connect(&url(&pool)).await?;
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_serving_login_that_owns_tables_or_is_not_a_gateway_is_refused(
+    pool: PgPool,
+) -> TestResult {
+    for role in ["rh_serving_owner", "rh_serving_outsider"] {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DO $$ BEGIN CREATE ROLE {role} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '{role}'; \
+             EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
+        )))
+        .execute(&pool)
+        .await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "GRANT SELECT ON _sqlx_migrations TO {role}"
+        )))
+        .execute(&pool)
+        .await?;
+    }
+    for statement in [
+        "GRANT rh_gateway TO rh_serving_owner",
+        "ALTER TABLE rh_conversations OWNER TO rh_serving_owner",
+    ] {
+        sqlx::query(statement).execute(&pool).await?;
+    }
+    let pooling = memory_postgres::Pooling::OnDemand;
+    let owner =
+        PostgresMemory::connect_deferred(&as_role(&pool, "rh_serving_owner"), pooling).await;
+    assert!(
+        matches!(&owner, Err(Error::OwningLogin { login }) if login == "rh_serving_owner"),
+        "a table owner must not serve: {owner:?}"
+    );
+    let outsider =
+        PostgresMemory::connect_deferred(&as_role(&pool, "rh_serving_outsider"), pooling).await;
+    assert!(
+        matches!(&outsider, Err(Error::UntrustedLogin { login }) if login == "rh_serving_outsider"),
+        "a login outside rh_gateway must not serve: {outsider:?}"
+    );
     Ok(())
 }

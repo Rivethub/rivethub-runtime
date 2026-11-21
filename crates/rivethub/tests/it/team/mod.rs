@@ -86,6 +86,7 @@ pub(crate) fn users() -> UsersRegistry {
 }
 
 pub(crate) const SERVICE: &str = "rh_team_hub";
+const SERVING: &str = "rh_team_serving";
 
 const SUPERUSER_PREP: [&str; 8] = [
     "CREATE EXTENSION IF NOT EXISTS vector",
@@ -116,6 +117,13 @@ async fn served_by_an_ordinary_role(
     for statement in SUPERUSER_PREP.into_iter().map(str::to_owned).chain([
         format!("ALTER DATABASE \"{database}\" OWNER TO {SERVICE}"),
         format!("ALTER SCHEMA public OWNER TO {SERVICE}"),
+        trusted_group("rh_gateway"),
+        trusted_group("rh_maintenance"),
+        format!(
+            "DO $$ BEGIN CREATE ROLE {SERVING} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '{SERVING}'; \
+             EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
+        ),
+        format!("GRANT rh_gateway, rh_maintenance TO {SERVING}"),
     ]) {
         sqlx::query(sqlx::AssertSqlSafe(statement))
             .execute(&pool)
@@ -127,9 +135,19 @@ async fn served_by_an_ordinary_role(
         .clone()
         .username(SERVICE)
         .password(SERVICE);
-    let url = options.to_url_lossy().to_string();
-    migrate::postgres(&url).await?;
-    Ok(url)
+    migrate::postgres(options.to_url_lossy().as_str()).await?;
+    Ok(options
+        .username(SERVING)
+        .password(SERVING)
+        .to_url_lossy()
+        .to_string())
+}
+
+fn trusted_group(name: &str) -> String {
+    format!(
+        "DO $$ BEGIN CREATE ROLE {name} NOLOGIN; \
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
+    )
 }
 
 impl Hub {

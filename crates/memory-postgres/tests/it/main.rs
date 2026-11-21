@@ -29,6 +29,7 @@ mod search_port;
 mod search_summary_passages;
 mod session_catalog;
 mod session_delete;
+mod session_trust;
 mod shared_trash;
 mod store;
 mod store_edges;

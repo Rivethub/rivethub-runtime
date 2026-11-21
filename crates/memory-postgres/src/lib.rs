@@ -93,7 +93,7 @@ pub use queue::PostgresQueue;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
-pub const SCHEMA_VERSION: i64 = 80;
+pub const SCHEMA_VERSION: i64 = 81;
 pub(crate) const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug)]
@@ -209,14 +209,44 @@ impl PostgresMemory {
 
     pub async fn prepare_serving(pool: &PgPool) -> Result<(), Error> {
         Self::prepare(pool).await?;
-        let (login, bypasses): (String, bool) = sqlx::query_as(
-            "SELECT current_user::text, rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user",
+        let (login, bypasses, owns, trusted): (String, bool, bool, bool) = sqlx::query_as(
+            "SELECT current_user::text, r.rolsuper OR r.rolbypassrls,
+                    EXISTS (SELECT 1 FROM pg_class c
+                             WHERE c.relnamespace = current_schema()::regnamespace
+                               AND c.relname LIKE 'rh\\_%' AND c.relkind IN ('r', 'p')
+                               AND pg_has_role(current_user, c.relowner, 'MEMBER')),
+                    rh_scope_pin() IS NOT NULL
+                        OR coalesce(pg_has_role(current_user, to_regrole('rh_gateway'), 'MEMBER'), false)
+               FROM pg_roles r WHERE r.rolname = current_user",
         )
         .fetch_one(pool)
         .await
         .map_err(|source| Error::operation("serving login check", source))?;
         if bypasses {
             return Err(Error::BypassingLogin { login });
+        }
+        if owns {
+            return Err(Error::OwningLogin { login });
+        }
+        if !trusted {
+            return Err(Error::UntrustedLogin { login });
+        }
+        let unpinned: Vec<String> = sqlx::query_scalar(
+            "SELECT r.rolname::text FROM pg_roles r
+              WHERE r.rolcanlogin AND NOT r.rolsuper AND r.rolname <> current_user
+                AND NOT EXISTS (SELECT 1 FROM rh_role_principals p WHERE p.role_name = r.rolname)
+                AND (coalesce(pg_has_role(r.oid, to_regrole('rh_gateway'), 'MEMBER'), false)
+                     OR coalesce(pg_has_role(r.oid, to_regrole('rh_maintenance'), 'MEMBER'), false))
+              ORDER BY 1",
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|source| Error::operation("unpinned login check", source))?;
+        if !unpinned.is_empty() {
+            tracing::warn!(
+                logins = %unpinned.join(", "),
+                "these unpinned database logins can act as any person or turn on maintenance; keep their credentials with the gateway and workers only"
+            );
         }
         Ok(())
     }
