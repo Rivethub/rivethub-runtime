@@ -58,6 +58,11 @@ fn assignments(
             &models.wiki_writer.choice,
             models.wiki_writer.inherits_default,
         ),
+        chat(
+            ModelRole::EntityBuilder,
+            &models.wiki_writer.choice,
+            models.wiki_writer.inherits_default,
+        ),
         embedder,
     ])
 }

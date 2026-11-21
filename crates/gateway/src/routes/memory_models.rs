@@ -19,6 +19,20 @@ pub(super) async fn list(
         .tasks()
         .await
         .map_err(super::tidy::error)?;
+    if let Some(reporting) = gateway.worker_reports() {
+        let reports = reporting
+            .store
+            .newest_first(kernel::tidy::REPORT_FRESH)
+            .await
+            .map_err(super::tidy::error)?;
+        if !reports.is_empty() || !assignments.is_empty() {
+            return Ok(Json(crate::models::reported(
+                &reports,
+                reporting.hub_embedder.as_ref(),
+                &tasks,
+            )));
+        }
+    }
     if assignments.is_empty() {
         return Ok(Json(crate::models::unconfigured(&tasks)));
     }

@@ -198,7 +198,7 @@ async fn run(
             runner.runner = runner.runner.with_concurrency(concurrency);
         }
         tracing::info!("worker running {role}");
-        drive(runner, shutdown.clone()).await
+        drive_reported(runner, &memory, role, &config, env, shutdown.clone()).await
     }
     .await;
     shutdown.cancel();
@@ -385,6 +385,33 @@ async fn drive<Q: JobQueue + 'static>(
     };
     joined??;
     Ok(())
+}
+
+async fn drive_reported<Q: JobQueue + 'static>(
+    runner: ComposedRunner<Q>,
+    memory: &Arc<memory_postgres::PostgresMemory>,
+    role: ProcessRole,
+    config: &Config,
+    env: &Environment,
+    shutdown: CancellationToken,
+) -> Result<(), RootError> {
+    let reporter = workers::Reporter {
+        store: memory.clone(),
+        node: crate::identity::resolve(config, env)
+            .map_err(StartupError::from)?
+            .name,
+        roles: crate::worker_report::roles(config, env, &role.selected())
+            .map_err(|error| RootError::Invalid(error.to_string()))?,
+        outage: runner.runner.outage(),
+    };
+    let reporting = shutdown.child_token();
+    let driven = async {
+        let driven = drive(runner, shutdown.clone()).await;
+        reporting.cancel();
+        driven
+    };
+    let (driven, ()) = tokio::join!(driven, reporter.run(reporting.clone()));
+    driven
 }
 
 #[expect(missing_debug_implementations)]

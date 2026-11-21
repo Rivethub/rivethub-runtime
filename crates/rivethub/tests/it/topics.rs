@@ -8,6 +8,7 @@ mod models;
 mod pages;
 mod review;
 mod tidy;
+mod worker_models;
 
 use std::net::SocketAddr;
 use std::path::Path;

@@ -29,15 +29,22 @@ pub enum OutageCause {
 pub(crate) struct OutageGate {
     holders: AtomicUsize,
     down: watch::Sender<bool>,
+    cause: watch::Sender<Option<OutageCause>>,
 }
 
 impl OutageGate {
     pub(crate) fn new() -> Self {
         let (down, _) = watch::channel(false);
+        let (cause, _) = watch::channel(None);
         Self {
             holders: AtomicUsize::new(0),
             down,
+            cause,
         }
+    }
+
+    pub(crate) fn cause(&self) -> watch::Receiver<Option<OutageCause>> {
+        self.cause.subscribe()
     }
 
     pub(crate) fn is_down(&self) -> bool {
@@ -48,6 +55,7 @@ impl OutageGate {
         let previous = self.holders.fetch_add(1, Ordering::AcqRel);
         if previous == 0 {
             let _previous = self.down.send_replace(true);
+            let _cleared = self.cause.send_replace(Some(cause));
             tracing::warn!(
                 "model provider is {cause}; the worker stopped claiming until it recovers"
             );
@@ -68,6 +76,7 @@ impl OutageGate {
             let _previous = self.down.send_replace(true);
             return;
         }
+        let _cause = self.cause.send_replace(None);
         if recovered {
             tracing::info!("model provider recovered; the worker resumed claiming");
         }

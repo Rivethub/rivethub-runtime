@@ -14,6 +14,7 @@ pub mod sidecar;
 mod signals;
 mod telemetry;
 pub mod worker;
+pub mod worker_report;
 
 pub use cli::Exit;
 pub use identity::NodeError;

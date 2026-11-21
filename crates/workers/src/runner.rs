@@ -102,7 +102,7 @@ pub struct Runner<Q> {
     summary: SummarySettings,
     summary_permits: Arc<Semaphore>,
     wake: Arc<Notify>,
-    outage: Arc<OutageGate>,
+    pub(crate) outage: Arc<OutageGate>,
     idle: watch::Sender<bool>,
     cursor: Arc<AtomicUsize>,
     open: Arc<Mutex<Vec<JobId>>>,

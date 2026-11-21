@@ -41,6 +41,8 @@ use crate::auth::DenialLog;
 
 pub use crate::login::AuthPolicy;
 pub use crate::models::ModelAssignment;
+pub use crate::models::WorkerReporting;
+pub use crate::models::embedder_mismatch;
 pub use crate::settings::{
     REQUEST_DEADLINE, Settings, SettingsError, explicit_static_dir, managed_web_link, state_dir,
 };
@@ -84,6 +86,7 @@ pub struct Gateway {
     upkeep: Option<Arc<dyn kernel::tidy::UpkeepStore>>,
     flagged: Option<Arc<dyn kernel::flagged::FlaggedJobs>>,
     model_assignments: Vec<ModelAssignment>,
+    worker_reports: Option<models::WorkerReporting>,
     plugins: Option<Arc<plugins::PluginHost>>,
     summaries: Option<Arc<dyn kernel::memory::SummaryWatch>>,
     deletions: Option<Arc<dyn kernel::memory::SessionDeletion>>,
@@ -132,6 +135,7 @@ impl Gateway {
             upkeep: None,
             flagged: None,
             model_assignments: Vec::new(),
+            worker_reports: None,
             plugins: None,
             summaries: None,
             deletions: None,
