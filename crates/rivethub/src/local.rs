@@ -461,7 +461,10 @@ async fn build_runners(
             .with_session_deletion(Arc::clone(store) as Arc<dyn SessionDeletion>);
         if matches!(
             role,
-            ProcessRole::Embedder | ProcessRole::Summarizer | ProcessRole::Categorizer
+            ProcessRole::Embedder
+                | ProcessRole::Summarizer
+                | ProcessRole::Categorizer
+                | ProcessRole::WikiBuilder
         ) {
             runner.runner = runner.runner.with_schedules(true).with_schedule_at_start();
         }
