@@ -216,11 +216,13 @@ pub fn pre_commit(root: &Path) -> Result<()> {
 }
 
 pub fn commit_msg(root: &Path, file: &Path) -> Result<()> {
-    let name = git(root, &["config", "user.name"])?.trim().to_owned();
-    let email = git(root, &["config", "user.email"])?.trim().to_owned();
+    let ident = git(root, &["var", "GIT_AUTHOR_IDENT"])?;
+    let author = ident
+        .split_once(" <")
+        .and_then(|(name, rest)| Some((name, rest.split_once('>')?.0)));
     let text = std::fs::read_to_string(file)?;
     let mut findings = Vec::new();
-    crate::authorship::commit_message(&mut findings, &text, Some((&name, &email)));
+    crate::authorship::commit_message(&mut findings, &text, author);
     finish("commit-msg", &findings)
 }
 

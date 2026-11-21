@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -20,11 +21,13 @@ enum AiVendor {
     Kiro,
     OpenAi,
     OpenCode,
+    OpenHands,
+    Warp,
     Xai,
 }
 
 impl AiVendor {
-    const ALL: [Self; 13] = [
+    const ALL: [Self; 15] = [
         Self::Aider,
         Self::Amp,
         Self::Anthropic,
@@ -37,6 +40,8 @@ impl AiVendor {
         Self::Kiro,
         Self::OpenAi,
         Self::OpenCode,
+        Self::OpenHands,
+        Self::Warp,
         Self::Xai,
     ];
 
@@ -53,6 +58,8 @@ impl AiVendor {
             Self::Kiro => &["kiro.dev"],
             Self::OpenAi => &["openai.com", "chatgpt.com"],
             Self::OpenCode => &["opencode.ai"],
+            Self::OpenHands => &["all-hands.dev"],
+            Self::Warp => &["warp.dev"],
             Self::Xai => &["x.ai"],
         }
     }
@@ -66,9 +73,14 @@ impl AiVendor {
             Self::Google => &["gemini-code-assist[bot]", "google-labs-jules[bot]"],
             Self::OpenAi => &["chatgpt-codex-connector[bot]", "openai-codex[bot]"],
             Self::Factory => &["factory-droid[bot]"],
-            Self::Aider | Self::Amp | Self::Codeium | Self::Kiro | Self::OpenCode | Self::Xai => {
-                &[]
-            }
+            Self::Aider
+            | Self::Amp
+            | Self::Codeium
+            | Self::Kiro
+            | Self::OpenCode
+            | Self::OpenHands
+            | Self::Warp
+            | Self::Xai => &[],
         }
     }
 
@@ -84,46 +96,63 @@ impl AiVendor {
 #[expect(clippy::expect_used)]
 static AI_NAME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?i)^(claude (code|opus|sonnet|haiku|fable|mythos)\b.*|cursor( agent)?|(github )?copilot\b.*|(openai )?codex\b.*|chatgpt\b.*|gemini( (cli|code assist|pro|flash|ultra|nano|\d).*)?|devin ai\b.*|grok( .*)?|aider\b.*|.*\(aider\)|opencode|windsurf|antigravity|factory droid)$",
+        r"(?i)^(claude (code|opus|sonnet|haiku|fable|mythos|\d)\b.*|cursor( agent)?|(github )?copilot\b.*|(openai )?codex\b.*|chatgpt\b.*|gemini( (cli|code assist|pro|flash|ultra|nano|\d).*)?|devin ai\b.*|grok( .*)?|aider\b.*|.*\(aider\)|opencode( .*)?|openhands|windsurf|antigravity|warp|factory droid)$",
     )
     .expect("the AI-name pattern is a constant")
 });
 #[expect(clippy::expect_used)]
-static CO_AUTHOR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^co-authored-by:\s*([^<]*?)\s*(?:<([^>]*)>)?$")
-        .expect("the co-author pattern is a constant")
+static TRAILER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^([A-Za-z][A-Za-z-]*):\s*(.*)$").expect("the trailer pattern is a constant")
 });
 #[expect(clippy::expect_used)]
-static AI_TRAILER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"^(Claude|Cursor|Codex|Copilot|Amp|Devin|Gemini|Aider|OpenCode|Windsurf|Grok|Kiro|Droid)-[A-Za-z-]+: ",
-    )
-    .expect("the AI-trailer pattern is a constant")
+static CREDITED: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^([^<]*?)\s*(?:<([^>]*)>)?$").expect("the credited pattern is a constant")
 });
 #[expect(clippy::expect_used)]
-static CREDIT_LINE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^\W*(generated|made|created|written|authored|built)[ -](with|by|using)\b")
-        .expect("the credit-line pattern is a constant")
-});
-#[expect(clippy::expect_used)]
-static AI_PRODUCT_WORD: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"\b(Claude|Anthropic|Cursor|Copilot|ChatGPT|OpenAI|Codex|Gemini|Devin|Aider|aider|Windsurf|OpenCode|opencode|Amp|Grok|Jules|Kiro|Droid)\b",
-    )
-    .expect("the AI-product pattern is a constant")
-});
-#[expect(clippy::expect_used)]
-static AI_SESSION_URL: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?i)https?://[^\s/]*(claude\.ai|claude\.com|devin\.ai|ampcode\.com|chatgpt\.com|cursor\.com)/\S*(session|thread|share)",
-    )
-    .expect("the AI-session pattern is a constant")
+static FOOTER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:[^\x00-\x7F]+\s*)?Generated (?:with|by) \[?(.+?)\]?(?:\(.*\))?$")
+        .expect("the footer pattern is a constant")
 });
 
-fn ai_credit(line: &str) -> bool {
-    AI_TRAILER.is_match(line)
-        || AI_SESSION_URL.is_match(line)
-        || (CREDIT_LINE.is_match(line) && AI_PRODUCT_WORD.is_match(line))
+#[derive(Debug, Clone, Copy, strum::EnumString)]
+#[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
+enum TrailerKey {
+    CoAuthoredBy,
+    SignedOffBy,
+    AssistedBy,
+    HelpedBy,
+    MadeWith,
+    MadeBy,
+    GeneratedWith,
+    GeneratedBy,
+    WrittenBy,
+    AuthoredBy,
+    BuiltWith,
+    CreatedWith,
+    CreatedBy,
+    ClaudeSession,
+    AmpThreadId,
+}
+
+impl TrailerKey {
+    const fn names_a_session(self) -> bool {
+        match self {
+            Self::ClaudeSession | Self::AmpThreadId => true,
+            Self::CoAuthoredBy
+            | Self::SignedOffBy
+            | Self::AssistedBy
+            | Self::HelpedBy
+            | Self::MadeWith
+            | Self::MadeBy
+            | Self::GeneratedWith
+            | Self::GeneratedBy
+            | Self::WrittenBy
+            | Self::AuthoredBy
+            | Self::BuiltWith
+            | Self::CreatedWith
+            | Self::CreatedBy => false,
+        }
+    }
 }
 
 #[must_use]
@@ -136,19 +165,52 @@ pub fn ai_product(name: &str, email: &str) -> bool {
         || AI_NAME.is_match(name.trim())
 }
 
-pub fn commit_message(findings: &mut Vec<String>, text: &str, author: Option<(&str, &str)>) {
-    let lines: Vec<&str> = text.lines().map(str::trim).collect();
-    for credit in lines.iter().filter_map(|line| CO_AUTHOR.captures(line)) {
-        let name = credit.get(1).map_or("", |name| name.as_str());
-        let email = credit.get(2).map_or("", |email| email.as_str());
-        if ai_product(name, email) {
-            findings.push(format!(
-                "AUTHORSHIP commit message credits an AI product as co-author ({name})"
-            ));
-        }
+fn credits_ai(value: &str) -> bool {
+    let lowered = value.to_lowercase();
+    let linked = AiVendor::ALL.iter().any(|vendor| {
+        vendor
+            .domains()
+            .iter()
+            .any(|domain| lowered.contains(&format!("://{domain}/")))
+    });
+    linked
+        || CREDITED.captures(value.trim()).is_some_and(|credited| {
+            ai_product(
+                credited.get(1).map_or("", |name| name.as_str()),
+                credited.get(2).map_or("", |email| email.as_str()),
+            )
+        })
+}
+
+fn ai_trailer(line: &str) -> Option<String> {
+    let trailer = TRAILER.captures(line)?;
+    let name = trailer.get(1)?.as_str();
+    let value = trailer.get(2)?.as_str().trim();
+    match TrailerKey::from_str(name) {
+        Ok(key) if key.names_a_session() => Some(format!("a {name} trailer")),
+        Ok(_) if credits_ai(value) => Some(format!("{name}: {value}")),
+        Ok(_) | Err(strum::ParseError::VariantNotFound) => None,
     }
-    if lines.iter().any(|line| ai_credit(line)) {
-        findings.push("AUTHORSHIP commit message carries AI attribution text".to_owned());
+}
+
+fn ai_footer(text: &str) -> Option<String> {
+    let last = text.trim_end().rsplit("\n\n").next()?;
+    last.lines().map(str::trim).find_map(|line| {
+        let product = FOOTER.captures(line)?.get(1)?.as_str();
+        credits_ai(product).then(|| line.to_owned())
+    })
+}
+
+pub fn commit_message(findings: &mut Vec<String>, text: &str, author: Option<(&str, &str)>) {
+    let text = text.replace("\r\n", "\n");
+    let credits = text
+        .lines()
+        .filter_map(|line| ai_trailer(line.trim()))
+        .chain(ai_footer(&text));
+    for credit in credits {
+        findings.push(format!(
+            "AUTHORSHIP commit message credits an AI product ({credit})"
+        ));
     }
     if let Some((name, email)) = author
         && ai_product(name, email)
@@ -160,7 +222,14 @@ pub fn commit_message(findings: &mut Vec<String>, text: &str, author: Option<(&s
 }
 
 pub fn commits(root: &Path, range: &str, findings: &mut Vec<String>) -> Result<usize> {
-    let out = git(root, &["log", "--format=%H%x1f%an%x1f%ae%x1f%B%x1e", range])?;
+    let out = git(
+        root,
+        &[
+            "log",
+            "--format=%H%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%B%x1e",
+            range,
+        ],
+    )?;
     let mut count = 0;
     for record in out.split('\u{1e}') {
         let record = record.trim_matches('\n');
@@ -168,14 +237,24 @@ pub fn commits(root: &Path, range: &str, findings: &mut Vec<String>) -> Result<u
             continue;
         }
         let mut parts = record.split('\u{1f}');
-        let (Some(hash), Some(name), Some(email), Some(body)) =
-            (parts.next(), parts.next(), parts.next(), parts.next())
-        else {
+        let (Some(hash), Some(name), Some(email), Some(committer), Some(committed_as), Some(body)) = (
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+        ) else {
             continue;
         };
         count += 1;
         let before = findings.len();
         commit_message(findings, body, Some((name, email)));
+        if (committer, committed_as) != (name, email) && ai_product(committer, committed_as) {
+            findings.push(format!(
+                "AUTHORSHIP {committer} <{committed_as}> is an AI product; the person responsible commits"
+            ));
+        }
         let suffix = hash.get(..8).unwrap_or(hash).to_owned();
         for finding in findings.iter_mut().skip(before) {
             finding.push_str(" (");
