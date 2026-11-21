@@ -1,3 +1,4 @@
+mod antigravity_hooks;
 mod codex_trust;
 mod dsh;
 mod dsh_plugin;

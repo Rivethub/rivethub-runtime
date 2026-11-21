@@ -11,7 +11,7 @@ pub fn resume_command(harness: HarnessId, native: &str) -> Option<String> {
         HarnessId::KimiCode => ("kimi", "--session"),
         HarnessId::Opencode => ("opencode", "--session"),
         HarnessId::Codex => ("codex", "resume"),
-        HarnessId::Dsh | HarnessId::Cowork => return None,
+        HarnessId::Dsh | HarnessId::Cowork | HarnessId::Antigravity => return None,
     };
     Some(format!("{program} {resume} {native}"))
 }

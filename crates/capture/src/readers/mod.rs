@@ -1,3 +1,4 @@
+pub(crate) mod antigravity;
 mod claude;
 pub(crate) mod codex;
 mod cowork;
@@ -43,6 +44,7 @@ pub enum StoreReader {
     Omp(omp::OmpTranscriptReader),
     Cursor(cursor::CursorTranscriptReader),
     Cowork(cowork::CoworkTranscriptReader),
+    Antigravity(antigravity::AntigravityTranscriptReader),
 }
 
 impl StoreReader {
@@ -61,6 +63,9 @@ impl StoreReader {
             HarnessId::Dsh => return None,
             HarnessId::Cursor => Self::Cursor(cursor::CursorTranscriptReader::new(root)),
             HarnessId::Cowork => Self::Cowork(cowork::CoworkTranscriptReader::new(root)),
+            HarnessId::Antigravity => {
+                Self::Antigravity(antigravity::AntigravityTranscriptReader::new(vec![root]))
+            }
         })
     }
 
@@ -79,6 +84,7 @@ impl StoreReader {
             Self::Omp(reader) => reader.messages(session, offset).await,
             Self::Cursor(reader) => reader.messages(session, offset).await,
             Self::Cowork(reader) => reader.messages(session, offset).await,
+            Self::Antigravity(reader) => reader.messages(session, offset).await,
         }
     }
 }
@@ -99,6 +105,7 @@ impl TranscriptReader for StoreReader {
             Self::Omp(reader) => reader.sessions(store).await,
             Self::Cursor(reader) => reader.sessions(store).await,
             Self::Cowork(reader) => reader.sessions(store).await,
+            Self::Antigravity(reader) => reader.sessions(store).await,
         }
     }
 
@@ -113,6 +120,7 @@ impl TranscriptReader for StoreReader {
             Self::Omp(reader) => reader.read(session).await,
             Self::Cursor(reader) => reader.read(session).await,
             Self::Cowork(reader) => reader.read(session).await,
+            Self::Antigravity(reader) => reader.read(session).await,
         }
     }
 
@@ -131,6 +139,7 @@ impl TranscriptReader for StoreReader {
             Self::Omp(reader) => reader.tail(session, since).await,
             Self::Cursor(reader) => reader.tail(session, since).await,
             Self::Cowork(reader) => reader.tail(session, since).await,
+            Self::Antigravity(reader) => reader.tail(session, since).await,
         }
     }
 }
