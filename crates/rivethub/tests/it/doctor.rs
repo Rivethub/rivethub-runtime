@@ -139,6 +139,24 @@ async fn postgres_doctor_checks_current_and_behind_without_migrating() {
     migrate::postgres_pool(&pool).await.expect("test schema");
     let before = migrate::postgres_status_pool(&pool).await.expect("before");
     let (exit, report) = doctor(&env).await;
+    assert_eq!(exit, Exit::Failure, "the superuser login served");
+    assert!(
+        memory(&report)
+            .message
+            .contains("serve memory with a login"),
+        "{report:?}"
+    );
+    let env = Environment::from_vars([
+        (
+            "HOME".to_owned(),
+            home.path().to_str().expect("home").to_owned(),
+        ),
+        (
+            config::POSTGRES_URL_VARIABLE.to_owned(),
+            db.served_url().await.expect("serving login"),
+        ),
+    ]);
+    let (exit, report) = doctor(&env).await;
     assert_eq!(exit, Exit::Ok, "{report:?}");
     assert_eq!(memory(&report).status, CheckStatus::Pass);
     assert_eq!(
@@ -193,9 +211,8 @@ async fn absent_memory_section_uses_the_environment_postgres_url() {
     let db = crate::pgdb::TestDb::migrated()
         .await
         .expect("test database");
-    let pool = db.pool();
     let (home, _) = setup("");
-    let url = pool.connect_options().to_url_lossy().to_string();
+    let url = db.served_url().await.expect("serving login");
     let env = Environment::from_vars([
         ("HOME".as_ref(), home.path().as_os_str()),
         (config::POSTGRES_URL_VARIABLE.as_ref(), url.as_ref()),

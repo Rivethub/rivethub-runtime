@@ -34,10 +34,52 @@ pub async fn postgres(url: &str) -> Result<Status, Error> {
 }
 
 pub async fn postgres_pool(pool: &PgPool) -> Result<Status, Error> {
-    postgres_apply(pool.acquire().await.map_err(Error::PostgresConnect)?).await?;
+    serving_login_ready(pool).await?;
+    if !current_without_owner(pool).await? {
+        postgres_apply(pool.acquire().await.map_err(Error::PostgresConnect)?).await?;
+    }
     require_tracked(pool).await?;
     backfill(pool).await?;
     postgres_status_pool(pool).await
+}
+
+const SESSION_TRUST: i64 = 82;
+
+/// A serving login cannot create the migration ledger, so a check with nothing
+/// left to apply skips the migrator instead of failing on schema privileges.
+async fn current_without_owner(pool: &PgPool) -> Result<bool, Error> {
+    if postgres_status_pool(pool).await?.pending > 0 {
+        return Ok(false);
+    }
+    let creates: bool =
+        sqlx::query_scalar("SELECT has_schema_privilege(current_schema(), 'CREATE')")
+            .fetch_one(pool)
+            .await
+            .map_err(Error::PostgresVersion)?;
+    Ok(!creates)
+}
+
+async fn serving_login_ready(pool: &PgPool) -> Result<(), Error> {
+    let applied = applied_versions(pool).await?;
+    if applied.is_empty() || applied.contains(&SESSION_TRUST) {
+        return Ok(());
+    }
+    let ready: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_roles r
+                         WHERE r.rolcanlogin AND NOT r.rolsuper AND NOT r.rolbypassrls
+                           AND coalesce(pg_has_role(r.oid, to_regrole('rh_gateway'), 'MEMBER'), false)
+                           AND has_database_privilege(r.oid, current_database(), 'CONNECT')
+                           AND NOT pg_has_role(r.oid, (SELECT n.nspowner FROM pg_namespace n
+                                                        WHERE n.oid = current_schema()::regnamespace), 'MEMBER'))",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(Error::PostgresVersion)?;
+    if ready {
+        Ok(())
+    } else {
+        Err(Error::NoServingLogin)
+    }
 }
 
 const SUMMARY_SCHEMA: i64 = 76;
@@ -127,7 +169,8 @@ const SAID_BATCH: i32 = 5_000;
 
 async fn backfill(pool: &PgPool) -> Result<(), Error> {
     let present: bool = sqlx::query_scalar(
-        "SELECT to_regprocedure('rh_backfill_message_counts(integer)') IS NOT NULL",
+        "SELECT to_regprocedure('rh_backfill_message_counts(integer)') IS NOT NULL
+                AND has_function_privilege('rh_backfill_message_counts(integer)', 'EXECUTE')",
     )
     .fetch_one(pool)
     .await

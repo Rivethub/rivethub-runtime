@@ -21,10 +21,10 @@ async fn a_migration_missing_below_the_newest_is_pending_until_migrate_applies_i
         .await?;
 
     let gapped = migrate::postgres_status_pool(&pool).await?;
-    assert_eq!((gapped.current, gapped.pending), (81, 1));
+    assert_eq!((gapped.current, gapped.pending), (82, 1));
 
     let migrated = migrate::postgres_pool(&pool).await?;
-    assert_eq!((migrated.current, migrated.pending), (81, 0));
+    assert_eq!((migrated.current, migrated.pending), (82, 0));
     let index: Option<String> =
         sqlx::query_scalar("SELECT to_regclass('idx_rh_messages_unembedded')::text")
             .fetch_one(&pool)
@@ -323,6 +323,36 @@ async fn migrate_through_75(pool: &PgPool) -> TestResult {
         ..sqlx::migrate::Migrator::DEFAULT
     };
     before.run(pool).await?;
+    sqlx::raw_sql(
+        "DO $$ BEGIN CREATE ROLE rh_gateway NOLOGIN; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
+         DO $$ BEGIN CREATE ROLE rh_upgrade_serving LOGIN NOSUPERUSER NOBYPASSRLS; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
+         GRANT rh_gateway TO rh_upgrade_serving;",
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+#[sqlx::test(migrations = false)]
+async fn an_upgrade_no_login_could_serve_after_is_refused_before_migrating(
+    pool: PgPool,
+) -> TestResult {
+    migrate_through_75(&pool).await?;
+    let database: String = sqlx::query_scalar("SELECT current_database()")
+        .fetch_one(&pool)
+        .await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "REVOKE CONNECT ON DATABASE \"{database}\" FROM PUBLIC"
+    )))
+    .execute(&pool)
+    .await?;
+    let refused = migrate::postgres_pool(&pool).await;
+    assert!(
+        matches!(refused, Err(migrate::Error::NoServingLogin)),
+        "{refused:?}"
+    );
+    let status = migrate::postgres_status_pool(&pool).await?;
+    assert_eq!((status.current, status.pending), (75, 6));
     Ok(())
 }
 
@@ -411,7 +441,7 @@ async fn check_contended_top_down_upgrade(pool: &PgPool, hold: &'static str) -> 
     assert!(error.to_string().contains("safe to rerun"));
     reader.rollback().await?;
     blocker.rollback().await?;
-    assert_eq!(migrate::postgres_pool(pool).await?.current, 81);
+    assert_eq!(migrate::postgres_pool(pool).await?.current, 82);
     Ok(())
 }
 
@@ -421,7 +451,7 @@ async fn top_down_upgrade_from_postgres_75_preserves_legacy_kinds(pool: PgPool) 
     let pending = migrate::postgres_status_pool(&pool).await?;
     assert_eq!(
         (pending.current, pending.required, pending.pending),
-        (75, 81, 6)
+        (75, 82, 6)
     );
     sqlx::raw_sql(
         "INSERT INTO rh_conversations (id, session_key, agent, owner_user_id)
@@ -441,7 +471,7 @@ async fn top_down_upgrade_from_postgres_75_preserves_legacy_kinds(pool: PgPool) 
     let status = migrate::postgres_pool(&pool).await?;
     assert_eq!(
         (status.current, status.required, status.pending),
-        (81, 81, 0)
+        (82, 82, 0)
     );
     let filenode_after: sqlx::postgres::types::Oid =
         sqlx::query_scalar("SELECT pg_relation_filenode('rh_summaries'::regclass)")

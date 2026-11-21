@@ -93,7 +93,7 @@ pub use queue::PostgresQueue;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
-pub const SCHEMA_VERSION: i64 = 81;
+pub const SCHEMA_VERSION: i64 = 82;
 pub(crate) const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug)]
@@ -209,12 +209,28 @@ impl PostgresMemory {
 
     pub async fn prepare_serving(pool: &PgPool) -> Result<(), Error> {
         Self::prepare(pool).await?;
+        Self::check_serving_login(pool).await
+    }
+
+    pub async fn check_serving_url(url: &str) -> Result<(), Error> {
+        let pool = bare_options(1, None)
+            .connect(url)
+            .await
+            .map_err(Error::Connection)?;
+        let checked = Self::check_serving_login(&pool).await;
+        pool.close().await;
+        checked
+    }
+
+    pub async fn check_serving_login(pool: &PgPool) -> Result<(), Error> {
         let (login, bypasses, owns, trusted): (String, bool, bool, bool) = sqlx::query_as(
             "SELECT current_user::text, r.rolsuper OR r.rolbypassrls,
-                    EXISTS (SELECT 1 FROM pg_class c
-                             WHERE c.relnamespace = current_schema()::regnamespace
-                               AND c.relname LIKE 'rh\\_%' AND c.relkind IN ('r', 'p')
-                               AND pg_has_role(current_user, c.relowner, 'MEMBER')),
+                    pg_has_role(current_user, (SELECT n.nspowner FROM pg_namespace n
+                                                WHERE n.oid = current_schema()::regnamespace), 'MEMBER')
+                        OR EXISTS (SELECT 1 FROM pg_class c
+                                    WHERE c.relnamespace = current_schema()::regnamespace
+                                      AND c.relname LIKE 'rh\\_%' AND c.relkind IN ('r', 'p')
+                                      AND pg_has_role(current_user, c.relowner, 'MEMBER')),
                     rh_scope_pin() IS NOT NULL
                         OR coalesce(pg_has_role(current_user, to_regrole('rh_gateway'), 'MEMBER'), false)
                FROM pg_roles r WHERE r.rolname = current_user",

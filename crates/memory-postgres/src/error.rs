@@ -45,11 +45,11 @@ pub enum Error {
     #[error("this database has no RivetHub migration history — run rh db migrate once to adopt it")]
     NotAdopted,
     #[error(
-        "the memory database login {login} is a superuser or bypasses row-level security, so it would show every person's rows to everyone; serve memory with an ordinary login (docs/OPERATIONS.md) and keep this one for rh db migrate and administration"
+        "the memory database login {login} is a superuser or bypasses row-level security, so it would show every person's rows to everyone; serve memory with a login that does not own the tables and is a member of rh_gateway, and keep this one for rh db migrate and administration (README: Postgres logins on a shared hub)"
     )]
     BypassingLogin { login: String },
     #[error(
-        "the memory database login {login} owns the memory tables, so it could rewrite their row-level security; create a serving login that does not own them, grant it rh_gateway and rh_maintenance, point the gateway and workers at it, and keep the owner for rh db migrate (README: Postgres logins on a shared hub)"
+        "the memory database login {login} owns the memory schema or its tables, so it could rewrite their row-level security; create a serving login that does not own them, grant it rh_gateway and rh_maintenance, point the gateway and workers at it, and keep the owner for rh db migrate (README: Postgres logins on a shared hub)"
     )]
     OwningLogin { login: String },
     #[error(

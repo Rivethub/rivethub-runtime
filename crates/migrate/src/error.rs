@@ -22,6 +22,10 @@ pub enum Error {
     TrackingMissing { missing: String },
     #[error("the postgres migration set is empty")]
     PostgresEmpty,
+    #[error(
+        "nothing was migrated: after this upgrade the database believes the person a connection names only from members of rh_gateway, and no login that could serve is a member yet, so the next start would refuse; create the serving and worker logins, grant them rh_gateway and rh_maintenance, then migrate as the owner (README: Postgres logins on a shared hub)"
+    )]
+    NoServingLogin,
     #[error("the memory file at {path} could not be opened")]
     SqliteOpen {
         path: PathBuf,

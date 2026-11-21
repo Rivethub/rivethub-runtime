@@ -176,6 +176,15 @@ impl Updater {
         let loaded = db::load(env, None).await?;
         report.stderr.push_str(&configuration::notices(&loaded));
         let target = db::Target::configured(&loaded.config, env)?;
+        if let db::Target::Postgres(url) = &target {
+            memory_postgres::PostgresMemory::check_serving_url(url)
+                .await
+                .map_err(|refused| UpdateError::ServingLogin(refused.to_string()))?;
+        }
+        let target = match (target, env.text(MIGRATION_URL)) {
+            (db::Target::Postgres(_), Some(owner)) => db::Target::Postgres(owner.to_owned()),
+            (target, _) => target,
+        };
         let unit = self.scope.unit_path(config::Paths::new(env)?.home());
         let restart = Restart::plan(&unit, args.no_restart).await?;
         let binary = self.binary.clone();
@@ -431,6 +440,8 @@ pub(crate) async fn run(
     );
     Ok(updater.run(&args, env, shutdown).await)
 }
+
+const MIGRATION_URL: &str = "RIVETHUB_MIGRATION_URL";
 
 async fn migrate(
     staging: &std::path::Path,

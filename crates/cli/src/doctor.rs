@@ -292,6 +292,9 @@ async fn schema_check(config: &Config, env: &Environment) -> Check {
         Ok(note) => note,
         Err(error) => return Check::fail(CheckName::Memory, error),
     };
+    if let Some(refused) = serving_login_refusal(config, env).await {
+        return Check::fail(CheckName::Memory, refused);
+    }
     match schema_status(config, env).await {
         Ok(status) if status.current == status.required && status.pending == 0 => {
             match duplicate_note(config, env).await {
@@ -345,6 +348,17 @@ async fn foreign_note(config: &Config) -> Result<Option<String>, Error> {
             .join("; ");
         Ok(Some(format!("Foreign schema: {body}.")))
     }
+}
+
+async fn serving_login_refusal(config: &Config, env: &Environment) -> Option<String> {
+    if config.sqlite_selected() {
+        return None;
+    }
+    let url = config.memory_postgres_url(env)?;
+    memory_postgres::PostgresMemory::check_serving_url(&url)
+        .await
+        .err()
+        .map(|refused| refused.to_string())
 }
 
 async fn schema_status(config: &Config, env: &Environment) -> Result<migrate::Status, Error> {

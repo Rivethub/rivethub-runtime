@@ -6,6 +6,8 @@ pub enum UpdateError {
     Hostname(#[from] nix::errno::Errno),
     #[error("this node's hostname is not Unicode")]
     HostnameEncoding,
+    #[error("{0}; rh update stopped before migrating anything")]
+    ServingLogin(String),
     #[error(transparent)]
     Config(#[from] config::ConfigError),
     #[error("update requires Linux x86_64 or aarch64, or macOS")]

@@ -145,7 +145,7 @@ async fn a_serving_login_that_bypasses_row_security_is_refused(pool: PgPool) -> 
                 assert!(
                     error
                         .to_string()
-                        .contains("serve memory with an ordinary login"),
+                        .contains("serve memory with a login that does not own the tables"),
                     "{error}"
                 );
                 assert!(!error.to_string().contains("password"), "{error}");
