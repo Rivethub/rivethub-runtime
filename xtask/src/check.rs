@@ -215,14 +215,28 @@ pub fn pre_commit(root: &Path) -> Result<()> {
     finish("pre-commit", &findings)
 }
 
-pub fn commit_msg(root: &Path, file: &Path) -> Result<()> {
-    let ident = git(root, &["var", "GIT_AUTHOR_IDENT"])?;
-    let author = ident
+fn ident(root: &Path, variable: &str) -> Result<Option<(String, String)>> {
+    let ident = git(root, &["var", variable])?;
+    Ok(ident
         .split_once(" <")
-        .and_then(|(name, rest)| Some((name, rest.split_once('>')?.0)));
-    let text = std::fs::read_to_string(file)?;
+        .and_then(|(name, rest)| Some((name.to_owned(), rest.split_once('>')?.0.to_owned()))))
+}
+
+pub fn commit_msg(root: &Path, file: &Path) -> Result<()> {
+    let author = ident(root, "GIT_AUTHOR_IDENT")?;
+    let committer = ident(root, "GIT_COMMITTER_IDENT")?;
+    let text = crate::authorship::edited_message(&std::fs::read_to_string(file)?);
     let mut findings = Vec::new();
-    crate::authorship::commit_message(&mut findings, &text, author);
+    crate::authorship::commit_message(
+        &mut findings,
+        &text,
+        author
+            .as_ref()
+            .map(|(name, email)| (name.as_str(), email.as_str())),
+    );
+    if let Some((name, email)) = committer.filter(|committer| Some(committer) != author.as_ref()) {
+        crate::authorship::person(&mut findings, &name, &email, "commits");
+    }
     finish("commit-msg", &findings)
 }
 

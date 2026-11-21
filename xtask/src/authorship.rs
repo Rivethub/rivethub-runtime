@@ -96,7 +96,7 @@ impl AiVendor {
 #[expect(clippy::expect_used)]
 static AI_NAME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?i)^(claude (code|opus|sonnet|haiku|fable|mythos|\d)\b.*|cursor( agent)?|(github )?copilot\b.*|(openai )?codex\b.*|chatgpt\b.*|gemini( (cli|code assist|pro|flash|ultra|nano|\d).*)?|devin ai\b.*|grok( .*)?|aider\b.*|.*\(aider\)|opencode( .*)?|openhands|windsurf|antigravity|warp|factory droid)$",
+        r"(?i)^(claude (code|opus|sonnet|haiku|fable|mythos|\d)\b.*|cursor( agent)?( v?[\d.]+)?|(github )?copilot\b.*|(openai )?codex\b.*|chatgpt\b.*|gemini( (cli|code assist|pro|flash|ultra|nano|\d)\b.*)?|devin ai\b.*|grok( .*)?|aider\b.*|.*\(aider\)|opencode( .*)?|openhands|windsurf|antigravity|warp|factory droid)$",
     )
     .expect("the AI-name pattern is a constant")
 });
@@ -106,13 +106,24 @@ static TRAILER: LazyLock<Regex> = LazyLock::new(|| {
 });
 #[expect(clippy::expect_used)]
 static CREDITED: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^([^<]*?)\s*(?:<([^>]*)>)?$").expect("the credited pattern is a constant")
+    Regex::new(r"^([^<]*?)\s*(?:<([^>]*)>.*)?$").expect("the credited pattern is a constant")
 });
 #[expect(clippy::expect_used)]
 static FOOTER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(?:[^\x00-\x7F]+\s*)?Generated (?:with|by) \[?(.+?)\]?(?:\(.*\))?$")
+    Regex::new(r"^(?:[^\x00-\x7F]+\s*)?Generated (?:with|by) (.+)$")
         .expect("the footer pattern is a constant")
 });
+#[expect(clippy::expect_used)]
+static MARKDOWN_LINK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\[([^\]]*)\]\(([^)]*)\)$").expect("the link pattern is a constant")
+});
+#[expect(clippy::expect_used)]
+static URL_HOST: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)https?://([^/\s:)>\]]+)").expect("the URL pattern is a constant")
+});
+
+const SCISSORS: &str = "# ------------------------ >8 ------------------------";
+const FOOTER_WORDS: usize = 4;
 
 #[derive(Debug, Clone, Copy, strum::EnumString)]
 #[strum(serialize_all = "kebab-case", ascii_case_insensitive)]
@@ -165,20 +176,25 @@ pub fn ai_product(name: &str, email: &str) -> bool {
         || AI_NAME.is_match(name.trim())
 }
 
+fn vendor_host(host: &str) -> bool {
+    let host = host.to_lowercase();
+    AiVendor::ALL.iter().any(|vendor| vendor.owns("", &host))
+}
+
 fn credits_ai(value: &str) -> bool {
-    let lowered = value.to_lowercase();
-    let linked = AiVendor::ALL.iter().any(|vendor| {
-        vendor
-            .domains()
-            .iter()
-            .any(|domain| lowered.contains(&format!("://{domain}/")))
-    });
+    let value = value.trim().trim_end_matches(['.', ',', ';']);
+    let linked = URL_HOST
+        .captures_iter(value)
+        .filter_map(|url| url.get(1))
+        .any(|host| vendor_host(host.as_str()));
     linked
-        || CREDITED.captures(value.trim()).is_some_and(|credited| {
-            ai_product(
-                credited.get(1).map_or("", |name| name.as_str()),
-                credited.get(2).map_or("", |email| email.as_str()),
-            )
+        || CREDITED.captures(value).is_some_and(|credited| {
+            let name = credited.get(1).map_or("", |name| name.as_str());
+            match credited.get(2) {
+                Some(email) => ai_product(name, email.as_str()),
+                None if name.contains('@') => ai_product("", name),
+                None => ai_product(name, ""),
+            }
         })
 }
 
@@ -193,30 +209,57 @@ fn ai_trailer(line: &str) -> Option<String> {
     }
 }
 
+fn footer_credits_ai(credit: &str) -> bool {
+    match MARKDOWN_LINK.captures(credit.trim()) {
+        Some(link) => [link.get(1), link.get(2)]
+            .into_iter()
+            .flatten()
+            .any(|part| credits_ai(part.as_str())),
+        None => credit.split_whitespace().count() <= FOOTER_WORDS && credits_ai(credit),
+    }
+}
+
 fn ai_footer(text: &str) -> Option<String> {
-    let last = text.trim_end().rsplit("\n\n").next()?;
-    last.lines().map(str::trim).find_map(|line| {
-        let product = FOOTER.captures(line)?.get(1)?.as_str();
-        credits_ai(product).then(|| line.to_owned())
+    let closing = text.trim_end().rsplit("\n\n").find(|paragraph| {
+        paragraph
+            .lines()
+            .any(|line| !line.trim().is_empty() && !TRAILER.is_match(line))
+    })?;
+    closing.lines().map(str::trim_end).find_map(|line| {
+        let credit = FOOTER.captures(line)?.get(1)?.as_str();
+        footer_credits_ai(credit).then(|| line.to_owned())
     })
+}
+
+#[must_use]
+pub fn edited_message(raw: &str) -> String {
+    raw.lines()
+        .take_while(|line| *line != SCISSORS)
+        .filter(|line| !line.starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub fn commit_message(findings: &mut Vec<String>, text: &str, author: Option<(&str, &str)>) {
     let text = text.replace("\r\n", "\n");
     let credits = text
         .lines()
-        .filter_map(|line| ai_trailer(line.trim()))
+        .filter_map(|line| ai_trailer(line.trim_end()))
         .chain(ai_footer(&text));
     for credit in credits {
         findings.push(format!(
             "AUTHORSHIP commit message credits an AI product ({credit})"
         ));
     }
-    if let Some((name, email)) = author
-        && ai_product(name, email)
-    {
+    if let Some((name, email)) = author {
+        person(findings, name, email, "authors the commit");
+    }
+}
+
+pub fn person(findings: &mut Vec<String>, name: &str, email: &str, does: &str) {
+    if ai_product(name, email) {
         findings.push(format!(
-            "AUTHORSHIP {name} <{email}> is an AI product; the person responsible authors the commit"
+            "AUTHORSHIP {name} <{email}> is an AI product; the person responsible {does}"
         ));
     }
 }
@@ -250,10 +293,8 @@ pub fn commits(root: &Path, range: &str, findings: &mut Vec<String>) -> Result<u
         count += 1;
         let before = findings.len();
         commit_message(findings, body, Some((name, email)));
-        if (committer, committed_as) != (name, email) && ai_product(committer, committed_as) {
-            findings.push(format!(
-                "AUTHORSHIP {committer} <{committed_as}> is an AI product; the person responsible commits"
-            ));
+        if (committer, committed_as) != (name, email) {
+            person(findings, committer, committed_as, "commits");
         }
         let suffix = hash.get(..8).unwrap_or(hash).to_owned();
         for finding in findings.iter_mut().skip(before) {
