@@ -289,13 +289,6 @@ impl NodeBoot<'_> {
             .await?;
         }
         if self.switches.contains(&ServiceSwitch::Wiki) {
-            enqueue_sweep(
-                self.store,
-                FixedJob::EnqueueWikiBackfill,
-                "wiki-backfill",
-                MAINTENANCE_PRIORITY,
-            )
-            .await?;
             enqueue_sweep(self.store, FixedJob::ConsolidateWiki, "wiki-consolidate", 5).await?;
         }
         spawn_workers(self.tracker, self.failed, self.shutdown, runners);
@@ -461,7 +454,10 @@ async fn build_runners(
             .with_session_deletion(Arc::clone(store) as Arc<dyn SessionDeletion>);
         if matches!(
             role,
-            ProcessRole::Embedder | ProcessRole::Summarizer | ProcessRole::Categorizer
+            ProcessRole::Embedder
+                | ProcessRole::Summarizer
+                | ProcessRole::Categorizer
+                | ProcessRole::WikiBuilder
         ) {
             runner.runner = runner.runner.with_schedules(true).with_schedule_at_start();
         }

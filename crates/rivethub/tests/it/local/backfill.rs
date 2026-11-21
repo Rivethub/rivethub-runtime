@@ -122,3 +122,19 @@ fn a_sqlite_embedder_schedules_only_the_sweeps_its_queue_claims() -> TestResult 
     assert_eq!(identifiers, vec!["unembedded-sweep"]);
     Ok(())
 }
+
+#[test]
+fn a_sqlite_wiki_builder_schedules_only_the_sweeps_its_queue_claims() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let database = home.path().join("memory.sqlite");
+    migrate::sqlite(&database)?;
+    let store = memory_sqlite::SqliteStore::open(&database)?;
+    let entries =
+        workers::schedule::claimed_entries(&store, &[kernel::queue::WorkerRole::WikiBuilder], true);
+    let identifiers: Vec<&str> = entries
+        .iter()
+        .map(|entry| entry.identifier.as_str())
+        .collect();
+    assert_eq!(identifiers, vec!["wiki-backfill"]);
+    Ok(())
+}
