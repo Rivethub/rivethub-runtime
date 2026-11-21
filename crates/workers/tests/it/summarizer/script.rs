@@ -83,6 +83,9 @@ impl ModelProvider for Scripted {
         if self.empty.load(Ordering::SeqCst) {
             return Ok(response(String::new(), Some(FinishReason::Stop)));
         }
+        if kind == "TITLE_SYSTEM_PROMPT" && request.options.enable_thinking != Some(false) {
+            return Ok(response(String::new(), Some(FinishReason::Length)));
+        }
         let text = match kind {
             "TITLE_SYSTEM_PROMPT" => TITLE_ANSWER.to_owned(),
             "TOP_DOWN_PART"
