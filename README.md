@@ -128,6 +128,10 @@ Upgrading a hub from schema 80:
 
 Until step 3 is done, a login that is neither pinned nor in the groups sees no rows once the migration has run.
 
+A hub that serves as the owner login keeps working on the migrated schema with the previous `rh` release, because the
+owner still passes every check. Migrate and switch the logins first, then install this release: it refuses to serve
+as the owner and names the login it refused.
+
 ## Layout
 
 | Path | What it holds |

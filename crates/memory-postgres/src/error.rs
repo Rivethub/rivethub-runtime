@@ -49,7 +49,7 @@ pub enum Error {
     )]
     BypassingLogin { login: String },
     #[error(
-        "the memory database login {login} owns the memory tables, so it could rewrite their row-level security; serve memory with a login that does not own them and is a member of rh_gateway, and keep the owner for rh db migrate"
+        "the memory database login {login} owns the memory tables, so it could rewrite their row-level security; create a serving login that does not own them, grant it rh_gateway and rh_maintenance, point the gateway and workers at it, and keep the owner for rh db migrate (README: Postgres logins on a shared hub)"
     )]
     OwningLogin { login: String },
     #[error(
