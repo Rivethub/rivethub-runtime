@@ -43,9 +43,14 @@ pub struct ExtractWiki {
     pub conversation_id: Option<Uuid>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct WikiExtraction {
+    pub patches: Vec<WikiPatch>,
+}
+
 #[must_use]
 pub fn extraction_schema() -> schemars::Schema {
-    let mut schema = schemars::schema_for!(Vec<WikiPatch>);
+    let mut schema = schemars::schema_for!(WikiExtraction);
     let constraints = [
         ("/$defs/WikiSlug", "pattern", "^[a-z0-9]+(-[a-z0-9]+)*$"),
         ("/$defs/WikiHistoryEntry/properties/date", "format", "date"),
