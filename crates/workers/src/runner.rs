@@ -309,10 +309,12 @@ where
             if !self.schedules {
                 return Ok(());
             }
+            // The stale-wiki/entity sweeps need the memory-job store; a runner without one (rh local on
+            // SQLite) still schedules its backfills but not sweeps that could only fail.
             let scheduled = crate::schedule::run(
                 self.queue.as_ref(),
                 &roles,
-                self.wiki_enabled,
+                self.wiki_enabled && self.memory_jobs.is_some(),
                 self.schedule_at_start,
                 &cancel,
             )
