@@ -18,6 +18,7 @@ use wire::session_id::SessionId;
 
 use super::StoreRoots;
 use crate::readers::StoreReader;
+use crate::readers::antigravity::AntigravityTranscriptReader;
 use crate::readers::blocking;
 use crate::readers::codex::CodexTranscriptReader;
 use crate::readers::opencode::OpencodeTranscriptReader;
@@ -30,6 +31,16 @@ pub(super) async fn transcript(
 ) -> Result<TranscriptRead, TranscriptReaderError> {
     if matches!(harness, HarnessId::Cowork | HarnessId::Dsh) {
         return Ok(TranscriptRead::NoSource);
+    }
+    if harness == HarnessId::Antigravity {
+        if matches!(window, TranscriptWindow::Before(_)) {
+            return Ok(TranscriptRead::Read(StoreTranscript::default()));
+        }
+        let session = SessionId::new(HarnessId::Antigravity, native);
+        let slice = AntigravityTranscriptReader::new(roots.antigravity.clone())
+            .capture(&session)
+            .await?;
+        return captured::transcript(slice.messages).map(TranscriptRead::Read);
     }
     let Some(root) = roots.single(harness).map(Path::to_path_buf) else {
         return Ok(TranscriptRead::Read(StoreTranscript::default()));
@@ -66,6 +77,14 @@ pub(super) async fn tool_output(
     ) {
         return Ok(ToolOutputRead::NoSource);
     }
+    if harness == HarnessId::Antigravity {
+        let session = SessionId::new(HarnessId::Antigravity, native);
+        let slice = AntigravityTranscriptReader::new(roots.antigravity.clone())
+            .capture(&session)
+            .await?;
+        return captured::tool_output(slice.messages, call)
+            .map(|found| found.map_or(ToolOutputRead::Missing, ToolOutputRead::Found));
+    }
     let Some(root) = roots.single(harness).map(Path::to_path_buf) else {
         return Ok(ToolOutputRead::Missing);
     };
@@ -97,7 +116,11 @@ async fn captured_messages(
             };
             reader.messages(&session, 0).await?
         }
-        HarnessId::ClaudeCode | HarnessId::GrokBuild | HarnessId::Dsh | HarnessId::Cowork => {
+        HarnessId::ClaudeCode
+        | HarnessId::GrokBuild
+        | HarnessId::Dsh
+        | HarnessId::Cowork
+        | HarnessId::Antigravity => {
             return Ok(None);
         }
     };

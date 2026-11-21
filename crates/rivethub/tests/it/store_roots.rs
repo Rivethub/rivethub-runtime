@@ -28,6 +28,11 @@ fn store_roots_default_under_home() {
                 home.join(".config/Claude"),
             ],
             dsh: Some(home.join(".dsh")),
+            antigravity: vec![
+                home.join(".gemini/antigravity-cli"),
+                home.join(".gemini/antigravity"),
+                home.join(".gemini/antigravity-ide"),
+            ],
         }
     );
 }

@@ -7,6 +7,7 @@ use kernel::harness_setup::ConnectPart;
 use kernel::harness_setup::SetupError;
 use serde::Serialize;
 
+use super::antigravity_hooks;
 use super::codex_trust;
 use super::entries::HookFile;
 use super::entries::HookGroup;
@@ -52,7 +53,7 @@ fn io_error(path: &Path, source: io::Error) -> SetupError {
     }
 }
 
-fn config(path: &Path, message: impl Into<String>) -> SetupError {
+pub(super) fn config(path: &Path, message: impl Into<String>) -> SetupError {
     SetupError::Config {
         path: path.display().to_string(),
         message: message.into(),
@@ -72,6 +73,9 @@ pub(super) fn detect(
             codex_trust::read(locator, hooks, version),
         ),
         CaptureInstall::HookFile(hooks) => detect_hooks(locator, hooks, id),
+        CaptureInstall::AntigravityHooks { file, .. } => {
+            antigravity_hooks::detect(locator, *file, id)
+        }
         CaptureInstall::OpencodePlugin { directory } => {
             detect_opencode(locator, *directory, rh, Fit::of(version))
         }
@@ -331,6 +335,9 @@ pub(super) fn plan_connect(
 ) -> Result<Vec<FileEdit>, SetupError> {
     match install {
         CaptureInstall::HookFile(hooks) => connect_hooks(locator, id, hooks, rh),
+        CaptureInstall::AntigravityHooks { file, timeout } => {
+            antigravity_hooks::connect(locator, id, *file, *timeout, rh)
+        }
         CaptureInstall::OpencodePlugin { directory } => {
             connect_opencode(locator, *directory, rh, Fit::of(version))
         }
@@ -445,6 +452,9 @@ pub(super) fn plan_disconnect(
 ) -> Result<Vec<FileEdit>, SetupError> {
     match install {
         CaptureInstall::HookFile(hooks) => disconnect_hooks(locator, id, hooks.file, hooks.style),
+        CaptureInstall::AntigravityHooks { file, .. } => {
+            antigravity_hooks::disconnect(locator, id, *file)
+        }
         CaptureInstall::OpencodePlugin { directory } => {
             let Some(target) = locator.target(*directory) else {
                 return Ok(Vec::new());
