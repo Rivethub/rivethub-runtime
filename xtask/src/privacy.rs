@@ -15,11 +15,6 @@ pub struct DenylistFile {
     pub sha256: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct IdentityFile {
-    pub sha256: Vec<String>,
-}
-
 #[derive(Debug)]
 pub struct PrivacyRes {
     pub uuid: Regex,

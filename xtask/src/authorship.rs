@@ -65,13 +65,10 @@ impl AiVendor {
             Self::GitHubCopilot => &["copilot", "copilot-swe-agent[bot]"],
             Self::Google => &["gemini-code-assist[bot]", "google-labs-jules[bot]"],
             Self::OpenAi => &["chatgpt-codex-connector[bot]", "openai-codex[bot]"],
-            Self::Aider
-            | Self::Amp
-            | Self::Codeium
-            | Self::Factory
-            | Self::Kiro
-            | Self::OpenCode
-            | Self::Xai => &[],
+            Self::Factory => &["factory-droid[bot]"],
+            Self::Aider | Self::Amp | Self::Codeium | Self::Kiro | Self::OpenCode | Self::Xai => {
+                &[]
+            }
         }
     }
 
@@ -87,24 +84,47 @@ impl AiVendor {
 #[expect(clippy::expect_used)]
 static AI_NAME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?i)^(claude (code|opus|sonnet|haiku|fable|mythos)\b.*|cursor( agent)?|(github )?copilot|(openai )?codex|chatgpt|gemini( cli)?|devin ai|grok|aider\b.*|opencode|windsurf|antigravity)$",
+        r"(?i)^(claude (code|opus|sonnet|haiku|fable|mythos)\b.*|cursor( agent)?|(github )?copilot\b.*|(openai )?codex\b.*|chatgpt\b.*|gemini( (cli|code assist|pro|flash|ultra|nano|\d).*)?|devin ai\b.*|grok( .*)?|aider\b.*|.*\(aider\)|opencode|windsurf|antigravity|factory droid)$",
     )
     .expect("the AI-name pattern is a constant")
 });
 #[expect(clippy::expect_used)]
 static CO_AUTHOR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?im)^co-authored-by:[ \t]*([^<\n]*?)[ \t]*(?:<([^>\n]*)>)?[ \t]*$")
+    Regex::new(r"(?i)^co-authored-by:\s*([^<]*?)\s*(?:<([^>]*)>)?$")
         .expect("the co-author pattern is a constant")
 });
 #[expect(clippy::expect_used)]
-static AI_VENDOR_TEXT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(claude|anthropic|cursor|copilot|chatgpt|openai|generated with)")
-        .expect("the AI-vendor pattern is a constant")
+static AI_TRAILER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^(Claude|Cursor|Codex|Copilot|Amp|Devin|Gemini|Aider|OpenCode|Windsurf|Grok|Kiro|Droid)-[A-Za-z-]+: ",
+    )
+    .expect("the AI-trailer pattern is a constant")
 });
 #[expect(clippy::expect_used)]
-static AI_TEXT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(generated with|session_)").expect("the AI-text pattern is a constant")
+static CREDIT_LINE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^\W*(generated|made|created|written|authored|built)[ -](with|by|using)\b")
+        .expect("the credit-line pattern is a constant")
 });
+#[expect(clippy::expect_used)]
+static AI_PRODUCT_WORD: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"\b(Claude|Anthropic|Cursor|Copilot|ChatGPT|OpenAI|Codex|Gemini|Devin|Aider|aider|Windsurf|OpenCode|opencode|Amp|Grok|Jules|Kiro|Droid)\b",
+    )
+    .expect("the AI-product pattern is a constant")
+});
+#[expect(clippy::expect_used)]
+static AI_SESSION_URL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)https?://[^\s/]*(claude\.ai|claude\.com|devin\.ai|ampcode\.com|chatgpt\.com|cursor\.com)/\S*(session|thread|share)",
+    )
+    .expect("the AI-session pattern is a constant")
+});
+
+fn ai_credit(line: &str) -> bool {
+    AI_TRAILER.is_match(line)
+        || AI_SESSION_URL.is_match(line)
+        || (CREDIT_LINE.is_match(line) && AI_PRODUCT_WORD.is_match(line))
+}
 
 #[must_use]
 pub fn ai_product(name: &str, email: &str) -> bool {
@@ -117,7 +137,8 @@ pub fn ai_product(name: &str, email: &str) -> bool {
 }
 
 pub fn commit_message(findings: &mut Vec<String>, text: &str, author: Option<(&str, &str)>) {
-    for credit in CO_AUTHOR.captures_iter(text) {
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    for credit in lines.iter().filter_map(|line| CO_AUTHOR.captures(line)) {
         let name = credit.get(1).map_or("", |name| name.as_str());
         let email = credit.get(2).map_or("", |email| email.as_str());
         if ai_product(name, email) {
@@ -126,7 +147,7 @@ pub fn commit_message(findings: &mut Vec<String>, text: &str, author: Option<(&s
             ));
         }
     }
-    if AI_VENDOR_TEXT.is_match(text) && AI_TEXT.is_match(text) {
+    if lines.iter().any(|line| ai_credit(line)) {
         findings.push("AUTHORSHIP commit message carries AI attribution text".to_owned());
     }
     if let Some((name, email)) = author
