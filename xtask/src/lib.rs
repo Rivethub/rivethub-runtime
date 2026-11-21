@@ -1,4 +1,5 @@
 mod ast;
+pub mod authorship;
 pub mod baseline;
 pub mod check;
 pub mod code;
