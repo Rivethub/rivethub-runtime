@@ -3,14 +3,12 @@ mod claims;
 mod identity;
 mod known;
 mod lease;
+mod locks;
 mod merge;
 mod pages;
 mod transcript;
 mod types;
 mod work;
-
-use std::collections::HashMap;
-use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
 use jiff::Timestamp;
@@ -21,32 +19,10 @@ use kernel::wiki::entity_pass::{
     MatchDecision, ObserveContext, PreparedEntity, PublishOutcome, TranscriptMessage, TypeBrief,
 };
 use rusqlite::{Connection, Params, Row, Transaction};
-use tokio::sync::{Mutex, OwnedMutexGuard};
 use uuid::Uuid;
 
 use crate::SqliteStore;
 use crate::summary_replace::{self, FenceError};
-
-#[derive(Debug, Default)]
-pub(super) struct EntityLocks(parking_lot::Mutex<HashMap<Uuid, Weak<Mutex<()>>>>);
-
-impl EntityLocks {
-    async fn lock(&self, id: Uuid) -> OwnedMutexGuard<()> {
-        let lock = {
-            let mut locks = self.0.lock();
-            locks.retain(|_, lock| lock.strong_count() > 0);
-            let slot = locks.entry(id).or_default();
-            if let Some(lock) = slot.upgrade() {
-                lock
-            } else {
-                let lock = Arc::new(Mutex::new(()));
-                *slot = Arc::downgrade(&lock);
-                lock
-            }
-        };
-        lock.lock_owned().await
-    }
-}
 
 #[async_trait]
 impl EntityStore for SqliteStore {
@@ -105,13 +81,10 @@ impl EntityStore for SqliteStore {
         let Some(owner) = leaves.iter().find_map(|leaf| leaf.owner.clone()) else {
             return Ok(None);
         };
-        let _lock = match prepared.entity_ref {
-            Some(id) => Some(self.entity_locks.lock(id).await),
-            None => None,
-        };
+        let id = prepared.entity_ref;
         let leaves = leaves.to_vec();
         let prepared = prepared.clone();
-        write(self, move |tx| {
+        locks::scoped(self, id, move |tx| {
             identity::commit(tx, &leaves, &prepared, &owner, now)
         })
         .await
@@ -123,10 +96,12 @@ impl EntityStore for SqliteStore {
         prose: &EntityProse,
         now: Timestamp,
     ) -> Result<PublishOutcome, EntityStoreError> {
-        let _lock = self.entity_locks.lock(view.id).await;
         let view = view.clone();
         let prose = prose.clone();
-        write(self, move |tx| pages::publish(tx, &view, &prose, now)).await
+        locks::scoped(self, [view.id], move |tx| {
+            pages::publish(tx, &view, &prose, now)
+        })
+        .await
     }
 
     async fn finish_entities(
@@ -260,14 +235,15 @@ impl EntityStore for SqliteStore {
         if left == right {
             return Ok(None);
         }
-        let _first = self.entity_locks.lock(left.min(right)).await;
-        let _second = self.entity_locks.lock(left.max(right)).await;
-        write(self, move |tx| merge::pair(tx, left, right, now)).await
+        locks::scoped(self, [left, right], move |tx| {
+            merge::pair(tx, left, right, now)
+        })
+        .await
     }
 
     async fn lease_entity(&self, id: Uuid) -> Result<Box<dyn EntityLease>, EntityStoreError> {
-        let guard = self.entity_locks.lock(id).await;
-        Ok(Box::new(lease::Lease::new(self.clone(), id, guard)))
+        let guard = locks::Guard::acquire(self, id).await?;
+        Ok(Box::new(lease::Lease::new(self.clone(), guard)))
     }
 }
 

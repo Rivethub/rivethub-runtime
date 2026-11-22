@@ -1,5 +1,6 @@
 pub mod candidates;
 pub mod known;
+pub mod leases;
 pub mod merge;
 pub mod rewrite;
 pub mod transcript;

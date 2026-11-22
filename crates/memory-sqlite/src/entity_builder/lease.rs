@@ -5,40 +5,29 @@ use kernel::wiki::entity_pass::{
     PublishOutcome, StoredRewrite, older_than_mark, prose_article,
 };
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
-use tokio::sync::OwnedMutexGuard;
 use uuid::Uuid;
 
-use super::{at, claims, error, pages, query, read, stamp, types, uuid, work, write};
+use super::{at, claims, error, locks, pages, query, read, stamp, types, uuid, work, write};
 use crate::SqliteStore;
 
 pub(super) struct Lease {
     store: SqliteStore,
-    id: Uuid,
-    guard: Option<OwnedMutexGuard<()>>,
+    guard: locks::Guard,
 }
 
 impl Lease {
-    pub(super) fn new(store: SqliteStore, id: Uuid, guard: OwnedMutexGuard<()>) -> Self {
-        Self {
-            store,
-            id,
-            guard: Some(guard),
-        }
-    }
-
-    fn held(&self) -> Result<Uuid, EntityStoreError> {
-        self.guard
-            .as_ref()
-            .map(|_| self.id)
-            .ok_or_else(|| error(std::io::Error::other("entity lock is not held")))
+    pub(super) fn new(store: SqliteStore, guard: locks::Guard) -> Self {
+        Self { store, guard }
     }
 }
 
 #[async_trait]
 impl EntityLease for Lease {
     async fn page(&mut self) -> Result<EntityPage, EntityStoreError> {
-        let id = self.held()?;
+        let key = self.guard.key()?;
         read(&self.store, move |conn| {
+            key.check(conn)?;
+            let id = key.id;
             let current = claims::current(conn, id)?;
             let view = pages::view(conn, id)?;
             let prose = pages::load_prose(conn, &view)?;
@@ -54,8 +43,12 @@ impl EntityLease for Lease {
     }
 
     async fn applied_through(&mut self) -> Result<Option<AppliedMark>, EntityStoreError> {
-        let id = self.held()?;
-        read(&self.store, move |conn| mark(conn, id)).await
+        let key = self.guard.key()?;
+        read(&self.store, move |conn| {
+            key.check(conn)?;
+            mark(conn, key.id)
+        })
+        .await
     }
 
     async fn apply(
@@ -63,9 +56,13 @@ impl EntityLease for Lease {
         body: &StoredRewrite,
         now: Timestamp,
     ) -> Result<PublishOutcome, EntityStoreError> {
-        let id = self.held()?;
+        let key = self.guard.key()?;
         let body = body.clone();
-        write(&self.store, move |tx| apply(tx, id, &body, now)).await
+        write(&self.store, move |tx| {
+            key.check(tx)?;
+            apply(tx, key.id, &body, now)
+        })
+        .await
     }
 
     async fn record_mention(
@@ -73,14 +70,17 @@ impl EntityLease for Lease {
         note: &MentionNote,
         now: Timestamp,
     ) -> Result<Option<String>, EntityStoreError> {
-        let id = self.held()?;
+        let key = self.guard.key()?;
         let note = note.clone();
-        write(&self.store, move |tx| mention(tx, id, &note, now)).await
+        write(&self.store, move |tx| {
+            key.check(tx)?;
+            mention(tx, key.id, &note, now)
+        })
+        .await
     }
 
     async fn release(&mut self) -> Result<(), EntityStoreError> {
-        drop(self.guard.take());
-        Ok(())
+        self.guard.release().await
     }
 }
 

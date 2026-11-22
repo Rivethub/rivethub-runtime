@@ -1,6 +1,7 @@
+use memory_sqlite::SqliteStore;
 use testkit::entities;
 
-use crate::common::{TestResult, fresh_store};
+use crate::common::{TestResult, fresh_store, instant};
 
 #[tokio::test]
 async fn entity_known_names_aliases_and_facts() -> TestResult {
@@ -114,4 +115,111 @@ async fn entity_stale_refresh() -> TestResult {
 async fn entity_merge_binds_an_unbound_survivor() -> TestResult {
     let fixture = fresh_store()?;
     entities::merge::binds_unbound_survivor(&fixture.store).await
+}
+
+#[tokio::test]
+async fn entity_rewrite_lease_waits_across_connections() -> TestResult {
+    let (_directory, holder, waiter) = separate_stores()?;
+    entities::leases::rewrite_waits_for_page(&holder, &waiter).await
+}
+
+#[tokio::test]
+async fn entity_merge_waits_for_rewrites_across_connections() -> TestResult {
+    let (_directory, holder, merger) = separate_stores()?;
+    entities::leases::merge_waits_for_both_entities(&holder, &merger).await
+}
+
+fn separate_stores() -> TestResult<(tempfile::TempDir, SqliteStore, SqliteStore)> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("memory.sqlite");
+    migrate::sqlite_at(&path, instant("2026-11-01T00:00:00Z")?)?;
+    let holder = SqliteStore::open(&path)?;
+    let waiter = SqliteStore::open(&path)?;
+    Ok((directory, holder, waiter))
+}
+
+#[tokio::test]
+async fn entity_expired_lease_is_replaced_and_fenced() -> TestResult {
+    use jiff::Timestamp;
+    use kernel::wiki::entity_pass::{EntityStore, MentionNote};
+    use std::time::Duration;
+    use tokio::time::timeout;
+    use uuid::Uuid;
+
+    let (_directory, holder, waiter) = separate_stores()?;
+    let id = Uuid::new_v4();
+    let mut stale = holder.lease_entity(id).await?;
+    waiter
+        .with_conn(move |conn| {
+            conn.execute(
+                "UPDATE rh_entity_leases SET expires_at = unixepoch() WHERE entity_id = ?1",
+                [id.to_string()],
+            )
+            .map_err(crate::common::seed)
+        })
+        .await?;
+    let limit = Duration::from_secs(5);
+    let mut current = timeout(limit, waiter.lease_entity(id)).await??;
+    let note = MentionNote {
+        history: None,
+        session_at: Timestamp::now(),
+        session_id: Uuid::new_v4(),
+        owner: "fixture".to_owned(),
+    };
+    let result = stale.record_mention(&note, note.session_at).await;
+    let error = result.expect_err("expired owner wrote a mention");
+    assert!(error.to_string().contains("entity lease is no longer held"));
+    stale.release().await?;
+    assert_eq!(current.applied_through().await?, None);
+    drop(current);
+    let mut next = timeout(limit, holder.lease_entity(id)).await??;
+    next.release().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn entity_live_lease_renews_while_rewrite_is_idle() -> TestResult {
+    use kernel::wiki::entity_pass::EntityStore;
+    use std::time::Duration;
+    use tokio::time::{advance, pause, resume, timeout};
+    use uuid::Uuid;
+
+    let (_directory, holder, observer) = separate_stores()?;
+    let id = Uuid::new_v4();
+    pause();
+    let mut lease = holder.lease_entity(id).await?;
+    let short_expiry = observer
+        .with_conn(move |conn| {
+            conn.query_row(
+                "UPDATE rh_entity_leases SET expires_at = unixepoch() + 30 WHERE entity_id = ?1
+                 RETURNING expires_at",
+                [id.to_string()],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(crate::common::seed)
+        })
+        .await?;
+    advance(Duration::from_secs(15)).await;
+    resume();
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let expires = observer
+                .with_conn(move |conn| {
+                    conn.query_row(
+                        "SELECT expires_at FROM rh_entity_leases WHERE entity_id = ?1",
+                        [id.to_string()],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .map_err(crate::common::seed)
+                })
+                .await?;
+            if expires > short_expiry {
+                return Ok::<_, memory_sqlite::SqliteError>(());
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await??;
+    lease.release().await?;
+    Ok(())
 }

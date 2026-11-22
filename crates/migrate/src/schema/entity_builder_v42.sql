@@ -86,3 +86,9 @@ SELECT lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(h
        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
   FROM (VALUES ('organizations', 'Organizations'), ('projects', 'Projects'), ('places', 'Places')) AS seed
  WHERE NOT EXISTS (SELECT 1 FROM rh_topics t WHERE t.kind = 'type' AND t.slug = seed.column1);
+
+CREATE TABLE IF NOT EXISTS rh_entity_leases (
+    entity_id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+);

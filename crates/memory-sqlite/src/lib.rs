@@ -43,11 +43,11 @@ mod tags_write;
 mod taxonomy;
 mod tenancy;
 mod tidy;
-mod trigrams;
 mod time;
 mod title;
 mod topic_pages;
 mod topics;
+mod trigrams;
 mod unembedded;
 mod vector;
 mod wiki_builder;
@@ -118,7 +118,6 @@ pub struct SqliteStore {
     embed: Arc<AtomicBool>,
     language_available: bool,
     claims: Arc<ClaimIds>,
-    entity_locks: Arc<entity_builder::EntityLocks>,
     clock: SharedClock,
     query_embed: Option<QueryEmbed>,
     embed_model: Option<String>,
@@ -272,7 +271,6 @@ fn from_conn(conn: Connection, clock: SharedClock) -> SqliteStore {
         embed: Arc::new(AtomicBool::new(false)),
         language_available: false,
         claims: Arc::new(ClaimIds::default()),
-        entity_locks: Arc::default(),
         clock,
         query_embed: None,
         embed_model: None,

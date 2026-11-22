@@ -175,3 +175,23 @@ async fn entity_merge_binds_an_unbound_survivor(pool: PgPool) -> TestResult {
         .run(entities::merge::binds_unbound_survivor(&store))
         .await
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn entity_rewrite_lease_waits_across_connections(pool: PgPool) -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let store = PostgresMemory::new(pool).with_wiki_directory(directory.path().to_path_buf());
+    Scope::Maintenance
+        .run(entities::leases::rewrite_waits_for_page(&store, &store))
+        .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn entity_merge_waits_for_rewrites_across_connections(pool: PgPool) -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let store = PostgresMemory::new(pool).with_wiki_directory(directory.path().to_path_buf());
+    Scope::Maintenance
+        .run(entities::leases::merge_waits_for_both_entities(
+            &store, &store,
+        ))
+        .await
+}

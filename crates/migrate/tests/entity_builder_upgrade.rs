@@ -16,6 +16,7 @@ fn version_41_gains_entity_storage_and_preserves_existing_topics() -> Outcome {
          DROP TABLE rh_entity_history;
          DROP TABLE rh_entity_applied;
          DROP TABLE rh_entity_type_seen;
+         DROP TABLE rh_entity_leases;
          ALTER TABLE rh_entity_fact_claims DROP COLUMN settled;
          DELETE FROM rh_topics WHERE kind = 'type' AND slug IN ('organizations', 'projects', 'places');
          UPDATE rh_topics SET name = 'My hosts' WHERE kind = 'type' AND slug = 'hosts';
@@ -28,12 +29,13 @@ fn version_41_gains_entity_storage_and_preserves_existing_topics() -> Outcome {
     let tables: i64 = conn.query_row(
         "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name IN (
             'rh_entity_extractions', 'rh_entity_candidates', 'rh_entity_decisions',
-            'rh_entity_embeddings', 'rh_entity_history', 'rh_entity_applied', 'rh_entity_type_seen'
+            'rh_entity_embeddings', 'rh_entity_history', 'rh_entity_applied', 'rh_entity_type_seen',
+            'rh_entity_leases'
          )",
         [],
         |row| row.get(0),
     )?;
-    assert_eq!(tables, 7);
+    assert_eq!(tables, 8);
     let hosts: String = conn.query_row(
         "SELECT name FROM rh_topics WHERE kind = 'type' AND slug = 'hosts'",
         [],
