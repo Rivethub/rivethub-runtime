@@ -189,6 +189,7 @@ async fn run(
         runner.runner = runner
             .runner
             .with_memory_jobs(memory.clone())
+            .with_pauses(memory.clone())
             .with_unembedded(memory.clone())
             .with_session_deletion(memory.clone())
             .with_job_settings(settings)
@@ -202,8 +203,7 @@ async fn run(
     }
     .await;
     shutdown.cancel();
-    let closed = memory.close().await.map_err(StartupError::from);
-    closed?;
+    memory.close().await.map_err(StartupError::from)?;
     result?;
     tracing::info!("worker stopped");
     Ok(())

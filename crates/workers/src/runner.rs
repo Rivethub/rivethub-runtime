@@ -91,6 +91,7 @@ pub struct Runner<Q> {
     deletions: Option<Arc<dyn kernel::memory::SessionDeletion>>,
     digests: Option<crate::digest::DailyDigests>,
     scopes: Option<crate::OwnerScopes>,
+    pauses: crate::pause::Pauses,
     queue: Arc<Q>,
     targets: Arc<dyn EmbeddingStore>,
     summaries: Arc<dyn SummaryStore>,
@@ -131,6 +132,7 @@ where
             deletions: None,
             digests: None,
             scopes: deps.scopes,
+            pauses: crate::pause::Pauses::default(),
             queue,
             targets: deps.targets,
             summaries: deps.summaries,
@@ -215,6 +217,12 @@ where
     #[must_use]
     pub fn with_entity_builder(mut self, deps: EntityBuilderDeps) -> Self {
         self.entity = Some(deps);
+        self
+    }
+
+    #[must_use]
+    pub fn with_pauses(mut self, store: Arc<dyn kernel::queue::pause::WorkerPauses>) -> Self {
+        self.pauses = crate::pause::Pauses::reading(store);
         self
     }
 
@@ -469,7 +477,11 @@ where
         roles: &[WorkerRole],
         cancel: &CancellationToken,
     ) -> Result<Option<ClaimedJob>, WorkerError> {
+        let roles = self.pauses.claimable(roles).await?;
         let count = roles.len();
+        if count == 0 {
+            return Ok(None);
+        }
         let start = self.cursor.fetch_add(1, Ordering::Relaxed) % count;
         for role in roles.iter().cycle().skip(start).take(count) {
             if cancel.is_cancelled() {
