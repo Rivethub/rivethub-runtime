@@ -24,6 +24,7 @@ pub(super) struct PgColumn {
     pub cast: String,
     pub kind: Kind,
     pub primary: bool,
+    pub comparable: bool,
 }
 
 pub(super) fn error(source: sqlx::Error) -> Error {
@@ -92,6 +93,7 @@ pub(super) async fn columns(
             identifier(&column.name)?;
             let kind = Kind::parse(&column.type_name)?;
             Ok(PgColumn {
+                comparable: relation.compares_column(&column.name),
                 name: column.name,
                 cast: column.type_name,
                 kind,
@@ -189,9 +191,9 @@ async fn excluded_claims(conn: &mut PgConnection, owner: &str) -> Result<u64, Er
 fn projection(relation: Relation, column: &PgColumn) -> String {
     let name = &column.name;
     match (relation, name.as_str()) {
+        (Relation::WikiRedirects, "owner_user_id") => "coalesce(r.owner_user_id, $1)".to_owned(),
         (Relation::Messages | Relation::Summaries, "access_count" | "last_accessed_at") => {
             let (table, key) = if relation == Relation::Messages {
-        (Relation::WikiRedirects, "owner_user_id") => "coalesce(r.owner_user_id, $1)".to_owned(),
                 ("rh_message_access", "message_id")
             } else {
                 ("rh_summary_access", "summary_id")
@@ -235,7 +237,7 @@ pub(super) async fn load(
             insert(conn, batch).await?
         };
         if batch.table.relation == Relation::SummaryPassages
-            && inserted > 0
+            && !batch.rows.is_empty()
             && let Some(key) = index_key
         {
             super::passages::finish_postgres(conn, batch, &key).await?;
@@ -281,16 +283,6 @@ async fn stage(conn: &mut PgConnection, batch: &Batch, stage: &str) -> Result<()
         .map(|(i, c)| {
             let parameter = format!("${}::text[]", i + 1);
             let value = c.kind.cast(&format!("incoming.{}", c.name), &c.cast);
-            let value = if batch.table.relation == Relation::EntityEmbeddings
-                && c.name == "sqlite_embedding"
-            {
-                format!(
-                    "CASE WHEN incoming.embedding::vector
-                    IS DISTINCT FROM incoming.embedding::halfvec::vector THEN {value} END"
-                )
-            } else {
-                value
-            };
             (parameter, format!("{value} AS {}", c.name))
         })
         .unzip();
@@ -353,7 +345,7 @@ async fn check_existing(conn: &mut PgConnection, batch: &Batch, stage: &str) -> 
         .collect::<Vec<_>>()
         .join(" AND ");
     let equal = batch.table.columns.iter()
-        .filter(|c| comparable(batch.table.relation, &c.name))
+        .filter(|c| c.comparable)
         .map(|c| {
             let name = &c.name;
             let value = match (batch.table.relation, name.as_str()) {
@@ -384,18 +376,6 @@ async fn check_existing(conn: &mut PgConnection, batch: &Batch, stage: &str) -> 
         )));
     }
     Ok(())
-}
-
-pub(super) fn comparable(relation: Relation, name: &str) -> bool {
-    !matches!(
-        name,
-        "embed_status" | "embed_error" | "embed_failures" | "index_needs_repair"
-    ) && (name != "embedding" || relation.stores_embedding())
-        && !matches!(
-            (relation, name),
-            (Relation::Topics | Relation::Conversations, "visibility")
-                | (Relation::SummaryPassages, "embedding")
-        )
 }
 
 async fn check_deletions(

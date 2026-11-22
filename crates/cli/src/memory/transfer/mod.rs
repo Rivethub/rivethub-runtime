@@ -106,7 +106,7 @@ pub(super) async fn run(
         added,
         committed: !dry_run,
         omissions,
-        embeddings: "Postgres indexes entity vectors as halfvec and retains SQLite f32 originals when rounding is needed. Summary passage vectors are reused only for the destination index key. The destination rebuilds other search embeddings and indexes.",
+        embeddings: "Entity and compatible summary passage vectors travel at destination precision. Existing vectors are kept. The destination rebuilds mismatched passage vectors and other search embeddings and indexes.",
         excluded: "Excluded: other people's rows and memberships, spaces outside the selected membership, global type definitions, unused global tag vocabulary, claims on other people’s topics, wiki redirects owned by someone else or without an exported target, unattributed topic tombstones, archived tasks and delegation runs, Git-backed wiki files and history, wiki recompile revisions, worker pauses, runs and reports, queued jobs, flags, failures, priorities and leases, message chunks, the summary conversion controller, merge and migration bookkeeping, hub state, role principals, and membership authority. Message counts and embedding retry state are rebuilt.",
     })
 }
@@ -136,9 +136,6 @@ async fn plan(conn: &mut sqlx::PgConnection, local: &SqliteStore) -> Result<Vec<
                 && ["visibility", "scope", "local_slug", "archived_sections"]
                     .into_iter()
                     .any(|name| position(&table, name).is_none()));
-        let missing = missing
-            || (relation == Relation::EntityEmbeddings
-                && position(&table, "sqlite_embedding").is_none());
         if missing || table.primary_key().is_empty() || table.columns.is_empty() {
             return Err(invalid(format!(
                 "missing transferable schema for {}",

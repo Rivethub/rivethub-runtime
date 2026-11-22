@@ -127,11 +127,12 @@ principal. Global type and shared taxonomy rows retain their shared status. Lega
 `work`, `entity`, and `type` topic tombstones without evidence of ownership stay behind.
 The report counts those unattributed tombstones.
 
-SQLite stores entity vectors as f32 blobs. Postgres stores them at half precision and
-retains the original SQLite vector when the conversion rounds it. Summary passages travel
-with their owning summaries. Pass the destination worker's reported index key as
-`--destination-index-key <hex>` to reuse matching passage vectors. With a different or
-unknown key, the destination worker rebuilds the passage index. The destination also
+Carried vectors are derived from their rows and travel at the destination's precision.
+SQLite stores them as f32 and Postgres stores entity and passage vectors at half precision.
+Conflict checks exclude vectors, and the copy keeps any destination vector already present.
+Summary passages travel with their owning summaries. Pass the destination worker's reported
+index key as `--destination-index-key <hex>` to reuse matching passage vectors. With a
+different or unknown key, the destination worker rebuilds the passage index. The destination also
 rebuilds the other search embeddings and indexes. The command reports excluded data,
 including Git-backed wiki files and history, which require a separate repository backup.
 

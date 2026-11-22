@@ -4,7 +4,9 @@ use rusqlite::Connection;
 use sqlx::PgConnection;
 
 use super::catalog::Relation;
-use super::{Batch, cell, pg, position};
+use super::catalog::Table;
+use super::values::Kind;
+use super::{Batch, Row, cell, pg, position};
 use crate::Error;
 
 pub(super) fn align(batches: &mut [Batch], key: Option<[u8; 32]>) {
@@ -61,6 +63,14 @@ pub(super) async fn finish_postgres(
     batch: &Batch,
     key: &[u8; 32],
 ) -> Result<(), Error> {
+    sqlx::query(
+        "UPDATE rh_summary_passages p SET embedding = s.embedding
+         FROM transfer_rh_summary_passages s
+         WHERE p.id = s.id AND p.embedding IS NULL AND s.embedding IS NOT NULL",
+    )
+    .execute(&mut *conn)
+    .await
+    .map_err(pg::error)?;
     let records = record_ids(batch)
         .into_iter()
         .map(str::parse::<uuid::Uuid>)
@@ -76,6 +86,26 @@ pub(super) async fn finish_postgres(
     .execute(conn)
     .await
     .map_err(pg::error)?;
+    Ok(())
+}
+
+pub(super) fn fill_sqlite(
+    conn: &Connection,
+    table: &Table,
+    row: &Row,
+) -> Result<(), memory_sqlite::SqliteError> {
+    let Some(vector) = cell(row, position(table, "embedding")) else {
+        return Ok(());
+    };
+    let vector = Kind::Vector
+        .bind(Some(vector))
+        .map_err(memory_sqlite::SqliteError::Pragma)?;
+    let id = cell(row, position(table, "id"));
+    conn.prepare_cached(
+        "UPDATE ros_summary_passages SET embedding = ?2 WHERE id = ?1 AND embedding IS NULL",
+    )
+    .and_then(|mut statement| statement.execute(rusqlite::params![id, vector]))
+    .map_err(memory_sqlite::SqliteError::Pragma)?;
     Ok(())
 }
 

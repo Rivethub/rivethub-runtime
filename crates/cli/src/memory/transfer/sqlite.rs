@@ -184,7 +184,6 @@ fn field(table: &Table, column: &PgColumn) -> String {
               FROM rh_topic_pages WHERE page_slug = r.slug)"
                 .to_owned()
         }
-        (Relation::EntityEmbeddings, "sqlite_embedding") => "r.embedding".to_owned(),
         (_, "embedding") if !relation.stores_embedding() => "NULL".to_owned(),
         (Relation::Conversations, "visibility") | (_, "embed_error" | "embed_status") => {
             "NULL".to_owned()
@@ -266,7 +265,7 @@ pub(super) async fn load(
                 cancelled(&shutdown)?;
                 let count = insert(&tx, batch)?;
                 if batch.table.relation == Relation::SummaryPassages
-                    && count > 0
+                    && !batch.rows.is_empty()
                     && let Some(key) = index_key
                 {
                     super::passages::finish_sqlite(&tx, batch, &key)?;
@@ -335,7 +334,14 @@ fn insert(conn: &Connection, batch: &Batch) -> Result<u64, SqliteError> {
     let sql =
         format!("INSERT INTO {name} ({projection}) VALUES ({bindings}) ON CONFLICT DO NOTHING");
     let mut statement = conn.prepare(&sql).map_err(query)?;
-    let mut matching = conn.prepare(&check_sql(table, &cols)).map_err(query)?;
+    let compared: Vec<_> = cols
+        .iter()
+        .enumerate()
+        .filter_map(|(binding, (_, col))| {
+            (col.primary || col.comparable).then_some((binding, *col))
+        })
+        .collect();
+    let mut matching = conn.prepare(&check_sql(table, &compared)).map_err(query)?;
     let mut added = 0;
     let mut deleted = check_deletions(conn, table.relation)?;
     for row in &batch.rows {
@@ -352,27 +358,23 @@ fn insert(conn: &Connection, batch: &Batch) -> Result<u64, SqliteError> {
         }
         let values = cols
             .iter()
-            .map(|(i, c)| {
-                if table.relation.stores_embedding()
-                    && c.name == "embedding"
-                    && let Some(original) =
-                        super::cell(row, super::position(table, "sqlite_embedding"))
-                {
-                    return Kind::Bytes.bind(Some(original));
-                }
-                c.kind.bind(super::cell(row, Some(*i)))
-            })
+            .map(|(i, c)| c.kind.bind(super::cell(row, Some(*i))))
             .collect::<Result<Vec<Value>, _>>()
             .map_err(query)?;
         let count = statement
             .execute(params_from_iter(&values))
             .map_err(|source| invalid(format!("{name}: {source}")))?;
-        if count == 0
-            && !matching
-                .query_row(params_from_iter(&values), |r| r.get::<_, bool>(0))
+        if count == 0 {
+            let parameters = compared.iter().filter_map(|(i, _)| values.get(*i));
+            if !matching
+                .query_row(params_from_iter(parameters), |r| r.get::<_, bool>(0))
                 .map_err(query)?
-        {
-            return Err(conflict(&name));
+            {
+                return Err(conflict(&name));
+            }
+            if table.relation == Relation::SummaryPassages {
+                super::passages::fill_sqlite(conn, table, row)?;
+            }
         }
         apply_extra(conn, table, row)?;
         added += count as u64;
@@ -401,25 +403,21 @@ fn check_sql(table: &Table, columns: &[(usize, &PgColumn)]) -> String {
                 }
                 return format!("(owner_user_id IS NULL OR owner_user_id IS ?{})", i + 1);
             }
-            if super::pg::comparable(table.relation, &c.name) || c.primary {
-                format!("({})", c.kind.compare(&c.name, &format!("?{}", i + 1)))
-            } else {
-                format!("(?{} IS NULL OR 1)", i + 1)
-            }
+            format!("({})", c.kind.compare(&c.name, &format!("?{}", i + 1)))
         })
         .collect::<Vec<_>>()
         .join(" AND ");
     format!("SELECT EXISTS (SELECT 1 FROM {name} WHERE {equal})")
 }
 
+fn apply_extra(conn: &Connection, table: &Table, row: &Row) -> Result<(), SqliteError> {
+    let find = |name| super::cell(row, super::position(table, name));
     if table.relation == Relation::WikiRedirects {
         conn.execute(
             "UPDATE ros_wiki_redirects SET owner_user_id = ?2 WHERE from_slug = ?1 AND owner_user_id IS NULL",
             rusqlite::params![find("from_slug"), find("owner_user_id")],
         ).map_err(query)?;
     }
-fn apply_extra(conn: &Connection, table: &Table, row: &Row) -> Result<(), SqliteError> {
-    let find = |name| super::cell(row, super::position(table, name));
     if table.relation == Relation::Conversations {
         extra(
             conn,

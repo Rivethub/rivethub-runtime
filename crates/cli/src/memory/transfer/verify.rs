@@ -37,6 +37,26 @@ pub(super) async fn sqlite(pool: &PgPool, store: &SqliteStore) -> Result<StoreRo
     let tables = plan(&mut conn, store).await?;
     Ok(store
         .with_conn(move |conn| {
+            conn.create_scalar_function(
+                "rh_transfer_halfvec",
+                1,
+                rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
+                |ctx| {
+                    let bytes = ctx.get::<Option<Vec<u8>>>(0)?;
+                    Ok(bytes.map(|bytes| {
+                        let (floats, _) = bytes.as_chunks::<4>();
+                        let half: Vec<_> = floats
+                            .iter()
+                            .copied()
+                            .map(f32::from_le_bytes)
+                            .map(half::f16::from_f32)
+                            .flat_map(half::f16::to_le_bytes)
+                            .collect();
+                        hex::encode(half)
+                    }))
+                },
+            )
+            .map_err(SqliteError::Pragma)?;
             let seeds = read_seeds(conn)?;
             let mut rows = StoreRows::new();
             for table in tables {
@@ -111,7 +131,9 @@ fn read_rows(
 }
 
 fn projection(name: &str, kind: Option<Kind>) -> String {
-    if matches!(kind, Some(Kind::Json | Kind::TextArray)) {
+    if matches!(kind, Some(Kind::Vector)) {
+        format!("rh_transfer_halfvec(r.{name})")
+    } else if matches!(kind, Some(Kind::Json | Kind::TextArray)) {
         format!(
             "CASE WHEN r.{name} IS NOT NULL THEN (
             SELECT json_group_array(json_array(fullkey, type, atom))

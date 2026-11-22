@@ -59,7 +59,7 @@ async fn round_trip(pool: &PgPool, original: &SqliteStore, restored: &SqliteStor
         original,
         [&owner, &owner],
         Direction::ToPostgres,
-        (true, None),
+        (true, Some([0; 32])),
         &token,
     )
     .await?;
@@ -69,7 +69,7 @@ async fn round_trip(pool: &PgPool, original: &SqliteStore, restored: &SqliteStor
         original,
         [&owner, &owner],
         Direction::ToPostgres,
-        (false, None),
+        (false, Some([0; 32])),
         &token,
     )
     .await?;
@@ -82,7 +82,7 @@ async fn round_trip(pool: &PgPool, original: &SqliteStore, restored: &SqliteStor
         restored,
         [&owner, &owner],
         Direction::ToSqlite,
-        (false, None),
+        (false, Some([0; 32])),
         &token,
     )
     .await?;
@@ -96,7 +96,7 @@ async fn round_trip(pool: &PgPool, original: &SqliteStore, restored: &SqliteStor
         original,
         [&owner, &owner],
         Direction::ToSqlite,
-        (false, None),
+        (false, Some([0; 32])),
         &token,
     )
     .await?;
@@ -106,7 +106,7 @@ async fn round_trip(pool: &PgPool, original: &SqliteStore, restored: &SqliteStor
         restored,
         [&owner, &owner],
         Direction::ToPostgres,
-        (false, None),
+        (false, Some([0; 32])),
         &token,
     )
     .await?;
@@ -117,7 +117,7 @@ async fn round_trip(pool: &PgPool, original: &SqliteStore, restored: &SqliteStor
         restored,
         [&owner, &owner],
         Direction::ToSqlite,
-        (false, None),
+        (false, Some([0; 32])),
         &token,
     )
     .await?;
@@ -223,7 +223,7 @@ async fn verify_hub(
         source,
         [&owner, &local_owner],
         Direction::ToPostgres,
-        (false, None),
+        (false, Some([0; 32])),
         &token,
     )
     .await?;
@@ -234,7 +234,7 @@ async fn verify_hub(
         source,
         [&owner, &local_owner],
         Direction::ToSqlite,
-        (true, None),
+        (true, Some([0; 32])),
         &token,
     )
     .await?;
@@ -353,7 +353,7 @@ async fn postgres_round_trip_matches_every_row_with_two_people(pool: PgPool) -> 
         &initial,
         [&owner, &owner],
         Direction::ToPostgres,
-        (false, None),
+        (false, Some([0; 32])),
         &token,
     )
     .await?;
@@ -366,7 +366,7 @@ async fn postgres_round_trip_matches_every_row_with_two_people(pool: PgPool) -> 
         &clean,
         [&owner, &standalone],
         Direction::ToSqlite,
-        (false, None),
+        (false, Some([0; 32])),
         &token,
     )
     .await?;
@@ -376,7 +376,7 @@ async fn postgres_round_trip_matches_every_row_with_two_people(pool: PgPool) -> 
         &exported,
         [&owner, &standalone],
         Direction::ToSqlite,
-        (false, None),
+        (false, Some([0; 32])),
         &token,
     )
     .await?;

@@ -210,6 +210,16 @@ impl Relation {
         matches!(self, Self::EntityEmbeddings | Self::SummaryPassages)
     }
 
+    pub(super) fn compares_column(self, name: &str) -> bool {
+        !matches!(
+            name,
+            "embedding" | "embed_status" | "embed_error" | "embed_failures" | "index_needs_repair"
+        ) && !matches!(
+            (self, name),
+            (Self::Topics | Self::Conversations, "visibility")
+        )
+    }
+
     pub(super) fn sqlite_extra(self, column: &str) -> bool {
         matches!(
             (self, column),
@@ -217,7 +227,6 @@ impl Relation {
                 Self::Conversations,
                 "node" | "last_summary_input_at" | "visibility"
             ) | (Self::WikiTopics, "topic_id" | "archived_sections")
-                | (Self::EntityEmbeddings, "sqlite_embedding")
         )
     }
 }

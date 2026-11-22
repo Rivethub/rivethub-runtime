@@ -36,11 +36,12 @@ FROM (
 );
 UPDATE ros_summaries SET index_key = zeroblob(32) WHERE kind = 'session';
 INSERT INTO ros_summary_passages
-    (id, record_id, ordinal, char_start, char_end, content, earliest_at, latest_at, index_key)
+    (id, record_id, ordinal, char_start, char_end, content, earliest_at, latest_at, index_key, embedding)
 VALUES ('00000000-0000-0000-0000-000000000061', '00000000-0000-0000-0000-000000000008',
-        0, 0, 3, 'Ses', '2026-01-01T00:00:01.123455Z', '2026-01-01T00:00:01.123455Z', zeroblob(32)),
+        0, 0, 3, 'Ses', '2026-01-01T00:00:01.123455Z', '2026-01-01T00:00:01.123455Z', zeroblob(32), CAST(X'CDCCCC3D' || zeroblob(4092) AS BLOB)),
        ('00000000-0000-0000-0000-000000000062', '00000000-0000-0000-0000-000000000008',
-        1, 3, 7, 'sion', '2026-01-01T00:00:01.123456Z', '2026-01-01T00:00:01.123456Z', zeroblob(32));
+        1, 3, 7, 'sion', '2026-01-01T00:00:01.123456Z', '2026-01-01T00:00:01.123456Z', zeroblob(32), CAST(X'CDCCCC3D' || zeroblob(4092) AS BLOB));
+UPDATE ros_summaries SET index_needs_repair = 0 WHERE id IN (SELECT id FROM ros_summary_records_indexed);
 INSERT INTO ros_summary_sources VALUES ('00000000-0000-0000-0000-000000000007', '00000000-0000-0000-0000-000000000003', 0, NULL);
 INSERT INTO ros_summary_sources VALUES
        ('00000000-0000-0000-0000-000000000008', '00000000-0000-0000-0000-000000000003', 1, zeroblob(32)),

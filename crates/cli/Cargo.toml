@@ -55,6 +55,7 @@ tracing-subscriber = { workspace = true }
 wire = { workspace = true }
 
 [dev-dependencies]
+half = { workspace = true }
 rcgen = { workspace = true, features = ["x509-parser"] }
 aws-lc-rs = { workspace = true }
 sqlx = { workspace = true, features = ["macros"] }
