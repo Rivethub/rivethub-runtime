@@ -19,13 +19,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS ros_summary_passages_fts USING fts5(content, 
 CREATE TRIGGER IF NOT EXISTS ros_summary_passages_insert AFTER INSERT ON ros_summary_passages
 BEGIN
     INSERT INTO ros_summary_passages_fts (rowid, content) VALUES (new.rowid, new.content);
-    UPDATE ros_summaries SET index_needs_repair = 1 WHERE id = new.record_id;
 END;
 
 CREATE TRIGGER IF NOT EXISTS ros_summary_passages_delete AFTER DELETE ON ros_summary_passages
 BEGIN
     DELETE FROM ros_summary_passages_fts WHERE rowid = old.rowid;
-    UPDATE ros_summaries SET index_needs_repair = 1 WHERE id = old.record_id;
 END;
 
 CREATE TRIGGER IF NOT EXISTS ros_summary_passages_text AFTER UPDATE OF content ON ros_summary_passages
@@ -34,9 +32,17 @@ BEGIN
     INSERT INTO ros_summary_passages_fts (rowid, content) VALUES (new.rowid, new.content);
 END;
 
-CREATE TRIGGER IF NOT EXISTS ros_summary_passages_update AFTER UPDATE ON ros_summary_passages
+CREATE TRIGGER IF NOT EXISTS ros_summary_passages_insert_time BEFORE INSERT ON ros_summary_passages
+WHEN rh_instant(new.latest_at) < rh_instant(new.earliest_at)
 BEGIN
-    UPDATE ros_summaries SET index_needs_repair = 1 WHERE id IN (old.record_id, new.record_id);
+    SELECT RAISE(ABORT, 'summary passage source time is inverted');
+END;
+
+CREATE TRIGGER IF NOT EXISTS ros_summary_passages_update_time
+BEFORE UPDATE OF earliest_at, latest_at ON ros_summary_passages
+WHEN rh_instant(new.latest_at) < rh_instant(new.earliest_at)
+BEGIN
+    SELECT RAISE(ABORT, 'summary passage source time is inverted');
 END;
 
 CREATE TRIGGER IF NOT EXISTS ros_summary_passages_invalidate AFTER UPDATE OF content, index_key ON ros_summaries

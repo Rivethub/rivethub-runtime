@@ -158,7 +158,7 @@ impl SearchRead<'_> {
         let alias = table.alias();
         let literal = LiteralText::of(options, table);
         let tokens = if kind == ArmKind::Trigram {
-            literal_tokens(&options.text, context.patience)
+            literal_tokens(&options.text, context.patience == Patience::Optional)
         } else {
             Vec::new()
         };

@@ -22,7 +22,7 @@ const SCOPE: &str = "JOIN ros_summaries s ON s.id = p.record_id
 #[derive(Clone, Copy)]
 pub(super) enum Match {
     Fts { hybrid: bool },
-    Literal,
+    Trigram,
     Regex,
 }
 
@@ -43,18 +43,21 @@ pub(super) fn lexical(
                 (pattern, if hybrid { HYBRID_MIN_CONTENT_LEN } else { 0 }),
             )
         }
-        Match::Literal => (
-            "1.0",
+        Match::Trigram => (
+            "(SELECT avg(instr(rh_literal_lower(p.content), token.value) > 0)
+              FROM json_each(?4) AS token)",
             "",
-            "AND instr(lower(p.content), lower(?4)) > 0",
-            (plan.text.trim().to_owned(), 0),
+            "AND passage_score > 0",
+            (trigram_tokens(plan)?, 0),
         ),
         Match::Regex => ("1.0", "", "AND p.content REGEXP ?4", (plan.text.clone(), 0)),
     };
     if term.0.is_empty() {
         return Ok(Vec::new());
     }
-    let sql = format!("{SELECT}, {score} FROM ros_summary_passages p {join} {SCOPE} {filter}");
+    let sql = format!(
+        "{SELECT}, {score} AS passage_score FROM ros_summary_passages p {join} {SCOPE} {filter}"
+    );
     let mut parameters: Vec<&dyn rusqlite::ToSql> =
         vec![&plan.agent, &plan.since, &plan.before, &term.0];
     if matches!(matching, Match::Fts { .. }) {
@@ -62,6 +65,22 @@ pub(super) fn lexical(
     }
     load(conn, plan, &sql, parameters.as_slice(), |row| {
         row.get(9).map_err(SqliteError::query(OPERATION))
+    })
+}
+
+fn trigram_tokens(plan: &Plan) -> Result<String, SqliteError> {
+    let tokens =
+        kernel::memory_core::literal_tokens(&plan.text, plan.mode != super::SearchMode::Trigram);
+    if tokens.is_empty() {
+        return Ok(String::new());
+    }
+    let folded: Vec<_> = tokens
+        .iter()
+        .map(|token| super::functions::literal_lower(token))
+        .collect();
+    serde_json::to_string(&folded).map_err(|source| SqliteError::Encode {
+        column: "passage search tokens",
+        source,
     })
 }
 

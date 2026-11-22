@@ -454,7 +454,13 @@ impl Candidate {
             } => index.message_has(conversation_id, tag),
             Kind::Summary {
                 conversation_id, ..
-            } => index.summary_has(&self.id, conversation_id.as_deref(), tag),
+            } => index.summary_has(
+                &self.id,
+                conversation_id
+                    .as_deref()
+                    .filter(|_| self.passage.is_none()),
+                tag,
+            ),
         }
     }
 

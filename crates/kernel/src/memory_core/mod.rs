@@ -1,4 +1,5 @@
 mod fusion;
+mod literal;
 mod query;
 mod scoring;
 mod window;
@@ -13,6 +14,7 @@ pub use fusion::literal_scan;
 pub use fusion::passes_fusion_gate;
 pub use fusion::reciprocal_rank_fusion;
 pub use fusion::should_trigram_fallback;
+pub use literal::literal_tokens;
 pub use query::compose_query_input;
 pub use query::{DEFAULT_EMBED_QUERY_INSTRUCTION, default_query_instruction};
 pub use scoring::composite_score;

@@ -137,11 +137,15 @@ fn finish_arm(rows: Vec<ArmRow>, vector: bool) -> Result<Vec<(ArmRow, f64)>, Sql
         .collect()
 }
 
-fn sort_pool(rows: &mut Vec<ArmRow>, plan: &Plan) -> Result<(), SqliteError> {
+fn sort_pool(rows: &mut Vec<ArmRow>, plan: &Plan, trigram: bool) -> Result<(), SqliteError> {
+    let newest_first = trigram && rows.iter().any(|row| row.candidate.passage.is_some());
     rows.sort_by(|a, b| {
-        b.score
-            .total_cmp(&a.score)
-            .then_with(|| a.candidate.detail_id().cmp(b.candidate.detail_id()))
+        let score = b.score.total_cmp(&a.score);
+        if newest_first {
+            score.then_with(|| b.candidate.created_at.cmp(&a.candidate.created_at))
+        } else {
+            score.then_with(|| a.candidate.detail_id().cmp(b.candidate.detail_id()))
+        }
     });
     let limit = u32::try_from(plan.limit).map_err(SqliteError::Count)?;
     let pool = hit_limit(hybrid_pool(limit))?;
@@ -198,7 +202,7 @@ fn fts_rows(
         plan,
         passages::Match::Fts { hybrid },
     )?);
-    sort_pool(&mut found, plan)?;
+    sort_pool(&mut found, plan, false)?;
     Ok(found)
 }
 
@@ -227,7 +231,7 @@ fn vector_rows(
             found.push(row);
         }
     }
-    sort_pool(&mut found, plan)?;
+    sort_pool(&mut found, plan, false)?;
     Ok(found)
 }
 
@@ -298,10 +302,14 @@ fn keyword_rows(
     let matching = if mode == SearchMode::Regex {
         passages::Match::Regex
     } else {
-        passages::Match::Literal
+        passages::Match::Trigram
     };
     found.extend(passages::lexical(conn, plan, matching)?);
-    sort_pool(&mut found, plan)?;
+    sort_pool(
+        &mut found,
+        plan,
+        matches!(matching, passages::Match::Trigram),
+    )?;
     Ok(found)
 }
 
@@ -342,8 +350,8 @@ fn literal_rows(
             }
         }
     }
-    found.extend(passages::lexical(conn, plan, passages::Match::Literal)?);
-    sort_pool(&mut found, plan)?;
+    found.extend(passages::lexical(conn, plan, passages::Match::Trigram)?);
+    sort_pool(&mut found, plan, true)?;
     Ok(found)
 }
 

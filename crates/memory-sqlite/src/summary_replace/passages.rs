@@ -25,19 +25,21 @@ pub(super) fn snapshot(conn: &Connection, conversation: Uuid) -> Result<(), Sqli
 }
 
 const MEMBERS: &str = "
-    SELECT json_group_array(message_id) FROM (
-        SELECT l.message_id FROM ros_summary_sources l WHERE l.summary_id = p.record_id
-        AND (NOT EXISTS (
-                  SELECT 1 FROM ros_summaries section WHERE section.parent_id = p.record_id
-                  AND section.kind = 'section'
-                  AND section.section_char_start < p.char_end AND p.char_start < section.section_char_end
-             ) OR EXISTS (
-                  SELECT 1 FROM ros_summaries section WHERE section.parent_id = p.record_id
-                  AND section.kind = 'section'
-                  AND section.section_char_start < p.char_end AND p.char_start < section.section_char_end
-                  AND l.ordinal BETWEEN section.source_first AND section.source_last
-             ))
-        ORDER BY l.ordinal
+    SELECT coalesce(
+        (SELECT json_group_array(message_id) FROM (
+            SELECT l.message_id FROM ros_summary_sources l WHERE l.summary_id = p.record_id
+            AND EXISTS (
+                SELECT 1 FROM ros_summaries section WHERE section.parent_id = p.record_id
+                AND section.kind = 'section'
+                AND section.section_char_start < p.char_end AND p.char_start < section.section_char_end
+                AND l.ordinal BETWEEN section.source_first AND section.source_last
+            )
+            ORDER BY l.ordinal
+        ) HAVING count(*) > 0),
+        (SELECT json_group_array(message_id) FROM (
+            SELECT l.message_id FROM ros_summary_sources l WHERE l.summary_id = p.record_id
+            ORDER BY l.ordinal
+        ))
     )";
 
 pub(super) fn publish(
