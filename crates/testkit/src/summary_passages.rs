@@ -1,3 +1,9 @@
+mod limits;
+mod mutations;
+
+pub use limits::part_limit;
+pub use mutations::{PassageRow, hollow_section, inverted_times, partial_index, window_growth};
+
 use std::collections::BTreeSet;
 
 use jiff::Timestamp;
@@ -7,7 +13,7 @@ use kernel::memory::summary_reference::{
 };
 use kernel::memory::{
     Limit, MemoryScope, MemoryStore, SearchMode, SearchQuery, SummaryKind, SummaryOwner,
-    SummaryStore, VectorState,
+    SummaryStore, TagAdd, TagEntity, TagEntityType, TagLiteral, VectorState,
 };
 use kernel::model::Embedding;
 use uuid::Uuid;
@@ -23,9 +29,8 @@ pub const LEGACY_CONVERSATION: Uuid = Uuid::from_u128(0x102);
 pub const SESSION: Uuid = Uuid::from_u128(0x120);
 pub const LEGACY: Uuid = Uuid::from_u128(0x140);
 pub const TITLE: &str = "Orchard plumbing";
-pub const FIRST: &str =
-    "## Orchard valves\nThe café marmalade pressure valve fits the /srv/amber-cask bypass. ";
-pub const SECOND: &str = "The fallback marmalade heater belongs to the later outdoor work.";
+pub const FIRST: &str = "## Orchard valves\nThe café marmalade pressure valve fits the /srv/amber-cask kern-v2x9 bypass. ";
+pub const SECOND: &str = "The fallback marmalade heater uses kern-v2x9 for the later outdoor work.";
 pub const OLD: &str = "The previous marmalade design used a brass elbow on the side of the pipe.";
 pub const SOURCE: &str =
     "Hand-seeded orchard source text with enough words to exercise passage excerpt truncation. ";
@@ -193,6 +198,7 @@ pub async fn search_and_repair(
     vector_order(configured).await?;
     provenance(configured).await?;
     lexical(configured).await?;
+    trigram_order(configured).await?;
     repair(rotated).await?;
     Ok(())
 }
@@ -311,7 +317,8 @@ async fn provenance(store: &impl MemoryStore) -> TestResult {
 async fn lexical(store: &impl MemoryStore) -> TestResult {
     for (text, mode) in [
         ("/srv/amber-cask", SearchMode::Regex),
-        ("/srv/amber-cask", SearchMode::Trigram),
+        ("/srv/amber-cask /srv/shared", SearchMode::Trigram),
+        ("CAFÉ", SearchMode::Trigram),
         ("orchard valves", SearchMode::Fts),
     ] {
         let mut q = query(text, mode);
@@ -332,6 +339,67 @@ async fn lexical(store: &impl MemoryStore) -> TestResult {
         .search(query("sectionunique", SearchMode::Fts))
         .await?;
     assert_eq!(found.results, []);
+    Ok(())
+}
+
+async fn trigram_order(store: &impl MemoryStore) -> TestResult {
+    for (text, expected) in [
+        ("(KERN-v2x9), /srv/amber-cask /srv/shared", [FIRST, SECOND]),
+        ("kern-v2x9 /srv/shared", [SECOND, FIRST]),
+    ] {
+        let found = store.search(query(text, SearchMode::Trigram)).await?;
+        assert_eq!(
+            found
+                .results
+                .iter()
+                .map(|hit| hit.content.as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+    Ok(())
+}
+
+pub async fn passage_tags(store: &(impl MemoryStore + SummaryStore)) -> TestResult {
+    assert!(
+        store
+            .publish_live(tree()?, [(SESSION, index(SECOND)?)].into())
+            .await?
+    );
+    let tag = TagLiteral::parse_add("project:orchard")?;
+    for (entity_type, id, expected) in [
+        (TagEntityType::Conversation, CONVERSATION, Vec::new()),
+        (TagEntityType::Summary, SESSION, vec![FIRST]),
+    ] {
+        store
+            .add_tag(TagAdd {
+                entity_type,
+                entity: TagEntity::Id(id),
+                agent: None,
+                tag: tag.clone(),
+                display: None,
+                reason: None,
+                decided_by: None,
+            })
+            .await?;
+        for (text, mode) in [
+            ("orchard valves", SearchMode::Fts),
+            ("orchard meaning", SearchMode::Vector),
+        ] {
+            let mut q = query(text, mode);
+            q.tag = Some(tag.clone());
+            q.limit = Limit::clamped(Some(1), 20, 1..=50);
+            let found = store.search(q).await?;
+            assert_eq!(
+                found
+                    .results
+                    .iter()
+                    .map(|hit| hit.content.as_str())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
+    }
     Ok(())
 }
 
@@ -418,6 +486,10 @@ pub async fn replacement(
         return Err("expected legacy while new content is pending".into());
     };
     assert_eq!(legacy.id, LEGACY.to_string());
+    let lexical = store
+        .search(query("ceramic fitting", SearchMode::Fts))
+        .await?;
+    assert_eq!(lexical.results, []);
     let expected = store
         .repair_input(revision)
         .await?
@@ -474,100 +546,4 @@ async fn first_passage(store: &impl MemoryStore) -> TestResult<String> {
     let first = found.results.first().ok_or("first passage missing")?;
     assert_eq!(first.content, FIRST);
     Ok(first.detail_id().to_owned())
-}
-
-pub async fn part_limit(store: &(impl MemoryStore + SummaryStore)) -> TestResult {
-    let piece = "Clementine stash for the fall harvest at the community orchard. ";
-    let part = Uuid::from_u128(0x123);
-    let mut tree = tree()?;
-    let mut indexes = std::collections::BTreeMap::from([(SESSION, index(SECOND)?)]);
-    add_part(&mut tree, &mut indexes, part, piece)?;
-    assert!(store.publish_live(tree, indexes).await?);
-    for (text, mode) in [
-        ("clementine", SearchMode::Fts),
-        ("orchard meaning", SearchMode::Vector),
-    ] {
-        let mut q = query(text, mode);
-        q.limit = Limit::clamped(Some(2), 20, 1..=50);
-        q.since = Some(at(2026)?);
-        q.before = Some(at(2027)?);
-        q.expand = Some(false);
-        let found = store.search(q).await?;
-        assert_eq!(found.results.len(), 2);
-        assert!(
-            found
-                .results
-                .iter()
-                .all(|hit| hit.id == part.to_string() && hit.content == piece)
-        );
-        assert!(
-            found
-                .summaries
-                .values()
-                .all(|detail| detail.kind == SummaryKind::Part)
-        );
-        assert_eq!(
-            found
-                .results
-                .iter()
-                .map(kernel::memory::MemorySearchResult::detail_id)
-                .collect::<BTreeSet<_>>()
-                .len(),
-            2
-        );
-    }
-    Ok(())
-}
-
-fn add_part(
-    tree: &mut PreparedSummaryTree,
-    indexes: &mut kernel::memory::summary_backend::SummaryIndexes,
-    part: Uuid,
-    piece: &str,
-) -> TestResult {
-    let sources = tree
-        .records
-        .iter()
-        .find(|row| row.id == SESSION)
-        .ok_or("missing root")?
-        .sources
-        .clone();
-    let width = width(piece)?;
-    let mut pieces = Vec::new();
-    for (ordinal, vector) in (0..).zip([vector(1.0, 0.0), vector(0.8, 0.6), vector(0.0, 1.0)]) {
-        pieces.push(SummaryPassage {
-            content: piece.to_owned(),
-            chars: ordinal * width..(ordinal + 1) * width,
-            earliest_at: at(2024)?,
-            latest_at: at(2026)?,
-            vector,
-        });
-    }
-    tree.records.push(PreparedSummaryRecord {
-        id: part,
-        parent: Some(SESSION),
-        ordinal: 1,
-        kind: SummaryKind::Part,
-        content: piece.repeat(3),
-        input_key: [2; 32],
-        index_key: Some(KEY),
-        model: None,
-        issued_part_ordinal: Some(1),
-        input_tokens: Some(100),
-        quality_flags: 0,
-        section: None,
-        sources,
-    });
-    tree.passage_windows.insert(
-        part,
-        pieces.iter().map(|piece| piece.chars.clone()).collect(),
-    );
-    indexes.insert(
-        part,
-        SummaryIndex {
-            passages: pieces,
-            pooled: vector(0.0, 1.0),
-        },
-    );
-    Ok(())
 }

@@ -75,3 +75,119 @@ async fn summary_passage_part_limit_parity() -> TestResult {
     seed(&store).await?;
     testkit::summary_passages::part_limit(&store.with_summary_index_key(KEY)).await
 }
+
+#[tokio::test]
+async fn summary_passage_hollow_section_parity() -> TestResult {
+    let (_dir, store) = store(Some(Arc::new(provider())))?;
+    seed(&store).await?;
+    let store = store.with_summary_index_key(KEY);
+    testkit::summary_passages::hollow_section(
+        &store,
+        async || {
+            store
+                .with_conn(|conn| {
+                    conn.execute_batch(
+                "UPDATE ros_summaries SET source_first = 9, source_last = 9 WHERE kind = 'section';
+                 CREATE TRIGGER test_hollow_section AFTER INSERT ON ros_summaries
+                 WHEN new.kind = 'section'
+                 BEGIN
+                     UPDATE ros_summaries SET source_first = 9, source_last = 9 WHERE id = new.id;
+                 END;",
+            ).map_err(failed)?;
+                    Ok(())
+                })
+                .await?;
+            Ok(())
+        },
+        async |tree| {
+            store.replace_summary_tree(tree).await?;
+            Ok(())
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn summary_passage_partial_index_parity() -> TestResult {
+    use testkit::summary_passages::{SESSION, partial_index};
+
+    let (_dir, store) = store(Some(Arc::new(provider())))?;
+    seed(&store).await?;
+    let store = store.with_summary_index_key(KEY);
+    partial_index(&store, async || {
+        Ok(store.with_conn(|conn| {
+            conn.execute(
+                "UPDATE ros_summary_passages SET embedding = NULL WHERE record_id = ?1 AND ordinal = 1",
+                [SESSION.to_string()],
+            ).map_err(failed)?;
+            conn.query_row(
+                "SELECT index_needs_repair FROM ros_summaries WHERE id = ?1",
+                [SESSION.to_string()],
+                |row| row.get(0),
+            ).map_err(failed)
+        }).await?)
+    }).await
+}
+
+#[tokio::test]
+async fn summary_passage_inverted_times_parity() -> TestResult {
+    use testkit::summary_passages::{SESSION, inverted_times};
+
+    let (_dir, store) = store(None)?;
+    seed(&store).await?;
+    let store = store.with_summary_index_key(KEY);
+    inverted_times(&store, async || {
+        Ok(store.with_conn(|conn| {
+            let insert = conn.execute(
+                "INSERT INTO ros_summary_passages
+                 (id, record_id, ordinal, char_start, char_end, content, earliest_at, latest_at, index_key)
+                 SELECT 'inverted', record_id, 2, char_start, char_end, content, latest_at, earliest_at, index_key
+                 FROM ros_summary_passages WHERE record_id = ?1 AND ordinal = 0",
+                [SESSION.to_string()],
+            );
+            let update = conn.execute(
+                "UPDATE ros_summary_passages SET latest_at = '2024-01-01T01:00:00+02:00'
+                 WHERE record_id = ?1 AND ordinal = 0",
+                [SESSION.to_string()],
+            );
+            Ok((is_check_violation(&insert), is_check_violation(&update)))
+        }).await?)
+    }).await
+}
+
+fn is_check_violation(result: &rusqlite::Result<usize>) -> bool {
+    matches!(result, Err(rusqlite::Error::SqliteFailure(error, Some(message)))
+        if error.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_TRIGGER
+            && message == "summary passage source time is inverted")
+}
+
+#[tokio::test]
+async fn summary_passage_window_growth_parity() -> TestResult {
+    use testkit::summary_passages::{PassageRow, window_growth};
+
+    let (_dir, store) = store(None)?;
+    seed(&store).await?;
+    let store = store.with_summary_index_key(KEY);
+    window_growth(&store, async |tree, key| {
+        store.clone().with_summary_index_key(key).replace_summary_tree(tree).await?;
+        Ok(())
+    }, async || {
+        let rows = store.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, content, embedding IS NOT NULL FROM ros_summary_passages ORDER BY ordinal",
+            ).map_err(failed)?;
+            stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get(1)?, row.get(2)?)))
+                .map_err(failed)?.collect::<Result<Vec<_>, _>>().map_err(failed)
+        }).await?;
+        rows.into_iter().map(|(id, content, embedded)| Ok(PassageRow {
+            id: id.parse()?, content, embedded,
+        })).collect()
+    }).await
+}
+
+#[tokio::test]
+async fn summary_passage_tags_parity() -> TestResult {
+    let (_dir, store) = store(Some(Arc::new(provider())))?;
+    seed(&store).await?;
+    testkit::summary_passages::passage_tags(&store.with_summary_index_key(KEY)).await
+}

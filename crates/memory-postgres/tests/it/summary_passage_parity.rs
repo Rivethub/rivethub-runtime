@@ -60,13 +60,11 @@ async fn summary_passage_search_and_repair_parity(pool: PgPool) -> TestResult {
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn summary_passage_replacement_parity(pool: PgPool) -> TestResult {
-    use testkit::summary_passages::{KEY, provider, replacement};
+    use testkit::summary_passages::{KEY, replacement};
 
     seed_passage_parity(&pool).await?;
     let pool = scoped_pool(&pool).await?;
-    let store = PostgresMemory::new(pool)
-        .with_summary_index_key(KEY)
-        .with_query_embed(QueryEmbed::new(Arc::new(provider()), None, None, None));
+    let store = searchable_store(pool, KEY);
     Scope::Maintenance
         .run(replacement(&store, async |tree| {
             store.replace_summary_tree(&tree).await?;
@@ -77,13 +75,11 @@ async fn summary_passage_replacement_parity(pool: PgPool) -> TestResult {
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn summary_passage_part_limit_parity(pool: PgPool) -> TestResult {
-    use testkit::summary_passages::{KEY, part_limit, provider};
+    use testkit::summary_passages::{KEY, part_limit};
 
     seed_passage_parity(&pool).await?;
     let pool = scoped_pool(&pool).await?;
-    let store = PostgresMemory::new(pool)
-        .with_summary_index_key(KEY)
-        .with_query_embed(QueryEmbed::new(Arc::new(provider()), None, None, None));
+    let store = searchable_store(pool, KEY);
     Scope::Maintenance.run(part_limit(&store)).await
 }
 
@@ -91,4 +87,114 @@ async fn scoped_pool(pool: &PgPool) -> Result<PgPool, sqlx::Error> {
     memory_postgres::scoped(sqlx::postgres::PgPoolOptions::new())
         .connect_with(pool.connect_options().as_ref().clone())
         .await
+}
+
+fn searchable_store(pool: PgPool, key: [u8; 32]) -> PostgresMemory {
+    PostgresMemory::new(pool)
+        .with_summary_index_key(key)
+        .with_query_embed(QueryEmbed::new(
+            Arc::new(testkit::summary_passages::provider()),
+            None,
+            None,
+            None,
+        ))
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn summary_passage_hollow_section_parity(pool: PgPool) -> TestResult {
+    use testkit::summary_passages::{KEY, hollow_section};
+
+    seed_passage_parity(&pool).await?;
+    let store = searchable_store(scoped_pool(&pool).await?, KEY);
+    Scope::Maintenance
+        .run(hollow_section(&store, async || {
+            sqlx::raw_sql(
+                "UPDATE rh_summaries SET source_first = 9, source_last = 9 WHERE kind = 'section';
+                 CREATE FUNCTION test_hollow_section() RETURNS trigger LANGUAGE plpgsql AS $fn$
+                 BEGIN
+                     UPDATE rh_summaries SET source_first = 9, source_last = 9 WHERE id = NEW.id;
+                     RETURN NEW;
+                 END
+                 $fn$;
+                 CREATE TRIGGER test_hollow_section AFTER INSERT ON rh_summaries
+                     FOR EACH ROW WHEN (NEW.kind = 'section') EXECUTE FUNCTION test_hollow_section();",
+            ).execute(&pool).await?;
+            Ok(())
+        }, async |tree| {
+            store.replace_summary_tree(&tree).await?;
+            Ok(())
+        }))
+        .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn summary_passage_partial_index_parity(pool: PgPool) -> TestResult {
+    use testkit::summary_passages::{KEY, SESSION, partial_index};
+
+    seed_passage_parity(&pool).await?;
+    let store = searchable_store(scoped_pool(&pool).await?, KEY);
+    Scope::Maintenance
+        .run(partial_index(&store, async || {
+            sqlx::query("UPDATE rh_summary_passages SET embedding = NULL WHERE record_id = $1 AND ordinal = 1")
+                .bind(SESSION).execute(&pool).await?;
+            Ok(sqlx::query_scalar("SELECT index_needs_repair FROM rh_summaries WHERE id = $1")
+                .bind(SESSION).fetch_one(&pool).await?)
+        }))
+        .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn summary_passage_inverted_times_parity(pool: PgPool) -> TestResult {
+    use testkit::summary_passages::{KEY, SESSION, inverted_times};
+
+    seed_passage_parity(&pool).await?;
+    let store = searchable_store(scoped_pool(&pool).await?, KEY);
+    Scope::Maintenance
+        .run(inverted_times(&store, async || {
+            let insert = sqlx::query(
+                "INSERT INTO rh_summary_passages
+                 (id, record_id, ordinal, char_start, char_end, content, earliest_at, latest_at, index_key)
+                 SELECT gen_random_uuid(), record_id, 2, char_start, char_end, content, latest_at, earliest_at, index_key
+                 FROM rh_summary_passages WHERE record_id = $1 AND ordinal = 0",
+            ).bind(SESSION).execute(&pool).await;
+            let update = sqlx::query(
+                "UPDATE rh_summary_passages SET latest_at = '2024-01-01T01:00:00+02:00'
+                 WHERE record_id = $1 AND ordinal = 0",
+            ).bind(SESSION).execute(&pool).await;
+            Ok((is_check_violation(insert), is_check_violation(update)))
+        }))
+        .await
+}
+
+fn is_check_violation(result: Result<sqlx::postgres::PgQueryResult, sqlx::Error>) -> bool {
+    matches!(result, Err(sqlx::Error::Database(error)) if error.is_check_violation())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn summary_passage_window_growth_parity(pool: PgPool) -> TestResult {
+    use testkit::summary_passages::{KEY, PassageRow, window_growth};
+
+    seed_passage_parity(&pool).await?;
+    let scoped = scoped_pool(&pool).await?;
+    let store = searchable_store(scoped.clone(), KEY);
+    Scope::Maintenance
+        .run(window_growth(&store, async |tree, key| {
+            searchable_store(scoped.clone(), key).replace_summary_tree(&tree).await?;
+            Ok(())
+        }, async || {
+            let rows = sqlx::query_as(
+                "SELECT id, content, embedding IS NOT NULL FROM rh_summary_passages ORDER BY ordinal",
+            ).fetch_all(&pool).await?;
+            Ok(rows.into_iter().map(|(id, content, embedded)| PassageRow { id, content, embedded }).collect())
+        }))
+        .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn summary_passage_tags_parity(pool: PgPool) -> TestResult {
+    use testkit::summary_passages::{KEY, passage_tags};
+
+    seed_passage_parity(&pool).await?;
+    let store = searchable_store(scoped_pool(&pool).await?, KEY);
+    Scope::Maintenance.run(passage_tags(&store)).await
 }
