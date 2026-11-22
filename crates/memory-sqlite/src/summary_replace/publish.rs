@@ -1,6 +1,8 @@
 use super::sql;
 use kernel::memory::summary_conversion::ConversionLease;
+use kernel::memory::summary_reference::SummaryConsumer;
 use kernel::memory::{WrittenSummary, summary_backend::SummaryIndexes};
+use kernel::queue::FixedJob;
 use std::collections::{BTreeMap, BTreeSet};
 
 use kernel::memory::summary_reference::{
@@ -146,6 +148,7 @@ impl SqliteStore {
             } else {
                 Vec::new()
             };
+            tx.execute_batch(include_str!("entity_references.sql")).map_err(failure)?;
             tx.execute_batch(sql::REFERENCES).map_err(failure)?;
             finish_revision(&tx, &prepared, conversion.is_some())?;
             tx.commit().map_err(failure)?;
@@ -405,30 +408,46 @@ fn enqueue_deliveries(
     }
     let mut statement = conn
         .prepare(
-            "SELECT DISTINCT anchor_id FROM ros_summary_deliveries d
-         WHERE conversation_id = ?1 AND consumer = 'wiki' AND anchor_id IS NOT NULL
-           AND NOT EXISTS (SELECT 1 FROM ros_jobs j WHERE j.job_key = 'wiki-ext-' || d.anchor_id)",
+            "WITH candidates AS (
+                SELECT DISTINCT anchor_id, consumer,
+                    CASE consumer WHEN 'wiki' THEN 'wiki-ext-' ELSE 'entity-ext-' END || anchor_id AS key
+                FROM ros_summary_deliveries WHERE conversation_id = ?1 AND anchor_id IS NOT NULL
+             )
+             SELECT anchor_id, consumer, key FROM candidates c
+             WHERE NOT EXISTS (SELECT 1 FROM ros_jobs j WHERE j.job_key = c.key)",
         )
         .map_err(failure)?;
     let anchors = statement
         .query_map([prepared.conversation.to_string()], |row| {
-            row.get::<_, String>(0)
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
         })
         .map_err(failure)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(failure)?;
-    for anchor in anchors {
+    for (anchor, consumer, key) in anchors {
         let payload = Delivery {
             summary_id: &anchor,
             conversation_id: prepared.conversation,
         };
         let payload =
             serde_json::to_string(&payload).map_err(|source| SqliteError::StoredJson {
-                column: "wiki delivery payload",
+                column: "summary delivery payload",
                 source,
             })?;
-        let mut job = crate::queue::JobInsert::new("extract-wiki", payload, prepared.created_at);
-        job.key = Some(format!("wiki-ext-{anchor}"));
+        let consumer: SummaryConsumer =
+            consumer.parse().map_err(|source| SqliteError::Invalid {
+                message: format!("summary delivery consumer: {source}"),
+            })?;
+        let task = match consumer {
+            SummaryConsumer::Wiki => FixedJob::ExtractWiki,
+            SummaryConsumer::Entity => FixedJob::ExtractEntities,
+        };
+        let mut job = crate::queue::JobInsert::new(task.to_string(), payload, prepared.created_at);
+        job.key = Some(key);
         job.max_attempts = 2;
         job.priority = -10;
         crate::queue::enqueue_in(conn, &job)?;

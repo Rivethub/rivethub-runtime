@@ -97,7 +97,9 @@ impl SharedClock {
     }
 }
 
-pub const SCHEMA_VERSION: i64 = 41;
+pub const SCHEMA_VERSION: i64 = 42;
+
+mod entity_builder;
 
 const FILE_PRAGMAS: &str = "PRAGMA journal_mode = wal;\nPRAGMA foreign_keys = ON;";
 
@@ -115,6 +117,7 @@ pub struct SqliteStore {
     embed: Arc<AtomicBool>,
     language_available: bool,
     claims: Arc<ClaimIds>,
+    entity_locks: Arc<entity_builder::EntityLocks>,
     clock: SharedClock,
     query_embed: Option<QueryEmbed>,
     embed_model: Option<String>,
@@ -144,6 +147,7 @@ impl SqliteStore {
         search::functions::register(&conn)?;
         session_catalog::register(&conn)?;
         time::register(&conn)?;
+        entity_builder::register(&conn)?;
         Ok(from_conn(conn, SharedClock::new(Timestamp::now)))
     }
 
@@ -267,6 +271,7 @@ fn from_conn(conn: Connection, clock: SharedClock) -> SqliteStore {
         embed: Arc::new(AtomicBool::new(false)),
         language_available: false,
         claims: Arc::new(ClaimIds::default()),
+        entity_locks: Arc::default(),
         clock,
         query_embed: None,
         embed_model: None,

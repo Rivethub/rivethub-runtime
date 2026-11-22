@@ -33,7 +33,7 @@ use super::rewrite::upsert_history;
 use super::rewrite::write_rewrite;
 use super::types::observed_types;
 use super::view::load_view;
-use super::view::page_from;
+use kernel::wiki::entity_pass::entity_page;
 
 #[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
 pub(super) fn hold_payload(prepared: &PreparedEntity) -> serde_json::Value {
@@ -288,7 +288,7 @@ async fn write_page(
     prose: &EntityProse,
     now: Timestamp,
 ) -> Result<String, EntityStoreError> {
-    let mut page = page_from(view, prose)?;
+    let mut page = entity_page(view, prose)?;
     let message = format!("entity {}", view.slug);
     let sha = repository.fold(&mut page, &[], &message, now).await?;
     crate::wiki_builder::store_wiki_page(tx, &page, &view.slug, None, &sha, now)

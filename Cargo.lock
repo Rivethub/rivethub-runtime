@@ -2931,6 +2931,7 @@ version = "0.8.3"
 dependencies = [
  "async-trait",
  "config",
+ "half",
  "hex",
  "jiff 1.0.1",
  "kernel",

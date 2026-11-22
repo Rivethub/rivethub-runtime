@@ -1,0 +1,358 @@
+mod candidates;
+mod claims;
+mod identity;
+mod known;
+mod lease;
+mod merge;
+mod pages;
+mod transcript;
+mod trigrams;
+mod types;
+mod work;
+
+use std::collections::HashMap;
+use std::sync::{Arc, Weak};
+
+use async_trait::async_trait;
+use jiff::Timestamp;
+use kernel::wiki::builder::BackfillBudget;
+use kernel::wiki::entity_pass::{
+    CandidateQuery, EntityLeaf, EntityLease, EntityMerge, EntityProse, EntityStore,
+    EntityStoreError, EntityView, EntityWork, ExtractEntities, FollowingLeaf, MatchCandidate,
+    MatchDecision, ObserveContext, PreparedEntity, PublishOutcome, TranscriptMessage, TypeBrief,
+};
+use rusqlite::{Connection, Params, Row, Transaction};
+use tokio::sync::{Mutex, OwnedMutexGuard};
+use uuid::Uuid;
+
+use crate::SqliteStore;
+use crate::summary_replace::{self, FenceError};
+
+#[derive(Debug, Default)]
+pub(super) struct EntityLocks(parking_lot::Mutex<HashMap<Uuid, Weak<Mutex<()>>>>);
+
+impl EntityLocks {
+    async fn lock(&self, id: Uuid) -> OwnedMutexGuard<()> {
+        let lock = {
+            let mut locks = self.0.lock();
+            locks.retain(|_, lock| lock.strong_count() > 0);
+            let slot = locks.entry(id).or_default();
+            if let Some(lock) = slot.upgrade() {
+                lock
+            } else {
+                let lock = Arc::new(Mutex::new(()));
+                *slot = Arc::downgrade(&lock);
+                lock
+            }
+        };
+        lock.lock_owned().await
+    }
+}
+
+#[async_trait]
+impl EntityStore for SqliteStore {
+    async fn entity_work(&self, job: &ExtractEntities) -> Result<EntityWork, EntityStoreError> {
+        let job = job.clone();
+        read(self, move |conn| work::load(conn, &job)).await
+    }
+
+    async fn following(
+        &self,
+        lead: &EntityLeaf,
+        limit: u32,
+    ) -> Result<Vec<FollowingLeaf>, EntityStoreError> {
+        let lead = lead.clone();
+        let rows = read(self, move |conn| work::following(conn, &lead, limit)).await?;
+        rows.into_iter()
+            .map(|(leaf, done, job)| {
+                let job = job
+                    .as_deref()
+                    .map(|id| self.remember_claim(id))
+                    .transpose()
+                    .map_err(error)?;
+                Ok(FollowingLeaf { leaf, done, job })
+            })
+            .collect()
+    }
+
+    async fn observe_context(
+        &self,
+        leaves: &[EntityLeaf],
+    ) -> Result<ObserveContext, EntityStoreError> {
+        let leaves = leaves.to_vec();
+        read(self, move |conn| {
+            Ok(ObserveContext {
+                types: types::paths(conn)?,
+                known: known::find(conn, &leaves)?,
+            })
+        })
+        .await
+    }
+
+    async fn transcript(
+        &self,
+        leaves: &[EntityLeaf],
+    ) -> Result<Vec<TranscriptMessage>, EntityStoreError> {
+        let leaves = leaves.to_vec();
+        read(self, move |conn| transcript::load(conn, &leaves)).await
+    }
+
+    async fn commit(
+        &self,
+        leaves: &[EntityLeaf],
+        prepared: &PreparedEntity,
+        now: Timestamp,
+    ) -> Result<Option<EntityView>, EntityStoreError> {
+        let Some(owner) = leaves.iter().find_map(|leaf| leaf.owner.clone()) else {
+            return Ok(None);
+        };
+        let _lock = match prepared.entity_ref {
+            Some(id) => Some(self.entity_locks.lock(id).await),
+            None => None,
+        };
+        let leaves = leaves.to_vec();
+        let prepared = prepared.clone();
+        write(self, move |tx| {
+            identity::commit(tx, &leaves, &prepared, &owner, now)
+        })
+        .await
+    }
+
+    async fn publish(
+        &self,
+        view: &EntityView,
+        prose: &EntityProse,
+        now: Timestamp,
+    ) -> Result<PublishOutcome, EntityStoreError> {
+        let _lock = self.entity_locks.lock(view.id).await;
+        let view = view.clone();
+        let prose = prose.clone();
+        write(self, move |tx| pages::publish(tx, &view, &prose, now)).await
+    }
+
+    async fn finish_entities(
+        &self,
+        leaves: &[Uuid],
+        slugs: &[String],
+        git_sha: Option<&str>,
+        now: Timestamp,
+    ) -> Result<(), EntityStoreError> {
+        let leaves = leaves.to_vec();
+        let slugs = slugs.to_vec();
+        let sha = git_sha.map(str::to_owned);
+        write(self, move |tx| {
+            work::finish(tx, &leaves, &[], &slugs, sha.as_deref(), now)
+        })
+        .await
+    }
+
+    async fn finish_entity_delivery(
+        &self,
+        leaves: &[EntityLeaf],
+        slugs: &[String],
+        git_sha: Option<&str>,
+        now: Timestamp,
+    ) -> Result<(), EntityStoreError> {
+        let leaves = leaves.to_vec();
+        let slugs = slugs.to_vec();
+        let sha = git_sha.map(str::to_owned);
+        write(self, move |tx| {
+            let ids: Vec<_> = leaves.iter().map(|leaf| leaf.id).collect();
+            work::finish(tx, &ids, &leaves, &slugs, sha.as_deref(), now)
+        })
+        .await
+    }
+
+    async fn fail_entity(
+        &self,
+        summary_id: Uuid,
+        error: &str,
+        now: Timestamp,
+    ) -> Result<(), EntityStoreError> {
+        let error = error.to_owned();
+        write(self, move |tx| work::fail(tx, summary_id, &error, now)).await
+    }
+
+    async fn entity_backfill(
+        &self,
+        budget: BackfillBudget,
+    ) -> Result<Vec<ExtractEntities>, EntityStoreError> {
+        let now = self.clock.now();
+        read(self, move |conn| work::backfill(conn, budget, now)).await
+    }
+
+    async fn stale_entities(&self, limit: u32) -> Result<Vec<ExtractEntities>, EntityStoreError> {
+        let now = self.clock.now();
+        read(self, move |conn| work::stale(conn, limit, now)).await
+    }
+
+    async fn revive_dead_entities(&self, limit: u32) -> Result<u64, EntityStoreError> {
+        let now = self.clock.now();
+        let revived = write(self, move |tx| work::revive(tx, limit, now)).await?;
+        if revived > 0 {
+            self.notifications.send_replace(());
+        }
+        Ok(revived)
+    }
+
+    async fn match_candidates(
+        &self,
+        query: &CandidateQuery,
+    ) -> Result<Vec<MatchCandidate>, EntityStoreError> {
+        let query = query.clone();
+        read(self, move |conn| candidates::gather(conn, &query)).await
+    }
+
+    async fn remember_embedding(
+        &self,
+        entity: Uuid,
+        embedding: &[f32],
+        now: Timestamp,
+    ) -> Result<(), EntityStoreError> {
+        let embedding = embedding.to_vec();
+        write(self, move |tx| {
+            candidates::remember(tx, entity, &embedding, now)
+        })
+        .await
+    }
+
+    async fn hold_candidate(
+        &self,
+        summary: Uuid,
+        prepared: &PreparedEntity,
+        confidence: f32,
+        reason: &str,
+        now: Timestamp,
+    ) -> Result<(), EntityStoreError> {
+        let prepared = prepared.clone();
+        let reason = reason.to_owned();
+        write(self, move |tx| {
+            work::hold(tx, summary, &prepared, confidence, &reason, now)
+        })
+        .await
+    }
+
+    async fn record_decision(
+        &self,
+        summary: Uuid,
+        decision: &MatchDecision,
+        now: Timestamp,
+    ) -> Result<(), EntityStoreError> {
+        let decision = decision.clone();
+        write(self, move |tx| work::decision(tx, summary, &decision, now)).await
+    }
+
+    async fn type_briefs(&self) -> Result<Vec<TypeBrief>, EntityStoreError> {
+        read(self, types::briefs).await
+    }
+
+    async fn remember_type_alias(&self, name: &str, alias: &str) -> Result<(), EntityStoreError> {
+        let name = name.to_owned();
+        let alias = alias.to_owned();
+        write(self, move |tx| types::remember_alias(tx, &name, &alias)).await
+    }
+
+    async fn merge_entities(
+        &self,
+        left: Uuid,
+        right: Uuid,
+        now: Timestamp,
+    ) -> Result<Option<EntityMerge>, EntityStoreError> {
+        if left == right {
+            return Ok(None);
+        }
+        let _first = self.entity_locks.lock(left.min(right)).await;
+        let _second = self.entity_locks.lock(left.max(right)).await;
+        write(self, move |tx| merge::pair(tx, left, right, now)).await
+    }
+
+    async fn lease_entity(&self, id: Uuid) -> Result<Box<dyn EntityLease>, EntityStoreError> {
+        let guard = self.entity_locks.lock(id).await;
+        Ok(Box::new(lease::Lease::new(self.clone(), id, guard)))
+    }
+}
+
+async fn read<T, F>(store: &SqliteStore, body: F) -> Result<T, EntityStoreError>
+where
+    T: Send + 'static,
+    F: FnOnce(&Connection) -> Result<T, EntityStoreError> + Send + 'static,
+{
+    store
+        .with_conn(move |conn| {
+            Ok((|| {
+                let tx = conn.transaction().map_err(query)?;
+                let result = body(&tx)?;
+                tx.commit().map_err(query)?;
+                Ok(result)
+            })())
+        })
+        .await
+        .map_err(error)?
+}
+
+async fn write<T, F>(store: &SqliteStore, body: F) -> Result<T, EntityStoreError>
+where
+    T: Send + 'static,
+    F: FnOnce(&Transaction<'_>) -> Result<T, EntityStoreError> + Send + 'static,
+{
+    store
+        .with_conn(move |conn| {
+            Ok((|| {
+                let tx = summary_replace::immediate(conn).map_err(query)?;
+                let result = body(&tx)?;
+                tx.commit().map_err(query)?;
+                Ok(result)
+            })())
+        })
+        .await
+        .map_err(error)?
+}
+
+fn rows<T>(
+    conn: &Connection,
+    sql: &str,
+    params: impl Params,
+    map: impl FnMut(&Row<'_>) -> rusqlite::Result<T>,
+) -> Result<Vec<T>, EntityStoreError> {
+    conn.prepare(sql)
+        .map_err(query)?
+        .query_map(params, map)
+        .map_err(query)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(query)
+}
+
+fn error(error: impl std::error::Error + Send + Sync + 'static) -> EntityStoreError {
+    EntityStoreError::Query(Box::new(error))
+}
+
+fn query(error: rusqlite::Error) -> EntityStoreError {
+    self::error(error)
+}
+
+fn fence(error: FenceError) -> EntityStoreError {
+    match error {
+        FenceError::Reference(error) => error.into(),
+        FenceError::Query(error) => query(error),
+    }
+}
+
+fn uuid(text: &str) -> Result<Uuid, EntityStoreError> {
+    Uuid::parse_str(text).map_err(error)
+}
+
+fn optional_uuid(text: Option<&str>) -> Result<Option<Uuid>, EntityStoreError> {
+    text.map(uuid).transpose()
+}
+
+fn stamp(at: Timestamp) -> String {
+    format!("{at:.9}")
+}
+
+fn at(text: &str) -> Result<Timestamp, EntityStoreError> {
+    crate::time::stored(text, "entity timestamp").map_err(error)
+}
+
+pub(crate) use candidates::register;
+
+pub(crate) use pages::history_markdown;

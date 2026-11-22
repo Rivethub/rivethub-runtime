@@ -257,7 +257,7 @@ SELECT e.id, e.name, ty.name AS type_name,
   LEFT JOIN rh_topic_aliases a ON a.topic_id = e.id AND a.kind = 'entity'
  WHERE e.kind = 'entity'
  GROUP BY e.id, e.name, ty.name
- ORDER BY score DESC
+ ORDER BY score DESC, e.id
  LIMIT 20";
 
 pub(super) const EMBED_ARM: &str = "\
@@ -267,7 +267,7 @@ SELECT e.id, e.name, ty.name AS type_name,
   JOIN rh_topics e ON e.id = emb.entity_id
   JOIN rh_topics ty ON ty.id = e.parent_id
  WHERE e.kind = 'entity'
- ORDER BY emb.embedding <=> $1
+ ORDER BY emb.embedding <=> $1, e.id
  LIMIT 10";
 
 pub(super) const MARKER_ARM: &str = "\
@@ -294,6 +294,7 @@ SELECT id, name, type_name, score FROM (
             OR position(lower(q.term) in lower(left(coalesce(w.article, ''), 4000))) > 0
        )
 ) hits
+ ORDER BY id
  LIMIT 48";
 
 pub(super) const PAGE_TEXT: &str = "\

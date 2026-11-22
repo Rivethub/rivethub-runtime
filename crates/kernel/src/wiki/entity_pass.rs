@@ -1,5 +1,6 @@
 mod bind;
 mod history;
+mod known;
 mod ledger;
 mod page;
 mod parse;
@@ -15,8 +16,10 @@ pub use bind::pick_existing;
 pub use history::render_history;
 pub use history::session_history;
 pub use history::snapshot_of;
+pub use known::{known_document, known_keys, mention_score};
 pub use ledger::place_as_of;
 pub use page::article_with_facts;
+pub use page::entity_page;
 pub use page::facts_section;
 pub use page::prose_article;
 pub use parse::identify_schema;

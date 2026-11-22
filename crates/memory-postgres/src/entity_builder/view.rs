@@ -1,14 +1,8 @@
 use jiff::civil::Date;
-use kernel::wiki::entity_pass::EntityProse;
 use kernel::wiki::entity_pass::EntityStoreError;
 use kernel::wiki::entity_pass::EntityView;
 use kernel::wiki::entity_pass::HistoryLine;
 use kernel::wiki::entity_pass::snapshot_of;
-use kernel::wiki::page::LastVerified;
-use kernel::wiki::page::PageCitation;
-use kernel::wiki::page::PageSource;
-use kernel::wiki::page::WikiPage;
-use kernel::wiki::page::WikiSourceKind;
 use sqlx::Postgres;
 use sqlx::Transaction;
 use uuid::Uuid;
@@ -91,71 +85,4 @@ pub(super) async fn load_view(
         snapshot,
         owner: head.owner_user_id,
     })
-}
-
-pub(super) fn page_from(
-    view: &EntityView,
-    prose: &EntityProse,
-) -> Result<WikiPage, EntityStoreError> {
-    let slug = kernel::wiki::page::WikiSlug::try_from(view.slug.clone())
-        .map_err(|_| EntityStoreError::SlugTaken(view.slug.clone()))?;
-    let mut page = WikiPage::empty(slug, view.name.clone());
-    prose.summary.trim().clone_into(&mut page.current_state);
-    page.article = kernel::wiki::entity_pass::article_with_facts(&prose.article, &view.facts);
-    page.meta.aliases.clone_from(&view.aliases);
-    page.meta.tags = page_tags(view);
-    page.history = kernel::wiki::entity_pass::render_history(&view.history);
-    page.meta.last_verified = view
-        .facts
-        .iter()
-        .map(|fact| fact.as_of)
-        .max()
-        .map(LastVerified::from);
-    page.meta.sources = page_sources(view);
-    page.citations = view
-        .history
-        .iter()
-        .map(|line| PageCitation {
-            summary_id: line.summary_id.to_string(),
-            date: Some(line.date),
-            kind: None,
-            note: None,
-        })
-        .collect();
-    drop(kernel::wiki::page::bound::bound_page(None, &mut page));
-    Ok(page)
-}
-
-fn page_tags(view: &EntityView) -> Vec<String> {
-    let mut tags = Vec::new();
-    if !view.type_slug.is_empty() {
-        tags.push(view.type_slug.clone());
-    }
-    if !view.type_name.is_empty() && !tags.iter().any(|tag| tag == &view.type_name) {
-        tags.push(view.type_name.clone());
-    }
-    tags
-}
-
-fn page_sources(view: &EntityView) -> Vec<PageSource> {
-    let mut ids: Vec<String> = view
-        .history
-        .iter()
-        .map(|line| line.summary_id.to_string())
-        .collect();
-    ids.sort();
-    ids.dedup();
-    if ids.is_empty() {
-        return Vec::new();
-    }
-    vec![PageSource {
-        kind: WikiSourceKind::Summary,
-        ids,
-        conversation_id: view
-            .history
-            .iter()
-            .find_map(|line| line.conversation_id)
-            .map(|id| id.to_string()),
-        extra: wire::Extra::default(),
-    }]
 }

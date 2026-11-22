@@ -20,6 +20,23 @@ SELECT e.*, map.new, row_number() OVER (PARTITION BY map.new ORDER BY
 FROM ros_wiki_extractions e
 JOIN summary_reference_map map ON map.old = e.summary_id AND map.new IS NOT NULL;
 
+CREATE TEMP TABLE summary_entity_extractions AS
+SELECT e.*, map.new FROM rh_entity_extractions e JOIN summary_reference_map map ON map.old = e.summary_id;
+
+CREATE TEMP TABLE summary_entity_history AS
+SELECT h.*, map.new, coalesce(s.latest_at, s.created_at) AS source_at
+FROM rh_entity_history h JOIN summary_reference_map map ON map.old = h.summary_id
+JOIN ros_summaries s ON s.id = map.old;
+
+CREATE TEMP TABLE summary_entity_types AS
+SELECT t.*, map.new FROM rh_entity_type_seen t JOIN summary_reference_map map ON map.old = t.summary_id;
+
+UPDATE rh_entity_candidates AS c SET summary_id = map.new
+FROM summary_replacements map WHERE c.summary_id = map.old AND map.new IS NOT NULL;
+
+UPDATE rh_entity_decisions AS d SET summary_id = map.new
+FROM summary_replacements map WHERE d.summary_id = map.old AND map.new IS NOT NULL;
+
 DELETE FROM ros_summaries WHERE id IN (SELECT old FROM summary_replacements);
 ";
 
@@ -60,29 +77,42 @@ pub(super) const DELIVERIES: &str = r"WITH legacy_leaves AS (
     UNION ALL
     SELECT summary_id, message_id FROM window_members WHERE window_count = message_count
 ), accepted AS (
-    SELECT l.message_id, max(coalesce(e.pipeline_version, 4)) AS version
+    SELECT l.message_id, 'wiki' AS consumer, max(coalesce(e.pipeline_version, 4)) AS version
     FROM legacy_leaves s JOIN legacy_members l ON l.summary_id = s.id
     LEFT JOIN ros_wiki_extractions e ON e.summary_id = s.id
     LEFT JOIN rh_wiki_deferred d ON d.summary_id = s.id
     WHERE s.conversation_id = ?1 AND s.kind = 'leaf'
       AND (d.summary_id IS NOT NULL OR e.status IN ('done', 'skipped'))
     GROUP BY l.message_id
+    UNION ALL
+    SELECT l.message_id, 'entity', max(e.pipeline_version)
+    FROM legacy_members l JOIN rh_entity_extractions e ON e.summary_id = l.summary_id
+    WHERE e.status = 'done' GROUP BY l.message_id
 ), recovery AS (
-    SELECT DISTINCT l.message_id
+    SELECT DISTINCT l.message_id, 'wiki' AS consumer
     FROM legacy_members l
     JOIN ros_wiki_extractions e ON e.summary_id = l.summary_id WHERE e.status = 'failed'
     UNION
-    SELECT DISTINCT l.message_id
+    SELECT DISTINCT l.message_id, 'wiki'
     FROM legacy_members l
     JOIN ros_jobs j ON j.job_key = 'wiki-ext-' || l.summary_id AND j.state <> 'dead'
+    UNION
+    SELECT DISTINCT l.message_id, 'entity'
+    FROM legacy_members l JOIN rh_entity_extractions e ON e.summary_id = l.summary_id
+    WHERE e.status = 'failed' AND NOT EXISTS (
+        SELECT 1 FROM ros_jobs j WHERE j.job_key = 'entity-ext-' || l.summary_id AND j.state = 'dead'
+    )
+    UNION
+    SELECT DISTINCT l.message_id, 'entity'
+    FROM legacy_members l JOIN ros_jobs j ON j.job_key = 'entity-ext-' || l.summary_id AND j.state <> 'dead'
 ), delivery AS (
     SELECT m.id AS message_id, c.consumer, done.version,
            CASE WHEN done.version IS NULL AND (NOT ?2 OR recovery.message_id IS NOT NULL)
                 THEN a.anchor END AS anchor_id
     FROM ros_messages m CROSS JOIN (SELECT 'wiki' AS consumer UNION ALL SELECT 'entity') c
     LEFT JOIN summary_anchors a ON a.message = m.id
-    LEFT JOIN accepted done ON done.message_id = m.id AND c.consumer = 'wiki'
-    LEFT JOIN recovery ON recovery.message_id = m.id AND c.consumer = 'wiki'
+    LEFT JOIN accepted done ON done.message_id = m.id AND c.consumer = done.consumer
+    LEFT JOIN recovery ON recovery.message_id = m.id AND c.consumer = recovery.consumer
     WHERE m.conversation_id = ?1 AND (?2 OR a.anchor IS NOT NULL)
 )
 INSERT INTO ros_summary_deliveries (conversation_id, consumer, message_id, completed_version, anchor_id, historical_backlog)
