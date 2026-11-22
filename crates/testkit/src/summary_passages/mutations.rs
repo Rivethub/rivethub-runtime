@@ -35,6 +35,8 @@ pub async fn partial_index(
     assert_eq!(hit.content, SECOND);
     assert_eq!(hit.id, SESSION.to_string());
     assert!(!needs_repair);
+    assert_eq!(store.repair_candidates(10).await?, Vec::<Uuid>::new());
+    assert!(store.repair_input(SESSION).await?.is_none());
     Ok(())
 }
 

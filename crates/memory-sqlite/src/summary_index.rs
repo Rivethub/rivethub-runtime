@@ -19,7 +19,7 @@ pub(crate) fn marked_indexes(
 ) -> Result<Vec<Uuid>, SqliteError> {
     let mut statement = conn.prepare(
         "SELECT s.id FROM ros_summaries s WHERE kind IN ('session', 'part')
-           AND (index_needs_repair OR NOT EXISTS (SELECT 1 FROM ros_summary_records_indexed WHERE id = s.id) OR index_key IS NOT ?1)
+           AND (index_needs_repair OR index_key IS NOT ?1)
            AND NOT EXISTS (SELECT 1 FROM ros_jobs j WHERE j.job_key = 'embed-ros_summaries-' || s.id)
          ORDER BY s.id LIMIT ?2"
     ).map_err(error)?;
@@ -39,7 +39,7 @@ pub(crate) fn marked_index(
     let tx = conn.transaction().map_err(error)?;
     let row = tx.query_row(
         "SELECT content, input_key FROM ros_summaries s WHERE s.id = ?1 AND kind IN ('session', 'part')
-           AND (index_needs_repair OR NOT EXISTS (SELECT 1 FROM ros_summary_records_indexed WHERE id = s.id) OR index_key IS NOT ?2)",
+           AND (index_needs_repair OR index_key IS NOT ?2)",
         params![id.to_string(), key.as_slice()], |row| Ok((row.get(0)?, row.get(1)?))
     ).optional().map_err(error)?;
     let Some((content, input_key)) = row else {
@@ -93,10 +93,9 @@ pub(crate) fn replace_index(
     let tx = immediate(conn).map_err(error)?;
     let updated = tx
         .execute(
-            "UPDATE ros_summaries AS s SET index_key = ?1
+            "UPDATE ros_summaries SET index_key = ?1
          WHERE id = ?2 AND input_key = ?3 AND content = ?4 AND kind IN ('session', 'part')
-           AND (index_needs_repair OR index_key IS NOT ?1
-               OR NOT EXISTS (SELECT 1 FROM ros_summary_records_indexed WHERE id = s.id))",
+           AND (index_needs_repair OR index_key IS NOT ?1)",
             params![
                 key.as_slice(),
                 expected.id.to_string(),
