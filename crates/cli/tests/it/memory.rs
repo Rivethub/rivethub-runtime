@@ -1361,3 +1361,49 @@ async fn conversion_status_counts_debits_without_provider_usage_on_both_stores(
     assert_eq!(totals, [(140, 40, 5); 2]);
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn pause_and_resume_a_builder_from_the_command_line(pool: PgPool) {
+    install_graphile(&pool).await;
+    let (_home, environment) = env(&[("RIVETHUB_PG_URL", &url_of(&pool))]);
+    let paused = run(&["memory", "pause", "entity-builder"], &environment).await;
+    assert_eq!(paused.exit, Exit::Ok, "{}", paused.stderr);
+    let lines: Vec<&str> = paused.stdout.lines().collect();
+    let [categorizer, wiki, entity] = lines.as_slice() else {
+        panic!("one line per pausable role: {}", paused.stdout);
+    };
+    assert_eq!(*categorizer, "categorizer running, 0 queued");
+    assert_eq!(*wiki, "wiki-builder running, 0 queued");
+    assert!(
+        entity.starts_with("entity-builder paused since ") && entity.ends_with(" by cli, 0 queued"),
+        "{entity}"
+    );
+    let again = run(&["memory", "pause", "entity-builder"], &environment).await;
+    assert_eq!(again.stdout, paused.stdout);
+    let status = run(&["memory", "pause", "--json"], &environment).await;
+    let listed: wire::gateway::worker_pauses::WorkerPauses =
+        serde_json::from_str(&status.stdout).expect("status json");
+    assert_eq!(
+        listed.roles.iter().filter(|role| role.paused).count(),
+        1,
+        "{}",
+        status.stdout
+    );
+
+    let resumed = run(&["memory", "resume", "entity-builder"], &environment).await;
+    assert_eq!(resumed.exit, Exit::Ok, "{}", resumed.stderr);
+    assert!(
+        resumed
+            .stdout
+            .ends_with("entity-builder running, 0 queued\n")
+    );
+
+    failure(
+        &run(&["memory", "pause", "summarizer"], &environment).await,
+        "summarizer cannot be paused; the pausable roles are categorizer, wiki-builder, entity-builder",
+    );
+    failure(
+        &run(&["memory", "resume"], &environment).await,
+        "usage: rh memory pause [<role>] [--json] | rh memory resume <role> [--json]; roles: categorizer, wiki-builder, entity-builder",
+    );
+}
