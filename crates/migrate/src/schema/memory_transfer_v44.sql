@@ -25,16 +25,3 @@ CREATE TABLE IF NOT EXISTS rh_agent_presets (
     owner_user_id TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS rh_agent_presets_name ON rh_agent_presets (lower(name));
-
-ALTER TABLE ros_wiki_topics ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private';
-ALTER TABLE ros_wiki_topics ADD COLUMN scope TEXT REFERENCES rh_wiki_scopes (scope);
-ALTER TABLE ros_wiki_topics ADD COLUMN local_slug TEXT;
-ALTER TABLE rh_topic_pages ADD COLUMN sections_were_null INTEGER NOT NULL DEFAULT 0
-    CHECK (sections_were_null IN (0, 1));
-ALTER TABLE ros_wiki_redirects ADD COLUMN owner_user_id TEXT;
-ALTER TABLE ros_tag_taxonomy ADD COLUMN owner_user_id TEXT;
-ALTER TABLE ros_tag_taxonomy ADD COLUMN globally_shared INTEGER CHECK (globally_shared = 1);
-ALTER TABLE rh_topic_tombstones ADD COLUMN owner_user_id TEXT;
-CREATE UNIQUE INDEX IF NOT EXISTS rh_wiki_topics_scope_local ON ros_wiki_topics (scope, local_slug);
-ALTER TABLE rh_topic_tombstones ADD COLUMN locally_deleted INTEGER NOT NULL DEFAULT 0
-    CHECK (locally_deleted IN (0, 1));
