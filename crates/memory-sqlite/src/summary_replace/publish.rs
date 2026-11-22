@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::{SqliteError, SqliteStore, time};
 
-use super::{immediate, retain};
+use super::{immediate, passages, retain};
 
 const INSERT_RECORD: &str = "
 INSERT INTO ros_summaries (id, conversation_id, parent_id, kind, depth, content,
@@ -84,30 +84,38 @@ impl SqliteStore {
                 return Err(SummaryReferenceError::Stale(prepared.conversation).into());
             }
             if indexes.is_some() {
-                let revision = prepared.expected_revision.ok_or(SummaryReferenceError::Stale(prepared.conversation))?;
+                let revision = prepared
+                    .expected_revision
+                    .ok_or(SummaryReferenceError::Stale(prepared.conversation))?;
                 if !crate::summary_backend::eligible(&tx, prepared.conversation, revision)? {
                     return Err(SummaryReferenceError::Stale(prepared.conversation).into());
                 }
                 if prepared.records.is_empty() {
                     if !prepared.expected_ids.is_empty() {
-                        return Err(SqliteError::Invalid { message: "empty transcript would replace an existing summary".into() });
+                        return Err(SqliteError::Invalid {
+                            message: "empty transcript would replace an existing summary".into(),
+                        });
                     }
                     finish_revision(&tx, &prepared, conversion.is_some())?;
                     tx.commit().map_err(failure)?;
                     return Ok(Vec::new());
                 }
             }
-            let mut coverage = prepared.coverage().map_err(|error| SqliteError::Invalid { message: error.to_string() })?;
+            let mut coverage = prepared.coverage().map_err(|error| SqliteError::Invalid {
+                message: error.to_string(),
+            })?;
             let old = old_coverage(&tx, prepared.conversation)?;
             let retained = retain::plan(&tx, &mut prepared, &mut coverage)?;
             stage(&tx, &prepared, &coverage, &old, &retained)?;
+            passages::snapshot(&tx, prepared.conversation)?;
             retain::reparent(&tx, &prepared, &retained)?;
             tx.execute(
                 sql::DELIVERIES,
                 params![prepared.conversation.to_string(), prepared.historical],
-            ).map_err(failure)?;
-            tx.execute_batch(sql::REUSE_VECTORS).map_err(failure)?;
-            tx.execute(sql::REBIND_DELIVERIES, [prepared.conversation.to_string()]).map_err(failure)?;
+            )
+            .map_err(failure)?;
+            tx.execute(sql::REBIND_DELIVERIES, [prepared.conversation.to_string()])
+                .map_err(failure)?;
             tx.execute_batch(sql::BEFORE_DELETE).map_err(failure)?;
 
             let mut records: Vec<_> = prepared.records.iter().collect();
@@ -118,33 +126,12 @@ impl SqliteStore {
                 }
             }
 
-            tx.execute_batch(
-                "UPDATE ros_summaries AS dest
-                 SET (embedding, index_needs_repair) = (
-                     SELECT old.embedding, 0 FROM summary_old_vectors old
-                     WHERE old.content = dest.content AND old.index_key = dest.index_key
-                     ORDER BY old.id LIMIT 1)
-                 WHERE dest.conversation_id = (SELECT conversation_id FROM summary_old_vectors LIMIT 1)
-                   AND dest.kind IN ('session', 'part')
-                   AND dest.id NOT IN (SELECT id FROM summary_retained)
-                   AND EXISTS (SELECT 1 FROM summary_old_vectors old
-                       WHERE old.content = dest.content AND old.index_key = dest.index_key);
-                 DROP TABLE summary_old_vectors;",
-            ).map_err(failure)?;
-            let written = if let Some(indexes) = indexes {
+            passages::publish(&tx, &prepared, &retained, indexes.as_ref())?;
+            let written = if indexes.is_some() {
                 if conversion.is_none() {
                     enqueue_deliveries(&tx, &prepared)?;
                 }
-                for (id, index) in indexes {
-                    index.validate_width().map_err(|error| SqliteError::Invalid { message: error.to_string() })?;
-                    tx.execute("UPDATE ros_summaries SET embedding = ?2, index_needs_repair = 0 WHERE id = ?1",
-                        params![id.to_string(), crate::vector::pack(&index.pooled)]).map_err(failure)?;
-                }
-                let session_key: String = tx.query_row("SELECT session_key FROM ros_conversations WHERE id = ?1",
-                    [prepared.conversation.to_string()], |row| row.get(0)).map_err(failure)?;
-                prepared.records.iter().filter(|record| !retained.contains(&record.id)).map(|record| WrittenSummary {
-                    id: record.id, session_key: session_key.clone(), kind: record.kind, depth: record.kind.depth(),
-                }).collect()
+                publication_notices(&tx, &prepared, &retained)?
             } else {
                 Vec::new()
             };
@@ -153,8 +140,34 @@ impl SqliteStore {
             finish_revision(&tx, &prepared, conversion.is_some())?;
             tx.commit().map_err(failure)?;
             Ok(written)
-        }).await
+        })
+        .await
     }
+}
+
+fn publication_notices(
+    conn: &Connection,
+    prepared: &PreparedSummaryTree,
+    retained: &BTreeSet<Uuid>,
+) -> Result<Vec<WrittenSummary>, SqliteError> {
+    let session_key: String = conn
+        .query_row(
+            "SELECT session_key FROM ros_conversations WHERE id = ?1",
+            [prepared.conversation.to_string()],
+            |row| row.get(0),
+        )
+        .map_err(failure)?;
+    Ok(prepared
+        .records
+        .iter()
+        .filter(|record| !retained.contains(&record.id))
+        .map(|record| WrittenSummary {
+            id: record.id,
+            session_key: session_key.clone(),
+            kind: record.kind,
+            depth: record.kind.depth(),
+        })
+        .collect())
 }
 
 pub(super) fn failure(error: rusqlite::Error) -> SqliteError {

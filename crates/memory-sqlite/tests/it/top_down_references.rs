@@ -953,24 +953,17 @@ async fn top_down_search_uses_one_snapshot_during_tree_replacement() -> TestResu
     use testkit::{FakeProvider, Script};
 
     let vector = kernel::model::Embedding {
-        vector: vec![1.0, 0.0],
+        vector: testkit::summary_passages::vector(1.0, 0.0),
     };
     let embedder = Arc::new(FakeProvider::new(vec![Script::Embed(vec![vector])]));
     let (directory, reader) = store(Some(embedder))?;
-    let writer = SqliteStore::open(directory.path().join("memory.sqlite"))?;
+    let writer = SqliteStore::open(directory.path().join("memory.sqlite"))?
+        .with_summary_index_key(testkit::summary_passages::KEY);
     seed(&writer).await?;
-    let summary = |old: &[u128], next: u128| -> Result<PreparedSummaryTree, &str> {
-        let mut prepared = tree(old, next, &[2, 3], false);
-        prepared
-            .records
-            .first_mut()
-            .ok_or("missing session root")?
-            .content = "The brass valve stays in the cabinet. ".repeat(4);
-        Ok(prepared)
-    };
     writer
-        .replace_summary_tree(summary(&[10, 11, 12], 20)?)
+        .replace_summary_tree(passage_tree(&[10, 11, 12], 20)?)
         .await?;
+    repair_cabinet_passage(&writer).await?;
     let before = snapshot(&writer).await?;
     let (ready, resume) = pause_before_full_text(&reader).await?;
     let searcher = reader.clone();
@@ -979,7 +972,7 @@ async fn top_down_search_uses_one_snapshot_during_tree_replacement() -> TestResu
     let request = q.clone();
     let search = tokio::spawn(async move { searcher.search(request).await });
     tokio::time::timeout(std::time::Duration::from_secs(15), ready).await??;
-    let swapped = writer.replace_summary_tree(summary(&[20], 30)?).await;
+    let swapped = writer.replace_summary_tree(passage_tree(&[20], 30)?).await;
     resume.send(())?;
     swapped?;
     let old = search.await??;
@@ -992,7 +985,49 @@ async fn top_down_search_uses_one_snapshot_during_tree_replacement() -> TestResu
         new.results.first().map(|hit| &hit.id),
         Some(&id(30).to_string())
     );
+    let old_hit = old.results.first().ok_or("previous passage hit")?;
+    let new_hit = new.results.first().ok_or("current passage hit")?;
+    assert_eq!(old_hit.detail_id(), new_hit.detail_id());
+    assert_eq!(old_hit.content, new_hit.content);
     assert_eq!(snapshot(&writer).await?, before);
+    Ok(())
+}
+
+fn passage_tree(old: &[u128], next: u128) -> TestResult<PreparedSummaryTree> {
+    let mut prepared = tree(old, next, &[2, 3], false);
+    let root = prepared.records.first_mut().ok_or("missing session root")?;
+    root.content = "The brass valve stays in the cabinet. ".repeat(4);
+    root.index_key = Some(testkit::summary_passages::KEY);
+    let end = i32::try_from(root.content.chars().count())?;
+    prepared
+        .passage_windows
+        .insert(root.id, std::iter::once(0..end).collect());
+    Ok(prepared)
+}
+
+async fn repair_cabinet_passage(writer: &SqliteStore) -> TestResult {
+    use kernel::memory::SummaryStore as _;
+    use kernel::memory::summary_backend::{SummaryIndex, SummaryPassage};
+
+    let input = writer.repair_input(id(20)).await?.ok_or("repair input")?;
+    let at = testkit::summary_passages::at(2024)?;
+    let vector = testkit::summary_passages::vector(1.0, 0.0);
+    let passage = SummaryPassage {
+        content: input.content.clone(),
+        chars: 0..i32::try_from(input.content.chars().count())?,
+        earliest_at: at,
+        latest_at: at,
+        vector: vector.clone(),
+    };
+    writer
+        .repair_index(
+            input,
+            SummaryIndex {
+                passages: vec![passage],
+                pooled: vector,
+            },
+        )
+        .await?;
     Ok(())
 }
 
@@ -1015,7 +1050,7 @@ async fn pause_before_full_text(
                 if matches!(
                     context.action,
                     AuthAction::Read {
-                        table_name: "ros_summaries_fts",
+                        table_name: "ros_summary_passages_fts",
                         ..
                     }
                 ) && let Some(reached) = reached.take()

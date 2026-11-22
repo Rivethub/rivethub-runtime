@@ -254,13 +254,6 @@ DROP TABLE summary_replacements;
 DROP TABLE summary_retained;
 ";
 
-pub(super) const REUSE_VECTORS: &str = r"CREATE TEMP TABLE summary_old_vectors AS
-SELECT s.id, s.conversation_id, s.content, s.index_key, s.embedding
-FROM ros_summaries s JOIN summary_replacements r ON r.old = s.id
-WHERE s.kind IN ('session', 'part') AND NOT s.index_needs_repair
-  AND length(s.embedding) = 4096 AND s.index_key IS NOT NULL;
-";
-
 pub(super) const ENTITY_REFERENCES: &str = r"WITH ranked AS (
     SELECT e.*, row_number() OVER (
         PARTITION BY new ORDER BY (status = 'done') DESC, (status = 'skipped') DESC,

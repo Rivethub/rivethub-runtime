@@ -62,8 +62,10 @@ impl QueryEmbed {
         if embeddings.len() != 1 {
             return Err(EmbedFailure::Invalid);
         }
-        let mut vector = embeddings.pop().ok_or(EmbedFailure::Invalid)?.vector;
-        if !crate::vector::normalize(&mut vector) {
+        let vector = embeddings.pop().ok_or(EmbedFailure::Invalid)?.vector;
+        if !vector.iter().all(|value| value.is_finite())
+            || !vector.iter().any(|value| *value != 0.0)
+        {
             return Err(EmbedFailure::Invalid);
         }
         Ok(vector)

@@ -29,6 +29,7 @@ pub mod session_records;
 pub mod settlement;
 pub mod sqlite;
 pub mod stub;
+pub mod summary_passages;
 pub mod sweeps;
 pub mod tidy;
 pub mod topic_pages;

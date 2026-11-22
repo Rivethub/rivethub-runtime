@@ -98,6 +98,7 @@ pub(crate) fn complete_legacy(
     )?;
     Ok(())
 }
+mod passages;
 pub(crate) mod publish;
 mod retain;
 

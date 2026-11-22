@@ -364,8 +364,7 @@ fn mark_index_repairs(
 ) -> Result<(), ImportError> {
     tx.execute(
         "UPDATE ros_summaries SET embedding = NULL, index_key = ?1, index_needs_repair = 1
-         WHERE kind IN ('session', 'part')
-           AND (embedding IS NULL OR index_key IS NULL OR index_key IS NOT ?1)",
+         WHERE kind IN ('session', 'part')",
         [index_key.map(<[_; 32]>::as_slice)],
     )?;
     let mut records = tx.prepare(

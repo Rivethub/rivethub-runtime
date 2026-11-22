@@ -8,21 +8,22 @@ use kernel::memory_core::{
 
 use super::{
     Candidate, Kind, Plan, SearchMode, SearchOutcome, SearchRead, SqliteError, fetch, hit_limit,
+    passages,
 };
 use kernel::memory::{MemoryHitSource, MemoryScope};
 use rusqlite::Connection;
 
 #[derive(Debug, Clone)]
-struct ArmRow {
-    candidate: Candidate,
-    embedding: Option<Vec<u8>>,
-    score: f64,
-    boost: f64,
+pub(super) struct ArmRow {
+    pub(super) candidate: Candidate,
+    pub(super) embedding: Option<Vec<u8>>,
+    pub(super) score: f64,
+    pub(super) boost: f64,
 }
 
 impl FusionItem for ArmRow {
     fn fusion_id(&self) -> &str {
-        &self.candidate.id
+        self.candidate.detail_id()
     }
     fn fusion_source(&self) -> MemoryHitSource {
         self.candidate.source()
@@ -42,7 +43,7 @@ pub(super) fn execute(
     let scored = match plan.mode {
         SearchMode::Hybrid => {
             let fts = fts_rows(conn, plan, &rows, true)?;
-            let vectors = vector_rows(&rows, vector, plan)?;
+            let vectors = vector_rows(conn, &rows, vector, plan)?;
             let trigram = if literal_scan(&plan.text) {
                 literal_rows(conn, plan, &rows)?
             } else if fts.is_empty() && should_trigram_fallback(&plan.text) {
@@ -58,7 +59,7 @@ pub(super) fn execute(
         }
         SearchMode::Vector => {
             let arm = if vector.is_some() {
-                vector_rows(&rows, vector, plan)?
+                vector_rows(conn, &rows, vector, plan)?
             } else {
                 fts_rows(conn, plan, &rows, false)?
             };
@@ -110,7 +111,7 @@ fn fused(fts: &[ArmRow], vectors: &[ArmRow], trigram: &[ArmRow]) -> Vec<(ArmRow,
         .collect();
     ranked.sort_by(|a, b| {
         b.1.total_cmp(&a.1)
-            .then_with(|| a.0.candidate.id.cmp(&b.0.candidate.id))
+            .then_with(|| a.0.candidate.detail_id().cmp(b.0.candidate.detail_id()))
     });
     let top = ranked.first().map(|row| row.1);
     ranked
@@ -140,7 +141,7 @@ fn sort_pool(rows: &mut Vec<ArmRow>, plan: &Plan) -> Result<(), SqliteError> {
     rows.sort_by(|a, b| {
         b.score
             .total_cmp(&a.score)
-            .then_with(|| a.candidate.id.cmp(&b.candidate.id))
+            .then_with(|| a.candidate.detail_id().cmp(b.candidate.detail_id()))
     });
     let limit = u32::try_from(plan.limit).map_err(SqliteError::Count)?;
     let pool = hit_limit(hybrid_pool(limit))?;
@@ -154,7 +155,7 @@ fn sort_pool(rows: &mut Vec<ArmRow>, plan: &Plan) -> Result<(), SqliteError> {
         *count += 1;
         *count <= pool
     });
-    if plan.mode != SearchMode::Hybrid {
+    if plan.mode != SearchMode::Hybrid || rows.iter().any(|row| row.candidate.passage.is_some()) {
         return Ok(());
     }
     let (messages, summaries): (Vec<_>, Vec<_>) = std::mem::take(rows)
@@ -192,11 +193,17 @@ fn fts_rows(
             found.push(row);
         }
     }
+    found.extend(passages::lexical(
+        conn,
+        plan,
+        passages::Match::Fts { hybrid },
+    )?);
     sort_pool(&mut found, plan)?;
     Ok(found)
 }
 
 fn vector_rows(
+    conn: &Connection,
     rows: &[ArmRow],
     vector: Option<&[f32]>,
     plan: &Plan,
@@ -204,13 +211,17 @@ fn vector_rows(
     let Some(vector) = vector else {
         return Ok(Vec::new());
     };
-    let mut found = Vec::new();
+    let mut normalized = vector.to_vec();
+    if !crate::vector::normalize(&mut normalized) {
+        return Err(SqliteError::StoredEmbedding);
+    }
+    let mut found = passages::vectors(conn, plan, vector)?;
     for row in rows {
         if plan.mode == SearchMode::Hybrid && !eligible(row)? {
             continue;
         }
         if let Some(bytes) = &row.embedding {
-            let score = dot(bytes, vector)?;
+            let score = dot(bytes, &normalized)?;
             let mut row = row.clone();
             row.score = score;
             found.push(row);
@@ -284,6 +295,12 @@ fn keyword_rows(
             }
         }
     }
+    let matching = if mode == SearchMode::Regex {
+        passages::Match::Regex
+    } else {
+        passages::Match::Literal
+    };
+    found.extend(passages::lexical(conn, plan, matching)?);
     sort_pool(&mut found, plan)?;
     Ok(found)
 }
@@ -325,6 +342,7 @@ fn literal_rows(
             }
         }
     }
+    found.extend(passages::lexical(conn, plan, passages::Match::Literal)?);
     sort_pool(&mut found, plan)?;
     Ok(found)
 }
@@ -354,16 +372,14 @@ const MESSAGE_CANDIDATES: &str = "SELECT id, content, created_at, conversation_i
          AND (?6 IS NULL OR role NOT IN (SELECT value FROM json_each(?6)))
          AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr JOIN ros_conversations tc ON tc.session_key = tr.session_key WHERE tc.id = m.conversation_id)";
 
-const SUMMARY_CANDIDATES: &str = "SELECT id, content, CASE WHEN kind IN ('session', 'part') THEN latest_at ELSE created_at END AS search_time, conversation_id, NULL, NULL,
-         CASE WHEN kind IN ('session', 'part') AND (index_needs_repair OR index_key IS NULL
-                    OR (?4 IS NOT NULL AND index_key IS NOT ?4)) THEN NULL ELSE embedding END,
+const SUMMARY_CANDIDATES: &str = "SELECT id, content, created_at, conversation_id, NULL, NULL, embedding,
          access_count, 0.6,
          (SELECT c.session_key FROM ros_conversations c WHERE c.id = s.conversation_id)
-         FROM ros_summaries s WHERE kind <> 'section' AND (?1 IS NULL OR EXISTS (SELECT 1 FROM ros_conversations c WHERE c.id = s.conversation_id AND c.agent = ?1))
-         AND (s.kind IN ('session', 'part') OR NOT EXISTS (
-             SELECT 1 FROM ros_summaries session
-             WHERE session.conversation_id = s.conversation_id AND session.kind = 'session'))
-         AND (?2 IS NULL OR rh_instant(search_time) >= ?2) AND (?3 IS NULL OR rh_instant(search_time) < ?3)
+         FROM ros_summaries s WHERE kind IN ('leaf', 'branch', 'root')
+         AND (?1 IS NULL OR EXISTS (SELECT 1 FROM ros_conversations c WHERE c.id = s.conversation_id AND c.agent = ?1))
+         AND NOT EXISTS (SELECT 1 FROM ros_summaries session
+             WHERE session.conversation_id = s.conversation_id AND session.kind = 'session')
+         AND (?2 IS NULL OR rh_instant(s.created_at) >= ?2) AND (?3 IS NULL OR rh_instant(s.created_at) < ?3)
          AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr JOIN ros_conversations tc ON tc.session_key = tr.session_key WHERE tc.id = s.conversation_id)";
 
 fn load_table(conn: &Connection, plan: &Plan, message: bool) -> Result<Vec<ArmRow>, SqliteError> {
@@ -376,7 +392,6 @@ fn load_table(conn: &Connection, plan: &Plan, message: bool) -> Result<Vec<ArmRo
         .prepare(sql)
         .map_err(SqliteError::query("search candidates"))?;
     let role = plan.role.map(|role| role.to_string());
-    let key = plan.summary_index_key.as_ref().map(<[_; 32]>::as_slice);
     let filters: Vec<&dyn rusqlite::ToSql> = if message {
         vec![
             &plan.agent,
@@ -387,7 +402,7 @@ fn load_table(conn: &Connection, plan: &Plan, message: bool) -> Result<Vec<ArmRo
             &plan.exclude_roles,
         ]
     } else {
-        vec![&plan.agent, &plan.since, &plan.before, &key]
+        vec![&plan.agent, &plan.since, &plan.before]
     };
     let mapped = statement
         .query_map(filters.as_slice(), |row| {
@@ -410,6 +425,7 @@ fn load_table(conn: &Connection, plan: &Plan, message: bool) -> Result<Vec<ArmRo
                 row.get::<_, f64>(8)?,
                 ArmRow {
                     candidate: Candidate {
+                        passage: None,
                         id: row.get(0)?,
                         content: row.get(1)?,
                         created_at: plan.now,
