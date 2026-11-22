@@ -553,6 +553,7 @@ async fn dispatch_entities<Q: JobQueue>(
         queue,
         model: &entity.model,
         settings: &entity.settings,
+        rewrite: &entity.rewrite,
         now: Timestamp::now(),
         cancel,
     };

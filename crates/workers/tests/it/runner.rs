@@ -502,6 +502,7 @@ async fn all_claims_every_role_that_has_a_handler() {
                 provider: fnv_provider(),
                 model: "entity-model".to_owned(),
                 settings: workers::entity_builder::MatcherSettings::default(),
+                rewrite: workers::entity_builder::RewriteLimit::default(),
             }),
     );
     rig.store

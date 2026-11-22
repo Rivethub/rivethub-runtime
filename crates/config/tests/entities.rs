@@ -72,3 +72,34 @@ fn entities_matcher_rejects_an_unknown_backend_or_a_jev_without_a_url()
     );
     Ok(())
 }
+
+#[test]
+fn entities_rewrite_concurrency_is_bounded() -> Result<(), Box<dyn std::error::Error>> {
+    let four = document("memory:\n  backend: sqlite\nentities:\n  rewrite_concurrency: 4\n")?;
+    let result = validate_document(&four);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+    let typed = type_document(&four)?.config;
+    assert_eq!(
+        typed.entities.ok_or("entities")?.rewrite_concurrency,
+        Some(4)
+    );
+    for rejected in [0, 65] {
+        let yaml = document(&format!(
+            "memory:\n  backend: sqlite\nentities:\n  rewrite_concurrency: {rejected}\n"
+        ))?;
+        let result = validate_document(&yaml);
+        assert!(
+            result.errors.iter().any(|finding| {
+                finding.path == "entities.rewrite_concurrency"
+                    && finding.message
+                        == format!(
+                            "entities.rewrite_concurrency must be between 1 and 64, not {rejected}"
+                        )
+            }),
+            "{:?}",
+            result.errors
+        );
+    }
+    Ok(())
+}

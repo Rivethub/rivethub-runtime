@@ -41,6 +41,7 @@ pub use rewrite::FactCarryReport;
 pub use rewrite::FactExample;
 pub use rewrite::MergeExample;
 pub use rewrite::RejectedExample;
+pub use rewrite::RewriteLimit;
 pub use rewrite::entity_run_report;
 pub use rewrite::fact_carry_report;
 
@@ -61,6 +62,7 @@ pub struct EntityBuilderDeps {
     pub provider: Arc<dyn ModelProvider>,
     pub model: String,
     pub settings: MatcherSettings,
+    pub rewrite: RewriteLimit,
 }
 
 #[expect(missing_debug_implementations)]
@@ -70,6 +72,7 @@ pub struct EntityBuilderEnv<'a> {
     pub queue: &'a dyn JobQueue,
     pub model: &'a str,
     pub settings: &'a MatcherSettings,
+    pub rewrite: &'a RewriteLimit,
     pub now: Timestamp,
     pub cancel: &'a CancellationToken,
 }

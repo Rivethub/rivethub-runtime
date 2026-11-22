@@ -76,6 +76,7 @@ pub struct CloudSection {
 pub struct EntitiesSection {
     pub matcher: Option<String>,
     pub matcher_url: Option<String>,
+    pub rewrite_concurrency: Option<u32>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]

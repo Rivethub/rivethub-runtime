@@ -44,6 +44,7 @@ use super::transient_kind;
 use crate::WorkerError;
 use crate::entity_builder::EntityBuilderEnv;
 use crate::entity_builder::MatcherSettings;
+use crate::entity_builder::RewriteLimit;
 use crate::entity_builder::identify_call;
 use crate::entity_builder::rewrite::AcceptedRewrite;
 use crate::entity_builder::rewrite::TouchedEntity;
@@ -259,6 +260,7 @@ pub(super) struct Harness {
     store: IdleStore,
     queue: FakeJobQueue,
     settings: MatcherSettings,
+    rewrite: RewriteLimit,
     cancel: CancellationToken,
     model: String,
     now: Timestamp,
@@ -271,6 +273,7 @@ impl Harness {
             store: IdleStore,
             queue: FakeJobQueue::default(),
             settings: MatcherSettings::default(),
+            rewrite: RewriteLimit::default(),
             cancel: CancellationToken::new(),
             model: "thinkingcap-flash-next".to_owned(),
             now: Timestamp::new(1_700_000_000, 0).unwrap_or_default(),
@@ -284,6 +287,7 @@ impl Harness {
             queue: &self.queue,
             model: &self.model,
             settings: &self.settings,
+            rewrite: &self.rewrite,
             now: self.now,
             cancel: &self.cancel,
         }
@@ -543,12 +547,14 @@ async fn a_database_error_retries_the_session_without_rewriting_the_applied_enti
     settings.embed_url.clear();
     let cancel = CancellationToken::new();
     let model = "thinkingcap-flash-next";
+    let rewrite = RewriteLimit::default();
     let env = EntityBuilderEnv {
         store: &store,
         provider: &provider,
         queue: &queue,
         model,
         settings: &settings,
+        rewrite: &rewrite,
         now: stamp(),
         cancel: &cancel,
     };
@@ -604,6 +610,112 @@ async fn a_database_error_retries_the_session_without_rewriting_the_applied_enti
     .expect("no evidence");
     assert!(quiet.is_empty());
     assert_eq!(store.applies(Uuid::from_u128(15)).await, 0);
+}
+
+#[tokio::test]
+async fn one_rewrite_limit_bounds_model_calls_across_concurrent_sessions() {
+    assert_eq!(peak_rewrites(&RewriteLimit::default()).await, 2);
+    let three = RewriteLimit::from_config(&rewrite_config(3)).expect("three rewrites");
+    assert_eq!(peak_rewrites(&three).await, 3);
+    for rejected in [0, 65] {
+        assert_eq!(
+            RewriteLimit::from_config(&rewrite_config(rejected)).expect_err("out of range"),
+            format!("entities.rewrite_concurrency must be between 1 and 64, not {rejected}")
+        );
+    }
+}
+
+fn rewrite_config(rewrite_concurrency: u32) -> config::Config {
+    config::Config {
+        entities: Some(config::EntitiesSection {
+            rewrite_concurrency: Some(rewrite_concurrency),
+            ..config::EntitiesSection::default()
+        }),
+        ..config::Config::default()
+    }
+}
+
+async fn peak_rewrites(rewrite: &RewriteLimit) -> usize {
+    let store = RetryStore::new(Uuid::nil());
+    let provider = PeakModel::default();
+    let queue = FakeJobQueue::default();
+    let mut settings = MatcherSettings::default();
+    settings.embed_url.clear();
+    let cancel = CancellationToken::new();
+    let env = EntityBuilderEnv {
+        store: &store,
+        provider: &provider,
+        queue: &queue,
+        model: "thinkingcap-flash-next",
+        settings: &settings,
+        rewrite,
+        now: stamp(),
+        cancel: &cancel,
+    };
+    let leaf = host_leaf();
+    let session = |first: u128| {
+        let names: Vec<String> = (first..first + 6).map(|n| format!("box{n}")).collect();
+        let messages: Vec<TranscriptMessage> = names
+            .iter()
+            .map(|name| said_line(&format!("{name} is up")))
+            .collect();
+        let touched: Vec<TouchedEntity> = names
+            .iter()
+            .zip(first..)
+            .map(|(name, id)| named_entity(Uuid::from_u128(id), name))
+            .collect();
+        (messages, touched)
+    };
+    let (messages_a, touched_a) = session(100);
+    let (messages_b, touched_b) = session(200);
+    let (a, b) = tokio::join!(
+        rewrite_touched(&env, std::slice::from_ref(&leaf), &messages_a, &touched_a),
+        rewrite_touched(&env, std::slice::from_ref(&leaf), &messages_b, &touched_b),
+    );
+    assert_eq!(a.expect("first session").len(), 6);
+    assert_eq!(b.expect("second session").len(), 6);
+    provider.peak.load(Ordering::SeqCst)
+}
+
+#[derive(Default)]
+struct PeakModel {
+    running: AtomicUsize,
+    peak: AtomicUsize,
+}
+
+#[async_trait]
+impl ModelProvider for PeakModel {
+    async fn chat(&self, _request: ModelRequest) -> Result<LlmResponse, ModelProviderError> {
+        let running = self.running.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak.fetch_max(running, Ordering::SeqCst);
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        self.running.fetch_sub(1, Ordering::SeqCst);
+        Ok(reply(
+            Some(
+                r#"{"summary":"Host.","article":"Lead.","current_facts":[],"history_sentence":"Seen."}"#
+                    .to_owned(),
+            ),
+            FinishReason::Stop,
+        ))
+    }
+
+    async fn stream(
+        &self,
+        _request: ModelRequest,
+    ) -> Result<Receiver<ModelStreamItem>, ModelProviderError> {
+        Err(idle_provider("peak model does not stream"))
+    }
+
+    async fn embed(&self, texts: Vec<String>) -> Result<Vec<Embedding>, ModelProviderError> {
+        drop(texts);
+        Ok(Vec::new())
+    }
+
+    async fn list_models(&self) -> Result<Vec<String>, ModelProviderError> {
+        Ok(Vec::new())
+    }
 }
 
 fn said_line(content: &str) -> TranscriptMessage {

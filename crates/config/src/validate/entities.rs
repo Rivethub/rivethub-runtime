@@ -1,6 +1,8 @@
 use crate::model::EntitiesSection;
 use crate::report::ValidationResult;
 
+const REWRITE_CONCURRENCY_MAX: u32 = 64;
+
 pub(super) fn validate(out: &mut ValidationResult, section: &EntitiesSection) {
     let matcher = trimmed(section.matcher.as_deref());
     if let Some(matcher) = matcher
@@ -26,6 +28,16 @@ pub(super) fn validate(out: &mut ValidationResult, section: &EntitiesSection) {
             );
         }
         _ => {}
+    }
+    if let Some(value) = section.rewrite_concurrency
+        && !(1..=REWRITE_CONCURRENCY_MAX).contains(&value)
+    {
+        out.error(
+            "entities.rewrite_concurrency",
+            format!(
+                "entities.rewrite_concurrency must be between 1 and {REWRITE_CONCURRENCY_MAX}, not {value}"
+            ),
+        );
     }
 }
 
