@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Read as _;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
@@ -32,7 +33,7 @@ use super::profile::Seen;
 use super::profile::seen_in;
 use super::unsupported;
 
-const LAUNCHER_BYTES: usize = 4096;
+const LAUNCHER_BYTES: u64 = 4096;
 
 enum Client {
     Ready(PathBuf),
@@ -228,14 +229,23 @@ fn locate_client(locator: &Locator) -> Client {
         .map_or(Client::NoPackage, Client::Ready)
 }
 
+fn names_mise(script: &[u8]) -> bool {
+    String::from_utf8_lossy(script)
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .flat_map(|line| line.split(|letter: char| !letter.is_ascii_alphanumeric()))
+        .any(|word| word == "mise")
+}
+
 fn hands_off_to_mise(launcher: &Path, mise: &Path) -> bool {
     if canonical_or_given(launcher) == canonical_or_given(mise) {
         return true;
     }
-    match fs::read(launcher) {
-        Ok(script) => {
-            script.len() <= LAUNCHER_BYTES && String::from_utf8_lossy(&script).contains("mise")
-        }
+    let mut script = Vec::new();
+    let read = fs::File::open(launcher)
+        .and_then(|file| file.take(LAUNCHER_BYTES + 1).read_to_end(&mut script));
+    match read {
+        Ok(_) => script.len() as u64 <= LAUNCHER_BYTES && names_mise(&script),
         Err(error) => {
             tracing::debug!(%error, path = %launcher.display(), "read the dsh launcher");
             false

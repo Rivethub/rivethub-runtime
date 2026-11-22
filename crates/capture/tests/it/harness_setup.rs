@@ -839,7 +839,7 @@ fn dsh_recall_does_not_ask_mise_about_a_launcher_that_is_not_its_own() -> TestRe
     isolated_dsh_install(&machine)?;
     fs::write(
         machine.path("bin/dsh"),
-        "#!/bin/sh\nexec /opt/dsh/bin/dsh \"$@\"\n",
+        "#!/bin/sh\n# runs without mise\nexec /opt/promise/bin/dsh \"$@\"\n",
     )?;
     fs::write(
         machine.path("bin/mise"),
