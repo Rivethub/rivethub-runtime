@@ -191,10 +191,10 @@ async fn summary_passage_window_growth_parity(pool: PgPool) -> TestResult {
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn summary_passage_tags_parity(pool: PgPool) -> TestResult {
-    use testkit::summary_passages::{KEY, passage_tags};
+async fn summary_search_tags_parity(pool: PgPool) -> TestResult {
+    use testkit::summary_passages::{KEY, summary_tags};
 
     seed_passage_parity(&pool).await?;
     let store = searchable_store(scoped_pool(&pool).await?, KEY);
-    Scope::Maintenance.run(passage_tags(&store)).await
+    Scope::Maintenance.run(summary_tags(&store)).await
 }

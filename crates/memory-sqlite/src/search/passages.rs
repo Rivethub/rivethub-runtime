@@ -9,7 +9,7 @@ use crate::time;
 const OPERATION: &str = "summary passage search";
 
 const SELECT: &str = "SELECT p.id, p.record_id, p.ordinal, p.content, p.latest_at,
-            s.conversation_id, c.session_key, c.channel, s.access_count";
+            c.session_key, c.channel, s.access_count";
 
 const SCOPE: &str = "JOIN ros_summaries s ON s.id = p.record_id
          JOIN ros_conversations c ON c.id = s.conversation_id
@@ -64,7 +64,7 @@ pub(super) fn lexical(
         parameters.push(&term.1);
     }
     load(conn, plan, &sql, parameters.as_slice(), |row| {
-        row.get(9).map_err(SqliteError::query(OPERATION))
+        row.get(8).map_err(SqliteError::query(OPERATION))
     })
 }
 
@@ -103,7 +103,7 @@ pub(super) fn vectors(
         &sql,
         params![plan.agent, plan.since, plan.before, key],
         |row| {
-            let vector = row.get_ref(9).map_err(SqliteError::query(OPERATION))?;
+            let vector = row.get_ref(8).map_err(SqliteError::query(OPERATION))?;
             let bytes = vector.as_blob().map_err(|_| SqliteError::StoredEmbedding)?;
             cosine(bytes, &query, norm)
         },
@@ -177,11 +177,11 @@ fn load(
 }
 
 fn candidate(row: &Row<'_>, plan: &Plan) -> rusqlite::Result<(String, u32, Candidate)> {
-    let channel: String = row.get(7)?;
-    let key: String = row.get(6)?;
+    let channel: String = row.get(6)?;
+    let key: String = row.get(5)?;
     Ok((
         row.get(4)?,
-        row.get(8)?,
+        row.get(7)?,
         Candidate {
             passage: Some(SummaryPassage {
                 id: row.get(0)?,
@@ -192,7 +192,6 @@ fn candidate(row: &Row<'_>, plan: &Plan) -> rusqlite::Result<(String, u32, Candi
             created_at: plan.now,
             rank: 0.0,
             kind: Kind::Summary {
-                conversation_id: row.get(5)?,
                 session_id: Some(kernel::filing::session_key(Some(&channel), &key)),
             },
         },

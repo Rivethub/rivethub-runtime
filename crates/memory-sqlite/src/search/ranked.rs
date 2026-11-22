@@ -380,7 +380,7 @@ const MESSAGE_CANDIDATES: &str = "SELECT id, content, created_at, conversation_i
          AND (?6 IS NULL OR role NOT IN (SELECT value FROM json_each(?6)))
          AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr JOIN ros_conversations tc ON tc.session_key = tr.session_key WHERE tc.id = m.conversation_id)";
 
-const SUMMARY_CANDIDATES: &str = "SELECT id, content, created_at, conversation_id, NULL, NULL, embedding,
+const SUMMARY_CANDIDATES: &str = "SELECT id, content, created_at, NULL, NULL, NULL, embedding,
          access_count, 0.6,
          (SELECT c.session_key FROM ros_conversations c WHERE c.id = s.conversation_id)
          FROM ros_summaries s WHERE kind IN ('leaf', 'branch', 'root')
@@ -423,7 +423,6 @@ fn load_table(conn: &Connection, plan: &Plan, message: bool) -> Result<Vec<ArmRo
                 }
             } else {
                 Kind::Summary {
-                    conversation_id: row.get(3)?,
                     session_id: row.get(9)?,
                 }
             };

@@ -71,15 +71,8 @@ impl TagIndex {
                 .is_some_and(|ids| ids.iter().any(|id| pair_has(&self.summary, id, tag)))
     }
 
-    pub(super) fn summary_has(
-        &self,
-        id: &str,
-        conversation_id: Option<&str>,
-        tag: &TagLiteral,
-    ) -> bool {
+    pub(super) fn summary_has(&self, id: &str, tag: &TagLiteral) -> bool {
         pair_has(&self.summary, id, tag)
-            || conversation_id
-                .is_some_and(|conversation| pair_has(&self.conversation, conversation, tag))
     }
 }
 

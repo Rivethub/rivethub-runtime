@@ -186,8 +186,8 @@ async fn summary_passage_window_growth_parity() -> TestResult {
 }
 
 #[tokio::test]
-async fn summary_passage_tags_parity() -> TestResult {
+async fn summary_search_tags_parity() -> TestResult {
     let (_dir, store) = store(Some(Arc::new(provider())))?;
     seed(&store).await?;
-    testkit::summary_passages::passage_tags(&store.with_summary_index_key(KEY)).await
+    testkit::summary_passages::summary_tags(&store.with_summary_index_key(KEY)).await
 }

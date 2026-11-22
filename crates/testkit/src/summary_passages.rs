@@ -360,16 +360,44 @@ async fn trigram_order(store: &impl MemoryStore) -> TestResult {
     Ok(())
 }
 
-pub async fn passage_tags(store: &(impl MemoryStore + SummaryStore)) -> TestResult {
+pub async fn summary_tags(store: &(impl MemoryStore + SummaryStore)) -> TestResult {
     assert!(
         store
             .publish_live(tree()?, [(SESSION, index(SECOND)?)].into())
             .await?
     );
-    let tag = TagLiteral::parse_add("project:orchard")?;
+    assert_summary_tags(
+        store,
+        CONVERSATION,
+        SESSION,
+        "project:orchard",
+        "orchard valves",
+        FIRST,
+    )
+    .await?;
+    assert_summary_tags(
+        store,
+        LEGACY_CONVERSATION,
+        LEGACY,
+        "project:legacy",
+        "brass elbow",
+        OLD,
+    )
+    .await
+}
+
+async fn assert_summary_tags(
+    store: &impl MemoryStore,
+    conversation: Uuid,
+    summary: Uuid,
+    tag: &str,
+    text: &str,
+    content: &str,
+) -> TestResult {
+    let tag = TagLiteral::parse_add(tag)?;
     for (entity_type, id, expected) in [
-        (TagEntityType::Conversation, CONVERSATION, Vec::new()),
-        (TagEntityType::Summary, SESSION, vec![FIRST]),
+        (TagEntityType::Conversation, conversation, Vec::new()),
+        (TagEntityType::Summary, summary, vec![content]),
     ] {
         store
             .add_tag(TagAdd {
@@ -382,10 +410,7 @@ pub async fn passage_tags(store: &(impl MemoryStore + SummaryStore)) -> TestResu
                 decided_by: None,
             })
             .await?;
-        for (text, mode) in [
-            ("orchard valves", SearchMode::Fts),
-            ("orchard meaning", SearchMode::Vector),
-        ] {
+        for mode in [SearchMode::Fts, SearchMode::Vector] {
             let mut q = query(text, mode);
             q.tag = Some(tag.clone());
             q.limit = Limit::clamped(Some(1), 20, 1..=50);

@@ -54,7 +54,7 @@ const MESSAGE_SQL: &str = "SELECT m.id, m.content, m.role, m.agent, m.created_at
      ORDER BY ros_messages_fts.rank ASC \
      LIMIT ?5";
 
-const SUMMARY_SQL: &str = "SELECT s.id, s.content, s.created_at AS search_time, s.conversation_id, \
+const SUMMARY_SQL: &str = "SELECT s.id, s.content, s.created_at AS search_time, \
      ros_summaries_fts.rank, \
      (SELECT c.session_key FROM ros_conversations c WHERE c.id = s.conversation_id), \
      (SELECT c.channel FROM ros_conversations c WHERE c.id = s.conversation_id) \
@@ -111,7 +111,6 @@ enum Kind {
         session_id: Option<String>,
     },
     Summary {
-        conversation_id: Option<String>,
         session_id: Option<String>,
     },
 }
@@ -381,7 +380,6 @@ struct SummaryRow {
     id: String,
     content: String,
     created_at: String,
-    conversation_id: Option<String>,
     rank: f64,
     session_id: Option<String>,
 }
@@ -403,15 +401,14 @@ fn read_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<MessageRow> {
 }
 
 fn read_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<SummaryRow> {
-    let channel: Option<String> = row.get(6)?;
+    let channel: Option<String> = row.get(5)?;
     Ok(SummaryRow {
         id: row.get(0)?,
         content: row.get(1)?,
         created_at: row.get(2)?,
-        conversation_id: row.get(3)?,
-        rank: row.get(4)?,
+        rank: row.get(3)?,
         session_id: row
-            .get::<_, Option<String>>(5)?
+            .get::<_, Option<String>>(4)?
             .map(|key| kernel::filing::session_key(channel.as_deref(), &key)),
     })
 }
@@ -441,7 +438,6 @@ impl Candidate {
             created_at: time::stored(&row.created_at, "created_at")?,
             rank: row.rank,
             kind: Kind::Summary {
-                conversation_id: row.conversation_id,
                 session_id: row.session_id,
             },
         })
@@ -452,15 +448,7 @@ impl Candidate {
             Kind::Message {
                 conversation_id, ..
             } => index.message_has(conversation_id, tag),
-            Kind::Summary {
-                conversation_id, ..
-            } => index.summary_has(
-                &self.id,
-                conversation_id
-                    .as_deref()
-                    .filter(|_| self.passage.is_none()),
-                tag,
-            ),
+            Kind::Summary { .. } => index.summary_has(&self.id, tag),
         }
     }
 
