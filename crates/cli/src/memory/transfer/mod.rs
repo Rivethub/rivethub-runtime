@@ -228,7 +228,7 @@ fn remap_owner(batches: &mut [Batch], from: &str, to: &str) {
     }
     for batch in batches {
         for (index, column) in batch.table.columns.iter().enumerate() {
-            if !matches!(column.name.as_str(), "owner_user_id" | "user_id") {
+            if !batch.table.relation.principal_column(&column.name) {
                 continue;
             }
             for row in &mut batch.rows {

@@ -459,3 +459,6 @@ mod regressions;
 
 #[path = "passage_tests.rs"]
 mod passage_tests;
+
+#[path = "principal_tests.rs"]
+mod principal_tests;

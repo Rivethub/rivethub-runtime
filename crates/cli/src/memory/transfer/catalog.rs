@@ -198,6 +198,14 @@ impl Relation {
         matches!(self, Self::Spaces | Self::SpaceMembers)
     }
 
+    pub(super) fn principal_column(self, name: &str) -> bool {
+        matches!(name, "owner_user_id" | "user_id")
+            || matches!(
+                (self, name),
+                (Self::TopicDecisions | Self::Tags, "decided_by")
+            )
+    }
+
     pub(super) fn stores_embedding(self) -> bool {
         matches!(self, Self::EntityEmbeddings | Self::SummaryPassages)
     }
