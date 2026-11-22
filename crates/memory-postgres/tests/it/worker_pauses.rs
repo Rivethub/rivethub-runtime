@@ -69,3 +69,37 @@ async fn the_table_refuses_a_role_that_cannot_pause(pool: PgPool) -> TestResult 
     assert!(error.to_string().contains("check constraint"), "{error}");
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_pause_racing_another_pause_returns_the_committed_one(pool: PgPool) -> TestResult {
+    let store = PostgresMemory::new(pool.clone());
+    let mut racing = pool.begin().await?;
+    sqlx::query(
+        "INSERT INTO rh_worker_pauses (role, paused_at, paused_by)
+         VALUES ('entity-builder', now(), 'first')",
+    )
+    .execute(&mut *racing)
+    .await?;
+
+    let second =
+        tokio::spawn(async move { store.pause(PausableRole::EntityBuilder, "second").await });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let blocked: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pg_stat_activity
+                 WHERE wait_event_type = 'Lock' AND query LIKE '%rh_worker_pauses%'",
+            )
+            .fetch_one(&pool)
+            .await?;
+            if blocked > 0 {
+                return Ok::<_, sqlx::Error>(());
+            }
+        }
+    })
+    .await??;
+    racing.commit().await?;
+
+    let pause = tokio::time::timeout(Duration::from_secs(5), second).await???;
+    assert_eq!(pause.paused_by.as_deref(), Some("first"));
+    Ok(())
+}

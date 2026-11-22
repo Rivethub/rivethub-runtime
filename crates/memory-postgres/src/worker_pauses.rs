@@ -42,14 +42,9 @@ impl WorkerPauses for PostgresMemory {
 
     async fn pause(&self, role: PausableRole, by: &str) -> Result<RolePause, JobQueueError> {
         let row: PauseRow = sqlx::query_as(
-            "WITH added AS (
-                 INSERT INTO rh_worker_pauses (role, paused_at, paused_by) VALUES ($1, now(), $2)
-                 ON CONFLICT (role) DO NOTHING
-                 RETURNING role, paused_at, paused_by)
-             SELECT role, paused_at, paused_by FROM added
-             UNION ALL
-             SELECT role, paused_at, paused_by FROM rh_worker_pauses WHERE role = $1
-             LIMIT 1",
+            "INSERT INTO rh_worker_pauses (role, paused_at, paused_by) VALUES ($1, now(), $2)
+             ON CONFLICT (role) DO UPDATE SET role = EXCLUDED.role
+             RETURNING role, paused_at, paused_by",
         )
         .bind(role.to_string())
         .bind(by)
