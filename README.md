@@ -107,6 +107,12 @@ rh memory merge-store --from <hub-url> --into-sqlite memory.sqlite --owner alice
 
 Use the local principal configured for the SQLite runtime. It defaults to the hub principal on the command line. Both directions support `--dry-run` and `--json`. The transfer takes a snapshot of the source, copies rows in a destination transaction, and leaves the source in place. When copying into a SQLite path that does not exist, the command initializes it. An unsuccessful copy can leave that initialized database on disk.
 
+The transfer holds the selected person's full snapshot in RAM. Postgres writes use pieces of
+up to 5,000 rows and 64 MiB of bound data, with a piece for each row that exceeds the byte cap.
+SQLite writes one row at a time. Allow at least 1 GiB of available client RAM for a store with
+around 100,000 messages averaging 2 KiB. Larger stores, including those with large summaries,
+need more RAM in proportion to the size and number of rows copied.
+
 Use an administrative Postgres connection and migrate both databases to the current schema first.
 The hub must already have matching spaces and memberships for the selected owner. Global type
 references resolve by slug against the destination's catalog. If any required global type is
