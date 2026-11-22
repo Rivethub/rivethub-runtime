@@ -511,14 +511,15 @@ fn top_down_upgrade_from_sqlite_35_preserves_legacy_kinds_and_matches_fresh() ->
     )?;
     drop(old);
     let pending = migrate::sqlite_status(&upgraded)?;
+    let required = memory_sqlite::SCHEMA_VERSION;
     assert_eq!(
         (pending.current, pending.required, pending.pending),
-        (35, 41, 6)
+        (35, required, usize::try_from(required - 35)?)
     );
     let status = migrate::sqlite(&upgraded)?;
     assert_eq!(
         (status.current, status.required, status.pending),
-        (41, 41, 0)
+        (required, required, 0)
     );
     let up = Connection::open(&upgraded)?;
     let row: (String, i32, Option<i32>, bool) = up.query_row(

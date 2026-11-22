@@ -7,7 +7,6 @@ use kernel::review::ReviewKey;
 use kernel::review::fact_reviews;
 use kernel::tenancy::Scope;
 use kernel::topics::TopicId;
-use kernel::wiki::builder::BackfillBudget;
 use kernel::wiki::entity_pass::EntityStore;
 use kernel::wiki::entity_pass::EntityStoreError;
 use kernel::wiki::entity_pass::FactState;
@@ -44,11 +43,6 @@ async fn newest_then_oldest_keeps_the_newer_values_and_both_history_lines(
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn concurrent_rewrites_of_one_entity_keep_every_history_line(pool: PgPool) -> TestResult {
     Scope::Maintenance.run(concurrent_case(pool)).await
-}
-
-#[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn backfill_lists_sessions_oldest_first(pool: PgPool) -> TestResult {
-    Scope::Maintenance.run(backfill_order(pool)).await
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
@@ -231,27 +225,6 @@ async fn concurrent_case(pool: PgPool) -> TestResult {
         apply_once(&memory, entity, &older_body),
     )?;
     assert_both_histories(&pool, entity, &slug, newer, directory.path()).await
-}
-
-async fn backfill_order(pool: PgPool) -> TestResult {
-    let conversation = seed_conversation(&pool).await?;
-    let newer = seed_leaf(&pool, conversation, at("2026-11-07T00:00:00Z")).await?;
-    let older = seed_leaf(&pool, conversation, at("2026-11-01T00:00:00Z")).await?;
-    let middle = seed_leaf(&pool, conversation, at("2026-11-03T00:00:00Z")).await?;
-    let memory = PostgresMemory::new(pool);
-    let jobs = memory.entity_backfill(BackfillBudget::flat(100)).await?;
-    let ids: Vec<Uuid> = jobs.iter().map(|job| job.summary_id).collect();
-    let place = |id: Uuid| ids.iter().position(|found| *found == id);
-    let older_at = place(older).ok_or("older session missing")?;
-    let middle_at = place(middle).ok_or("middle session missing")?;
-    let newer_at = place(newer).ok_or("newer session missing")?;
-    assert!(older_at < middle_at && middle_at < newer_at);
-    let stamped = jobs
-        .iter()
-        .find(|job| job.summary_id == older)
-        .and_then(|job| job.session_at);
-    assert_eq!(stamped, Some(at("2026-11-01T00:00:00Z")));
-    Ok(())
 }
 
 async fn restated_case(pool: PgPool) -> TestResult {

@@ -33,7 +33,7 @@ const CLAIMS_SQL: &str = "SELECT (SELECT g.id FROM rh_entity_facts g
                    WHERE g.topic_id = f.topic_id AND g.key = f.key
                    ORDER BY g.created_at, g.id LIMIT 1),
             f.key, c.value, c.actor, c.pinned, c.session_id, c.summary_id, c.evidence,
-            c.at, c.recorded_at, c.owner_user_id, t.id, t.name
+            c.at, c.recorded_at, c.owner_user_id, c.settled, t.id, t.name
        FROM rh_entity_fact_claims c
        JOIN rh_entity_facts f ON f.id = c.fact_id
        JOIN rh_topics t ON t.id = f.topic_id
@@ -137,8 +137,8 @@ fn claims(conn: &Connection, bounds: &Bounds) -> Result<Vec<ChangeRecord>, Sqlit
     let found = rows(conn, &windowed(CLAIMS_SQL, "n.at"), bounds, |row| {
         Ok((
             crate::facts::read_claim(row)?,
-            row.get::<_, String>(11)?,
             row.get::<_, String>(12)?,
+            row.get::<_, String>(13)?,
         ))
     })?;
     found

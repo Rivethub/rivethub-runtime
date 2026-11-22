@@ -54,6 +54,33 @@ fn step(conn: &mut Connection, to: SchemaVersion, now: Timestamp) -> Result<(), 
         SchemaVersion::V18 => in_transaction(conn, to, unbind_topic_pages_on_delete),
         SchemaVersion::V19 => in_transaction(conn, to, add_done_state),
         SchemaVersion::V20 => in_transaction(conn, to, add_topic_kinds),
+        SchemaVersion::V21
+        | SchemaVersion::V22
+        | SchemaVersion::V23
+        | SchemaVersion::V24
+        | SchemaVersion::V25
+        | SchemaVersion::V26
+        | SchemaVersion::V27
+        | SchemaVersion::V28
+        | SchemaVersion::V29
+        | SchemaVersion::V30
+        | SchemaVersion::V31
+        | SchemaVersion::V32
+        | SchemaVersion::V33
+        | SchemaVersion::V34
+        | SchemaVersion::V35
+        | SchemaVersion::V36
+        | SchemaVersion::V37
+        | SchemaVersion::V38
+        | SchemaVersion::V39
+        | SchemaVersion::V40
+        | SchemaVersion::V41
+        | SchemaVersion::V42 => late_step(conn, to),
+    }
+}
+
+fn late_step(conn: &mut Connection, to: SchemaVersion) -> Result<(), Error> {
+    match to {
         SchemaVersion::V21 => in_transaction(conn, to, add_conversation_filing),
         SchemaVersion::V22 => in_transaction(conn, to, |tx| {
             tx.execute_batch(include_str!("schema/tidy_v22.sql"))
@@ -93,11 +120,45 @@ fn step(conn: &mut Connection, to: SchemaVersion, now: Timestamp) -> Result<(), 
         SchemaVersion::V39 => in_transaction(conn, to, add_transcript_time),
         SchemaVersion::V40 => in_transaction(conn, to, add_conversion_second_pass),
         SchemaVersion::V41 => in_transaction(conn, to, add_opening_checked_user_count),
+        SchemaVersion::V42 => in_transaction(conn, to, add_entity_builder),
         SchemaVersion::V37 => in_transaction(conn, to, add_opening_work),
         SchemaVersion::V35 => in_transaction(conn, to, |tx| {
             tx.execute_batch(include_str!("schema/model_calls_v35.sql"))
         }),
+        SchemaVersion::V1
+        | SchemaVersion::V2
+        | SchemaVersion::V3
+        | SchemaVersion::V4
+        | SchemaVersion::V5
+        | SchemaVersion::V6
+        | SchemaVersion::V7
+        | SchemaVersion::V8
+        | SchemaVersion::V9
+        | SchemaVersion::V10
+        | SchemaVersion::V11
+        | SchemaVersion::V12
+        | SchemaVersion::V13
+        | SchemaVersion::V14
+        | SchemaVersion::V15
+        | SchemaVersion::V16
+        | SchemaVersion::V17
+        | SchemaVersion::V18
+        | SchemaVersion::V19
+        | SchemaVersion::V20 => {
+            unreachable!("early schema versions are handled by step")
+        }
     }
+}
+
+pub(crate) fn add_entity_builder(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(include_str!("schema/entity_builder_v42.sql"))?;
+    if !column_present(tx, "rh_entity_fact_claims", "settled")? {
+        tx.execute_batch(
+            "ALTER TABLE rh_entity_fact_claims ADD COLUMN settled INTEGER NOT NULL DEFAULT 0
+                 CHECK (settled IN (0, 1) AND (actor = 'wiki-writer' OR settled = 0))",
+        )?;
+    }
+    Ok(())
 }
 
 pub(crate) fn add_conversion_second_pass(tx: &Transaction<'_>) -> rusqlite::Result<()> {

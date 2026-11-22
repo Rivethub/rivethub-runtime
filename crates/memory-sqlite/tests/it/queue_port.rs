@@ -380,3 +380,36 @@ async fn a_dead_job_is_named_by_the_conversation_it_worked_on() -> TestResult {
     );
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_write_waits_for_another_connection_that_holds_the_file() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("memory.sqlite");
+    migrate::sqlite(&path)?;
+    let store = SqliteStore::open(&path)?;
+    let other = rusqlite::Connection::open(&path)?;
+    other.execute_batch("BEGIN IMMEDIATE")?;
+    let (keep_holding, released) = std::sync::mpsc::channel::<()>();
+    let holding = std::thread::spawn(move || {
+        match released.recv_timeout(std::time::Duration::from_millis(400)) {
+            Ok(())
+            | Err(
+                std::sync::mpsc::RecvTimeoutError::Timeout
+                | std::sync::mpsc::RecvTimeoutError::Disconnected,
+            ) => other.execute_batch("COMMIT"),
+        }
+    });
+    let started = std::time::Instant::now();
+    store
+        .enqueue(job(
+            "11111111-1111-4111-8111-111111111111",
+            JobKeyMode::Replace,
+        )?)
+        .await?;
+    assert!(started.elapsed() >= std::time::Duration::from_millis(300));
+    drop(keep_holding);
+    holding
+        .join()
+        .map_err(|_| "the holding thread panicked")??;
+    Ok(())
+}

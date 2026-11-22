@@ -35,7 +35,7 @@ const CLAIMS_SQL: &str = "SELECT (SELECT g.id FROM rh_entity_facts g
                    WHERE g.topic_id = f.topic_id AND g.key = f.key
                    ORDER BY g.created_at, g.id LIMIT 1),
             f.key, c.value, c.actor, c.pinned, c.session_id, c.summary_id, c.evidence,
-            c.at, c.recorded_at, c.owner_user_id
+            c.at, c.recorded_at, c.owner_user_id, c.settled
        FROM rh_entity_fact_claims c
        JOIN rh_entity_facts f ON f.id = c.fact_id
       WHERE f.topic_id = ?1
@@ -73,6 +73,7 @@ pub(crate) struct ClaimRow {
     at: String,
     recorded_at: String,
     owner: String,
+    settled: bool,
 }
 
 pub(crate) fn read_claim(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClaimRow> {
@@ -88,6 +89,7 @@ pub(crate) fn read_claim(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClaimRow> 
         at: row.get(8)?,
         recorded_at: row.get(9)?,
         owner: row.get(10)?,
+        settled: row.get(11)?,
     })
 }
 
@@ -116,7 +118,7 @@ fn said(row: &ClaimRow) -> Result<Said, FactError> {
                 .map_err(|error| invalid("fact session", error))?,
             summary: Uuid::parse_str(summary).map_err(|error| invalid("fact summary", error))?,
             evidence: row.evidence.as_deref().and_then(Evidence::quote),
-            settled: false,
+            settled: row.settled,
         }),
         (actor, _, _) => Err(invalid("fact actor", actor)),
     }
@@ -161,15 +163,15 @@ fn fact_for(conn: &Connection, claim: &NewClaim) -> Result<String, FactError> {
     Ok(id)
 }
 
-fn insert(conn: &Connection, claim: &NewClaim) -> Result<(), FactError> {
+pub(crate) fn insert(conn: &Connection, claim: &NewClaim) -> Result<(), FactError> {
     let fact = fact_for(conn, claim)?;
-    let (actor, pinned, session, summary, evidence, by) = match &claim.said {
-        Said::You { by, pinned } => ("you", *pinned, None, None, None, Some(by.as_str())),
+    let (actor, pinned, session, summary, evidence, by, settled) = match &claim.said {
+        Said::You { by, pinned } => ("you", *pinned, None, None, None, Some(by.as_str()), false),
         Said::Writer {
             session,
             summary,
             evidence,
-            settled: _,
+            settled,
         } => (
             "wiki-writer",
             false,
@@ -177,18 +179,19 @@ fn insert(conn: &Connection, claim: &NewClaim) -> Result<(), FactError> {
             Some(summary.to_string()),
             evidence.as_ref().map(Evidence::as_str),
             None,
+            *settled,
         ),
     };
     conn.execute(
         "INSERT INTO rh_entity_fact_claims (id, fact_id, value, actor, pinned, session_id, summary_id,
-                                            evidence, at, recorded_at, owner_user_id)
+                                            evidence, at, recorded_at, owner_user_id, settled)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
                  coalesce(?11, (SELECT k.owner_user_id FROM ros_summaries s
                                   JOIN ros_conversations k ON k.id = s.conversation_id
-                                 WHERE s.id = ?7), ?12))
+                                 WHERE s.id = ?7), ?12), ?13)
          ON CONFLICT (fact_id, summary_id) WHERE summary_id IS NOT NULL DO UPDATE
             SET value = excluded.value, evidence = excluded.evidence, at = excluded.at,
-                recorded_at = excluded.recorded_at",
+                recorded_at = excluded.recorded_at, settled = excluded.settled",
         params![
             Uuid::new_v4().to_string(),
             fact,
@@ -202,6 +205,7 @@ fn insert(conn: &Connection, claim: &NewClaim) -> Result<(), FactError> {
             time::stamp(Timestamp::now()),
             by.or_else(|| claim.owner.as_ref().map(Owner::as_str)),
             REGISTRY_DEFAULT_OWNER,
+            settled,
         ],
     )
     .map_err(failed("fact claim"))?;
@@ -313,18 +317,8 @@ impl FactStore for SqliteStore {
 
     async fn claims(&self, entity: TopicId) -> Result<Vec<Claim>, FactError> {
         let entity = entity.to_string();
-        self.facts("fact claims", move |conn| {
-            let rows = conn
-                .prepare(CLAIMS_SQL)
-                .and_then(|mut statement| {
-                    statement
-                        .query_map(params![entity], read_claim)?
-                        .collect::<rusqlite::Result<Vec<_>>>()
-                })
-                .map_err(failed("fact claims"))?;
-            rows.iter().map(claim).collect()
-        })
-        .await
+        self.facts("fact claims", move |conn| claims_on(conn, &entity))
+            .await
     }
 
     async fn session_links(&self) -> Result<Vec<SessionLink>, FactError> {
@@ -365,7 +359,53 @@ impl FactStore for SqliteStore {
         .await
     }
 
-    async fn entity_history(&self, _entity: TopicId) -> Result<Vec<EntityHistory>, FactError> {
-        Ok(Vec::new())
+    async fn entity_history(&self, entity: TopicId) -> Result<Vec<EntityHistory>, FactError> {
+        self.facts("entity history", move |conn| history(conn, entity))
+            .await
     }
+}
+
+pub(crate) fn claims_on(conn: &Connection, entity: &str) -> Result<Vec<Claim>, FactError> {
+    let rows = conn
+        .prepare(CLAIMS_SQL)
+        .and_then(|mut statement| {
+            statement
+                .query_map([entity], read_claim)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .map_err(failed("fact claims"))?;
+    rows.iter().map(claim).collect()
+}
+
+fn history(conn: &Connection, entity: TopicId) -> Result<Vec<EntityHistory>, FactError> {
+    let mut statement = conn.prepare(
+        "SELECT h.sentence, coalesce(s.latest_at, h.session_on || 'T00:00:00Z') AS at, c.session_key
+         FROM rh_entity_history h
+         LEFT JOIN ros_summaries s ON s.id = h.summary_id
+         LEFT JOIN ros_conversations c ON c.id = coalesce(h.conversation_id, s.conversation_id)
+         WHERE h.entity_id = ?1 ORDER BY rh_instant(at) DESC, h.summary_id DESC",
+    ).map_err(failed("entity history"))?;
+    let rows = statement
+        .query_map([entity.to_string()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })
+        .map_err(failed("entity history"))?;
+    rows.map(|row| {
+        let (sentence, at, session) = row.map_err(failed("entity history"))?;
+        Ok(EntityHistory {
+            sentence,
+            at: time::stored(&at, "entity history time").map_err(unavailable)?,
+            session: session
+                .filter(|key| !key.is_empty())
+                .as_deref()
+                .map(SessionId::from_str)
+                .transpose()
+                .map_err(|error| invalid("entity history session", error))?,
+        })
+    })
+    .collect()
 }

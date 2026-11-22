@@ -180,16 +180,16 @@ fn page(conn: &Connection, slug: &str) -> Result<WikiLookup, SqliteError> {
     else {
         return redirect(conn, slug);
     };
-    let article_text = if article.is_empty() {
-        None
-    } else {
-        Some(article)
-    };
+    let article_text = (!article.is_empty()).then_some(article);
     let sections = sections_markdown(sections.as_deref())?;
-    let markdown = match &article_text {
-        None => format!("# {title}\n\n{state}\n{sections}"),
-        Some(body) => format!("# {title}\n\n{state}\n\n{body}\n{sections}"),
-    };
+    let markdown = page_markdown(
+        conn,
+        &title,
+        &state,
+        article_text.as_deref(),
+        &sections,
+        topic_id.as_deref(),
+    )?;
     Ok(WikiLookup::Page(Box::new(WikiPageResponse {
         slug: slug.clone(),
         title,
@@ -212,6 +212,28 @@ fn page(conn: &Connection, slug: &str) -> Result<WikiLookup, SqliteError> {
         related: Some(json_list(&related, "related")?),
         topic_id,
     })))
+}
+
+fn page_markdown(
+    conn: &Connection,
+    title: &str,
+    state: &str,
+    article: Option<&str>,
+    sections: &str,
+    topic: Option<&str>,
+) -> Result<String, SqliteError> {
+    let mut markdown = match article {
+        None => format!("# {title}\n\n{state}\n{sections}"),
+        Some(body) => format!("# {title}\n\n{state}\n\n{body}\n{sections}"),
+    };
+    if let Some(topic) = topic {
+        let history = crate::entity_builder::history_markdown(conn, topic)?;
+        if !history.is_empty() {
+            markdown.push('\n');
+            markdown.push_str(&history);
+        }
+    }
+    Ok(markdown)
 }
 
 fn redirect(conn: &Connection, slug: &str) -> Result<WikiLookup, SqliteError> {

@@ -428,7 +428,7 @@ async fn build_runners(
             targets: Arc::clone(store) as Arc<dyn EmbeddingStore>,
             summaries: Arc::clone(store) as Arc<dyn SummaryStore>,
             wiki: Arc::clone(store) as Arc<dyn WikiBuilderStore>,
-            entity: None,
+            entity: Some(Arc::clone(store) as Arc<dyn kernel::wiki::entity_pass::EntityStore>),
             consolidate: Some(Arc::clone(store) as Arc<dyn WikiConsolidateStore>),
             recompile: None,
             topics: Arc::clone(store) as Arc<dyn TopicStore>,
@@ -458,6 +458,7 @@ async fn build_runners(
                 | ProcessRole::Summarizer
                 | ProcessRole::Categorizer
                 | ProcessRole::WikiBuilder
+                | ProcessRole::EntityBuilder
         ) {
             runner.runner = runner.runner.with_schedules(true).with_schedule_at_start();
         }
@@ -476,7 +477,10 @@ fn worker_roles(switches: &[ServiceSwitch]) -> Vec<ProcessRole> {
                 roles.push(ProcessRole::Summarizer);
             }
             ServiceSwitch::Tagging => roles.push(ProcessRole::Categorizer),
-            ServiceSwitch::Wiki => roles.push(ProcessRole::WikiBuilder),
+            ServiceSwitch::Wiki => {
+                roles.push(ProcessRole::WikiBuilder);
+                roles.push(ProcessRole::EntityBuilder);
+            }
             ServiceSwitch::Gateway | ServiceSwitch::Mcp => {}
         }
     }

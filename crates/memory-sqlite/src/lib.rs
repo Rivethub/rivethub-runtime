@@ -47,6 +47,7 @@ mod time;
 mod title;
 mod topic_pages;
 mod topics;
+mod trigrams;
 mod unembedded;
 mod vector;
 mod wiki_builder;
@@ -97,7 +98,9 @@ impl SharedClock {
     }
 }
 
-pub const SCHEMA_VERSION: i64 = 41;
+pub const SCHEMA_VERSION: i64 = 42;
+
+mod entity_builder;
 
 const FILE_PRAGMAS: &str = "PRAGMA journal_mode = wal;\nPRAGMA foreign_keys = ON;";
 
@@ -144,6 +147,7 @@ impl SqliteStore {
         search::functions::register(&conn)?;
         session_catalog::register(&conn)?;
         time::register(&conn)?;
+        entity_builder::register(&conn)?;
         Ok(from_conn(conn, SharedClock::new(Timestamp::now)))
     }
 

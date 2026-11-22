@@ -39,7 +39,7 @@ pub use parse::parse_wiki_page;
 pub use patch::{PagePatch, apply_patch};
 pub use read::{FullPageRefused, READ_LIMIT, ReadSection, format_wiki_read};
 pub use search::build_wiki_search_text;
-pub use serialize::serialize_wiki_page;
+pub use serialize::{history_section, serialize_wiki_page};
 pub use slug::{WikiSlug, WikiSlugError, extract_wiki_links, normalize_slug};
 pub use summary::{CappedSummary, SUMMARY_LIMIT, cap_summary, merge_summary_text};
 
