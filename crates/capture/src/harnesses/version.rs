@@ -70,8 +70,12 @@ pub(super) enum Unread {
 }
 
 pub(super) fn installed(binary: &Path) -> Result<Version, Unread> {
+    Version::parse(&answer(binary, &["--version"])?)
+}
+
+pub(super) fn answer(binary: &Path, arguments: &[&str]) -> Result<String, Unread> {
     let child = Command::new(binary)
-        .arg("--version")
+        .args(arguments)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -87,7 +91,7 @@ pub(super) fn installed(binary: &Path) -> Result<Version, Unread> {
     if !output.status.success() {
         return Err(Unread::Failed(output.status));
     }
-    Version::parse(&String::from_utf8_lossy(&output.stdout))
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 pub(super) fn known(binary: &Path) -> Option<Version> {

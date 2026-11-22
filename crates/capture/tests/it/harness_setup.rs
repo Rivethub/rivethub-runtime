@@ -776,6 +776,62 @@ fn dsh_recall_only_does_not_write_the_plug_in() -> TestResult {
     Ok(())
 }
 
+fn isolated_dsh_install(machine: &Machine) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let store = machine.path("install/node_modules/.store/dsh@1/node_modules/@deepseek-ai");
+    fs::create_dir_all(store.join("dsh/lib"))?;
+    fs::create_dir_all(store.join("dsh-mcp-client/lib"))?;
+    fs::write(store.join("dsh-mcp-client/lib/index.js"), "")?;
+    fs::create_dir_all(machine.path("install/node_modules/@deepseek-ai"))?;
+    std::os::unix::fs::symlink(
+        store.join("dsh"),
+        machine.path("install/node_modules/@deepseek-ai/dsh"),
+    )?;
+    fs::create_dir_all(machine.path("install/node_modules/.bin"))?;
+    fs::write(machine.path("install/node_modules/.bin/dsh"), "#!/bin/sh\n")?;
+    Ok(fs::canonicalize(store.join("dsh-mcp-client/lib/index.js"))?)
+}
+
+#[test]
+fn dsh_recall_finds_the_client_of_an_isolated_install() -> TestResult {
+    let machine = machine()?;
+    let client = isolated_dsh_install(&machine)?;
+    fs::remove_dir_all(machine.path("bin"))?;
+    std::os::unix::fs::symlink(
+        machine.path("install/node_modules/.bin"),
+        machine.path("bin"),
+    )?;
+    machine.write(".dsh/.keep", "")?;
+    machine.connect("dsh", Some(ConnectPart::Recall), false)?;
+    let patch = machine.read(".dsh/cordis.patch.yml")?;
+    assert!(patch.contains(&client.display().to_string()), "{patch}");
+    Ok(())
+}
+
+#[test]
+fn dsh_recall_follows_a_launcher_that_hands_off_to_mise() -> TestResult {
+    use std::os::unix::fs::PermissionsExt as _;
+    let machine = machine()?;
+    let client = isolated_dsh_install(&machine)?;
+    fs::write(
+        machine.path("bin/dsh"),
+        "#!/bin/sh\nexec mise x npm:@deepseek-ai/dsh -- dsh \"$@\"\n",
+    )?;
+    let real = machine.path("install/node_modules/.bin/dsh");
+    fs::write(
+        machine.path("bin/mise"),
+        format!(
+            "#!/bin/sh\n[ \"$1 $2\" = \"which dsh\" ] && echo {}\n",
+            real.display()
+        ),
+    )?;
+    fs::set_permissions(machine.path("bin/mise"), fs::Permissions::from_mode(0o755))?;
+    machine.write(".dsh/.keep", "")?;
+    machine.connect("dsh", Some(ConnectPart::Recall), false)?;
+    let patch = machine.read(".dsh/cordis.patch.yml")?;
+    assert!(patch.contains(&client.display().to_string()), "{patch}");
+    Ok(())
+}
+
 #[test]
 fn dsh_recall_alone_is_an_error_when_rh_cannot_find_the_client() -> TestResult {
     let machine = machine()?;

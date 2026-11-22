@@ -9,6 +9,7 @@ use super::super::dsh_plugin;
 use super::super::locate::Locator;
 use super::super::plan::FileEdit;
 use super::super::plan::read_optional;
+use super::super::version;
 use super::FOREIGN_PLUGIN;
 use super::MARKER;
 use super::NAME_TAKEN;
@@ -216,10 +217,26 @@ fn push_edit(edits: &mut Vec<FileEdit>, edit: FileEdit) {
 }
 
 fn locate_client(locator: &Locator) -> Client {
-    let Some(binary) = locator.which("dsh") else {
+    let binaries: Vec<PathBuf> = locator.every("dsh").collect();
+    if binaries.is_empty() {
         return Client::NoBinary;
-    };
-    find_client(&binary).map_or(Client::NoPackage, Client::Ready)
+    }
+    binaries
+        .iter()
+        .find_map(|binary| find_client(binary))
+        .or_else(|| find_client(&installed_by_mise(locator)?))
+        .map_or(Client::NoPackage, Client::Ready)
+}
+
+fn installed_by_mise(locator: &Locator) -> Option<PathBuf> {
+    let mise = locator.which("mise")?;
+    match version::answer(&mise, &["which", "dsh"]) {
+        Ok(answer) => Some(PathBuf::from(answer.trim())).filter(|binary| binary.is_file()),
+        Err(error) => {
+            tracing::debug!(%error, "mise which dsh");
+            None
+        }
+    }
 }
 
 fn find_client(binary: &Path) -> Option<PathBuf> {
@@ -251,6 +268,12 @@ fn walk_for_client(start: &Path) -> Option<PathBuf> {
         let sibling = dir.join("dsh-mcp-client/lib/index.js");
         if sibling.is_file() {
             return Some(canonical_or_given(&sibling));
+        }
+        let beside_package = canonical_or_given(&dir.join("node_modules/@deepseek-ai/dsh"))
+            .with_file_name("dsh-mcp-client")
+            .join("lib/index.js");
+        if beside_package.is_file() {
+            return Some(canonical_or_given(&beside_package));
         }
         if !dir.pop() {
             break;

@@ -124,9 +124,13 @@ impl Locator {
 
     #[must_use]
     pub fn which(&self, binary: &str) -> Option<PathBuf> {
+        self.every(binary).next()
+    }
+
+    pub fn every(&self, binary: &str) -> impl Iterator<Item = PathBuf> {
         self.path_dirs
             .iter()
-            .map(|dir| dir.join(binary))
-            .find(|candidate| candidate.is_file())
+            .map(move |dir| dir.join(binary))
+            .filter(|candidate| candidate.is_file())
     }
 }
