@@ -37,6 +37,7 @@ pub(crate) struct Ctx {
     pub(crate) cancel: CancellationToken,
     pub(crate) secrets: Vec<String>,
     pub(crate) matcher: workers::entity_builder::MatcherSettings,
+    pub(crate) rewrite: workers::entity_builder::RewriteLimit,
 }
 
 #[derive(Debug, Clone)]
@@ -157,6 +158,7 @@ async fn dispatch(
                 queue: ctx.queue.as_ref(),
                 model: &ctx.model,
                 settings: &ctx.matcher,
+                rewrite: &ctx.rewrite,
                 now: Timestamp::now(),
                 cancel: &ctx.cancel,
             };

@@ -331,6 +331,8 @@ pub fn with_models<Q: JobQueue + 'static>(
             model: entity_model,
             settings: workers::entity_builder::MatcherSettings::from_config(config)
                 .map_err(RootError::Invalid)?,
+            rewrite: workers::entity_builder::RewriteLimit::from_config(config)
+                .map_err(RootError::Invalid)?,
         })
     } else {
         runner

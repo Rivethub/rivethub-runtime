@@ -56,6 +56,7 @@ fn matcher_settings_follow_the_entity_config() {
         entities: Some(config::EntitiesSection {
             matcher: Some("jev".to_owned()),
             matcher_url: Some("http://host:8015".to_owned()),
+            ..config::EntitiesSection::default()
         }),
         memory: Some(config::model::MemorySection {
             postgres: Some(config::model::PostgresSection {
@@ -124,6 +125,7 @@ fn matcher_settings_follow_the_entity_config() {
             entities: Some(config::EntitiesSection {
                 matcher: Some("jev".to_owned()),
                 matcher_url: None,
+                ..config::EntitiesSection::default()
             }),
             ..config::Config::default()
         })

@@ -74,6 +74,7 @@ async fn every_role_claim_is_dispatched_by_the_real_runner(pool: PgPool) -> supp
         provider: provider.clone(),
         model: "model".to_owned(),
         settings: workers::entity_builder::MatcherSettings::default(),
+        rewrite: workers::entity_builder::RewriteLimit::default(),
     })
     .with_wiki_builder(workers::wiki_builder::WikiBuilderDeps {
         store: memory.clone(),
