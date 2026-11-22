@@ -1,4 +1,5 @@
 mod common;
+mod entity_parity;
 
 mod append_imports;
 mod bundle;
@@ -6,11 +7,9 @@ mod counts;
 mod deadline;
 mod digest;
 mod embedding_store;
-mod entity_known;
 mod entity_match;
 mod entity_merge;
 mod entity_rewrite;
-mod entity_transcript;
 mod flagged;
 mod import;
 mod import_sessions;

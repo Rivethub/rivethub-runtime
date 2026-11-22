@@ -2,6 +2,7 @@ pub mod capture;
 pub mod capture_pg;
 pub mod changes;
 pub mod decisions;
+pub mod entities;
 pub mod facts;
 pub mod fakes;
 pub mod filing;

@@ -1,4 +1,5 @@
 mod common;
+mod entity_parity;
 mod search_summary_passages;
 mod search_support;
 
