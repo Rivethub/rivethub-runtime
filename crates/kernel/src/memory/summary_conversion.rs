@@ -201,6 +201,7 @@ pub trait SummaryConversion: Send + Sync {
     async fn try_model_slot(
         &self,
         limit: u32,
+        width: u32,
     ) -> Result<Option<Box<dyn SummaryPermit>>, SummaryStoreError>;
 
     #[doc(hidden)]

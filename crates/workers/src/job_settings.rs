@@ -149,6 +149,9 @@ fn tune_conversion(
     if let Some(minutes) = positive(env, "RIVETHUB_SUMMARY_CONVERSION_SECOND_PASS_DELAY_MINUTES")? {
         settings.conversion_second_pass_delay = jiff::SignedDuration::from_mins(i64::from(minutes));
     }
+    if let Some(parts) = positive(env, "RIVETHUB_SUMMARY_CONVERSION_PARALLELISM")? {
+        settings.conversion_parallelism = parts;
+    }
     settings.validate_conversion()
 }
 

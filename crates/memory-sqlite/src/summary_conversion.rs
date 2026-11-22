@@ -460,8 +460,11 @@ impl SummaryConversion for SqliteStore {
     async fn try_model_slot(
         &self,
         limit: u32,
+        width: u32,
     ) -> Result<Option<Box<dyn SummaryPermit>>, SummaryStoreError> {
-        Ok((limit > 1).then(|| Box::new(()) as Box<dyn SummaryPermit>))
+        Ok((1..limit)
+            .contains(&width)
+            .then(|| Box::new(()) as Box<dyn SummaryPermit>))
     }
 
     async fn live_pending(&self) -> Result<bool, SummaryStoreError> {

@@ -111,7 +111,10 @@ impl Publisher<'_> {
             };
             drop(local.split(1));
             let permit = store
-                .try_model_slot(self.summary.settings.model_concurrency)
+                .try_model_slot(
+                    self.summary.settings.model_concurrency,
+                    self.summary.settings.conversion_parallelism,
+                )
                 .await?
                 .ok_or(WorkerError::ConversionYield)?;
             Ok((local, permit))
