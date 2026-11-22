@@ -95,6 +95,7 @@ struct Backing {
     ports: Option<StorePorts>,
     sessions: Option<SessionStore>,
     reports: Option<gateway::WorkerReporting>,
+    pauses: Option<Arc<dyn kernel::queue::pause::WorkerPauses>>,
 }
 
 fn with_backing(gateway: Gateway, backing: &Backing) -> Gateway {
@@ -104,6 +105,10 @@ fn with_backing(gateway: Gateway, backing: &Backing) -> Gateway {
     };
     let gateway = match backing.reports.clone() {
         Some(reports) => gateway.with_worker_reports(reports),
+        None => gateway,
+    };
+    let gateway = match backing.pauses.clone() {
+        Some(pauses) => gateway.with_worker_pauses(pauses),
         None => gateway,
     };
     match backing.ports.clone() {
@@ -221,6 +226,7 @@ impl Composition {
                 store: memory.clone(),
                 hub: crate::worker_report::hub_embedder(config, env),
             }),
+            pauses: Some(memory.clone()),
         };
         let factory =
             crate::models::ModelFactory::without_harnesses(env).with_activities(activities.clone());
@@ -253,6 +259,7 @@ impl Composition {
             ports: Some(StorePorts::of(store, store.clone())),
             sessions: Some(SessionStore::Sqlite(SqliteStore::clone(store))),
             reports: None,
+            pauses: None,
         };
         let factory =
             crate::models::ModelFactory::without_harnesses(env).with_activities(activities.clone());

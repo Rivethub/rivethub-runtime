@@ -26,6 +26,7 @@ mod tidy;
 mod today;
 pub(crate) mod topics;
 pub mod wiki;
+mod worker_pauses;
 
 mod surface;
 

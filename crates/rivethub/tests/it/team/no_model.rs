@@ -79,6 +79,8 @@ async fn a_hub_without_a_model_queues_nothing_it_cannot_run_and_reports_each_rol
         .default_headers(super::headers(DANA)?)
         .build()?;
     crate::store_routes::none_unavailable(&client, &hub.base).await?;
+    let pauses = hub.get(DANA, "/api/memory/workers/pauses").await?;
+    assert_eq!(pauses.status, 200, "{}", pauses.body);
     assert_eq!(jobs.len(), 6, "one row per role");
     assert!(
         jobs.iter()

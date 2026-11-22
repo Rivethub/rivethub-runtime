@@ -24,6 +24,7 @@ pub mod tenancy;
 pub mod tls;
 mod tls_resolve;
 mod worker_models;
+pub mod worker_pauses;
 
 use std::sync::Arc;
 
@@ -89,6 +90,7 @@ pub struct Gateway {
     flagged: Option<Arc<dyn kernel::flagged::FlaggedJobs>>,
     model_assignments: Vec<ModelAssignment>,
     worker_reports: Option<WorkerReporting>,
+    worker_pauses: Option<Arc<dyn kernel::queue::pause::WorkerPauses>>,
     plugins: Option<Arc<plugins::PluginHost>>,
     summaries: Option<Arc<dyn kernel::memory::SummaryWatch>>,
     deletions: Option<Arc<dyn kernel::memory::SessionDeletion>>,
@@ -138,6 +140,7 @@ impl Gateway {
             flagged: None,
             model_assignments: Vec::new(),
             worker_reports: None,
+            worker_pauses: None,
             plugins: None,
             summaries: None,
             deletions: None,
