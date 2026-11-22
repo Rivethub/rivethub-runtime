@@ -79,6 +79,17 @@ pub(crate) fn read_legacy_master_entries(conn: &Connection) -> TestResult<Vec<Ma
             {
                 sql.replace_range(start..end, "");
             }
+            if name == "ros_wiki_topics"
+                && let Some(start) = sql.find(", visibility TEXT")
+                && let Some(end) = sql.rfind(')')
+            {
+                sql.replace_range(start..end, "");
+            }
+            if matches!(name.as_str(), "ros_tag_taxonomy" | "ros_wiki_redirects") {
+                *sql = sql
+                    .replace(", owner_user_id TEXT", "")
+                    .replace(", globally_shared INTEGER CHECK (globally_shared = 1)", "");
+            }
             if name == "ros_summary_sources" {
                 *sql = sql.replace(", render_key BLOB CHECK (length(render_key) = 32)", "");
             }
@@ -138,6 +149,9 @@ fn legacy_column(table: &str, column: &str) -> bool {
         (table, column),
         ("ros_summary_sources", "render_key")
             | ("ros_conversations", "title_from_capture")
+            | ("ros_wiki_topics", "visibility" | "scope" | "local_slug")
+            | ("ros_tag_taxonomy", "owner_user_id" | "globally_shared")
+            | ("ros_wiki_redirects", "owner_user_id")
             | (
                 "ros_summaries",
                 "summary_ordinal"

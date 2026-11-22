@@ -9,7 +9,7 @@ use crate::error::Error;
 use crate::upgrade;
 use crate::version::SchemaVersion;
 
-const CURRENT: SchemaVersion = SchemaVersion::V43;
+const CURRENT: SchemaVersion = SchemaVersion::V44;
 
 const SCHEMA_SQL: &str = include_str!("schema/schema_v7.sql");
 
@@ -56,21 +56,21 @@ pub fn sqlite_status(path: &Path) -> Result<Status, Error> {
         return Ok(Status {
             current: 0,
             required,
-            pending: steps(0),
+            pending: 1 + steps(SchemaVersion::V1),
         });
     }
     match user_version_read_only(path)? {
         0 => Ok(Status {
             current: 0,
             required,
-            pending: steps(0),
+            pending: 1 + steps(SchemaVersion::V1),
         }),
         found => {
             let from = SchemaVersion::try_from(found)?;
             Ok(Status {
                 current: from.number(),
                 required,
-                pending: steps(from.number()),
+                pending: steps(from),
             })
         }
     }
@@ -84,14 +84,8 @@ fn current() -> Status {
     }
 }
 
-fn steps(from: i64) -> usize {
-    let mut count = 0usize;
-    let mut current = from;
-    while current < CURRENT.number() {
-        count += 1;
-        current += 1;
-    }
-    count
+fn steps(from: SchemaVersion) -> usize {
+    std::iter::successors(from.next(), |version| version.next()).count()
 }
 
 fn open_writing(path: &Path) -> Result<Connection, Error> {
@@ -231,6 +225,7 @@ fn create_fresh(conn: &mut Connection) -> Result<(), Error> {
     upgrade::add_opening_checked_user_count(&tx).map_err(Error::SqliteCreate)?;
     upgrade::add_entity_builder(&tx).map_err(Error::SqliteCreate)?;
     upgrade::add_summary_passages(&tx).map_err(Error::SqliteCreate)?;
+    upgrade::add_memory_transfer(&tx).map_err(Error::SqliteCreate)?;
     apply_tail_indexes(&tx)?;
     stamp_current(&tx)?;
     tx.commit().map_err(Error::SqliteCreate)

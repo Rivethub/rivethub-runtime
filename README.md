@@ -98,6 +98,40 @@ node reads the certificate file when it starts. A replaced file changes what the
 the node serves after its next restart. Read the fingerprint again after each restart of the node and after
 `not_after`. A renewal that keeps the key changes `sha256` and keeps `spki_sha256`.
 
+## SQLite and Postgres memory transfer
+
+```sh
+rh memory merge-store --from-sqlite memory.sqlite --into <hub-url> --owner alice --sqlite-owner owner
+rh memory merge-store --from <hub-url> --into-sqlite memory.sqlite --owner alice --sqlite-owner owner
+```
+
+Use the local principal configured for the SQLite runtime. It defaults to the hub principal on the command line. Both directions support `--dry-run` and `--json`. The transfer takes a snapshot of the source, copies rows in a destination transaction, and leaves the source in place. When copying into a SQLite path that does not exist, the command initializes it. An unsuccessful copy can leave that initialized database on disk.
+
+Use an administrative Postgres connection and migrate both databases to the current schema first.
+The hub must already have matching spaces and memberships for the selected owner. Global type
+references resolve by slug against the destination's catalog. If any required global type is
+missing, the command lists its slug before inserting any destination rows. Provision those
+types on the destination and retry. Conflicting rows abort the destination transaction.
+
+The copy includes claims on the person's own topics and on global types. It reports how
+many of their claims refer to topics another person owns. Wiki redirects require both
+known ownership by the selected hub person and a page that travels with the copy.
+The copy preserves each tag's stored display and includes shared taxonomy entries for its
+key and value. Without a taxonomy entry, the tag still has its own display text or the raw
+key and value. Unused shared vocabulary and other people's private vocabulary stay behind.
+
+The copy assigns ownerless personal rows in a standalone SQLite file to the chosen
+principal. Global type and shared taxonomy rows retain their shared status. Legacy
+`work`, `entity`, and `type` topic tombstones without evidence of ownership stay behind.
+
+SQLite stores entity vectors as f32 blobs. Postgres stores them at half precision and
+retains the original SQLite vector when the conversion rounds it. Summary passages travel
+with their owning summaries. Pass the destination worker's reported index key as
+`--destination-index-key <hex>` to reuse matching passage vectors. With a different or
+unknown key, the destination worker rebuilds the passage index. The destination also
+rebuilds the other search embeddings and indexes. The command reports excluded data,
+including Git-backed wiki files and history, which require a separate repository backup.
+
 ## Layout
 
 | Path | What it holds |

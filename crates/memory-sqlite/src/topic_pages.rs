@@ -295,7 +295,7 @@ fn save(
     )
     .map_err(query)?;
     conn.execute(
-        "DELETE FROM rh_topic_pages WHERE topic_id = ?1 OR page_slug = ?2",
+        "UPDATE rh_topic_pages SET topic_id = NULL WHERE topic_id = ?1 AND page_slug <> ?2",
         params![topic.to_string(), page.slug.as_ref()],
     )
     .map_err(query)?;
@@ -308,9 +308,26 @@ fn save(
             body: section.body.clone(),
         })
         .collect();
+    save_sections(conn, topic, &page.slug, &sections)
+}
+
+fn save_sections(
+    conn: &Connection,
+    topic: TopicId,
+    slug: &WikiSlug,
+    sections: &[StoredSection],
+) -> Result<(), WikiStoreError> {
+    let encoded = if bound_sections(conn, slug.as_ref())?.as_deref() == Some(sections) {
+        None
+    } else {
+        Some(encode(sections)?)
+    };
     conn.execute(
-        "INSERT INTO rh_topic_pages (topic_id, page_slug, sections) VALUES (?1, ?2, ?3)",
-        params![topic.to_string(), page.slug.as_ref(), encode(&sections)?],
+        "INSERT INTO rh_topic_pages (topic_id, page_slug, sections) VALUES (?1, ?2, coalesce(?3, '[]'))
+         ON CONFLICT (page_slug) DO UPDATE SET topic_id = excluded.topic_id,
+            sections_were_null = rh_topic_pages.sections_were_null AND ?3 IS NULL,
+            sections = coalesce(?3, rh_topic_pages.sections)",
+        params![topic.to_string(), slug.as_ref(), encoded],
     )
     .map_err(query)?;
     Ok(())
@@ -335,6 +352,7 @@ pub(crate) fn carry(
         }
         return Ok(());
     };
+    let before = kept.len();
     for section in child_sections {
         let known = kept.iter().any(|existing| match section.topic {
             Some(topic) => existing.topic == Some(topic),
@@ -344,11 +362,13 @@ pub(crate) fn carry(
             kept.push(section);
         }
     }
-    conn.execute(
-        "UPDATE rh_topic_pages SET sections = ?2 WHERE page_slug = ?1",
-        params![parent, encode(&kept)?],
-    )
-    .map_err(query)?;
+    if kept.len() != before {
+        conn.execute(
+            "UPDATE rh_topic_pages SET sections = ?2, sections_were_null = 0 WHERE page_slug = ?1",
+            params![parent, encode(&kept)?],
+        )
+        .map_err(query)?;
+    }
     Ok(())
 }
 

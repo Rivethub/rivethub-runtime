@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO rh_space_members (space_id, user_id, role) VALUES ('team', 'alice', 'member')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "b30017b926ae37deef563b2d660176fccde30cc4fed5a0cc6a74d193823cfe0f"
+}

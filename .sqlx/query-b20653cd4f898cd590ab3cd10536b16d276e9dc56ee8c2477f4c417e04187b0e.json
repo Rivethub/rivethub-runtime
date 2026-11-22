@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO rh_review_marks (owner_user_id, item_key, state, at)\n        VALUES ('bob', 'other-review', 'decided', now())",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "b20653cd4f898cd590ab3cd10536b16d276e9dc56ee8c2477f4c417e04187b0e"
+}

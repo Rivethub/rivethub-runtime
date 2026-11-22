@@ -1,0 +1,12 @@
+DROP INDEX rh_wiki_topics_scope_local;
+ALTER TABLE ros_wiki_topics DROP COLUMN scope;
+ALTER TABLE ros_wiki_topics DROP COLUMN visibility;
+ALTER TABLE ros_wiki_topics DROP COLUMN local_slug;
+ALTER TABLE rh_topic_pages DROP COLUMN sections_were_null;
+ALTER TABLE ros_wiki_redirects DROP COLUMN owner_user_id;
+ALTER TABLE ros_tag_taxonomy DROP COLUMN globally_shared;
+ALTER TABLE ros_tag_taxonomy DROP COLUMN owner_user_id;
+ALTER TABLE rh_topic_tombstones DROP COLUMN owner_user_id;
+ALTER TABLE rh_topic_tombstones DROP COLUMN locally_deleted;
+DROP TABLE rh_wiki_scopes;
+DROP TABLE rh_agent_presets;

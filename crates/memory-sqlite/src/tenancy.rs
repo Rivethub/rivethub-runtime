@@ -151,6 +151,17 @@ fn session_state(
     Ok((owner, mark, effective))
 }
 
+impl SqliteStore {
+    pub fn stored_session_visibility(
+        conn: &Connection,
+        session: &str,
+        owner: &str,
+    ) -> Result<String, SqliteError> {
+        session_state(conn, session, owner, Timestamp::UNIX_EPOCH)
+            .map(|(_, _, effective)| effective)
+    }
+}
+
 fn refresh_topics(conn: &Connection) -> Result<(), SqliteError> {
     let topics = conn
         .prepare(

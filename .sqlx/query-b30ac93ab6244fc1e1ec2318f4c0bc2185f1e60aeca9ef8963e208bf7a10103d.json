@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO rh_conversations (session_key, agent, owner_user_id)\n        VALUES ('other-session', 'codex', 'bob')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "b30ac93ab6244fc1e1ec2318f4c0bc2185f1e60aeca9ef8963e208bf7a10103d"
+}

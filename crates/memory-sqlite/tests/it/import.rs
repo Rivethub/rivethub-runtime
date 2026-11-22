@@ -100,7 +100,14 @@ async fn replay(dump: &str, expectation: &str, summaries: i64) -> Result {
                     | (ImportTable::Conversations, "title_from_capture") => {
                         assert_eq!(value, &Json::from(0), "{table}.{column}");
                     }
-                    (ImportTable::Summaries, _) | (ImportTable::SummarySources, "render_key") => {
+                    (ImportTable::WikiTopics, "visibility") => {
+                        assert_eq!(value.as_str(), Some("private"), "{table}.{column}");
+                    }
+                    (ImportTable::Summaries, _)
+                    | (ImportTable::SummarySources, "render_key")
+                    | (ImportTable::WikiTopics, "scope" | "local_slug")
+                    | (ImportTable::TagTaxonomy, "owner_user_id" | "globally_shared")
+                    | (ImportTable::WikiRedirects, "owner_user_id") => {
                         assert!(value.is_null(), "{table}.{column}");
                     }
                     _ => return Err(format!("unrecorded {table}.{column}").into()),

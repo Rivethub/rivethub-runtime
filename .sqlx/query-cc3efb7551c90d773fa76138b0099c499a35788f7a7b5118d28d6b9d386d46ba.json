@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO rh_topic_tombstones (kind, slug, deleted_at) VALUES ('entity', $1, $2)\n         ON CONFLICT (kind, slug) DO UPDATE SET deleted_at = EXCLUDED.deleted_at,\n             owner_user_id = EXCLUDED.owner_user_id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cc3efb7551c90d773fa76138b0099c499a35788f7a7b5118d28d6b9d386d46ba"
+}

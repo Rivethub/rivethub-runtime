@@ -51,6 +51,7 @@ fn seed(path: &Path, rows: &[(&str, &str, i64)]) -> TestResult<(Vec<u8>, Vec<Row
             params![content, kind, depth],
         )?;
     }
+    conn.execute_batch(include_str!("fixtures/pre_memory_transfer.txt"))?;
     conn.execute_batch(
         "PRAGMA wal_checkpoint(TRUNCATE);
          PRAGMA journal_mode = DELETE;

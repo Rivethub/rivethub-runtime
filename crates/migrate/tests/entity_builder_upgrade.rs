@@ -8,6 +8,7 @@ fn version_41_gains_entity_storage_and_preserves_existing_topics() -> Outcome {
     let path = directory.path().join("memory.sqlite");
     migrate::sqlite(&path)?;
     let conn = Connection::open(&path)?;
+    conn.execute_batch(include_str!("fixtures/pre_memory_transfer.txt"))?;
     conn.execute_batch(
         "DROP TABLE rh_entity_extractions;
          DROP TABLE rh_entity_candidates;

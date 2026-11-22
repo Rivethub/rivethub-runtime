@@ -315,9 +315,11 @@ fn retire(
     let at = stamp(time);
     let survivor = keep.id.to_string();
     conn.execute(
-        "INSERT INTO rh_topic_tombstones (kind, slug, deleted_at) VALUES ('entity', ?1, ?2)
-         ON CONFLICT (kind, slug) DO UPDATE SET deleted_at = excluded.deleted_at",
-        params![drop.slug, at],
+        "INSERT INTO rh_topic_tombstones (kind, slug, deleted_at, owner_user_id, locally_deleted)
+         SELECT 'entity', ?1, ?2, owner_user_id, owner_user_id IS NULL FROM rh_topics WHERE id = ?3
+         ON CONFLICT (kind, slug) DO UPDATE SET deleted_at = excluded.deleted_at,
+             owner_user_id = excluded.owner_user_id, locally_deleted = excluded.locally_deleted",
+        params![drop.slug, at, drop.id.to_string()],
     )
     .map_err(query)?;
     conn.execute("DELETE FROM rh_topics WHERE id = ?1", [drop.id.to_string()])

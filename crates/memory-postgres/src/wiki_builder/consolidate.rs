@@ -208,23 +208,21 @@ async fn retire(
         .execute(&mut **tx)
         .await
         .map_err(query_error)?;
-    for (statement, slug) in [
-        ("DELETE FROM rh_wiki_redirects WHERE from_slug = $1", parent),
-        ("DELETE FROM rh_wiki_topics WHERE slug = $1", child),
-    ] {
-        sqlx::query(statement)
-            .bind(slug)
-            .execute(&mut **tx)
-            .await
-            .map_err(query_error)?;
-    }
-    sqlx::query(
-        "INSERT INTO rh_wiki_redirects (from_slug, to_slug, created_at) VALUES ($1, $2, $3)
+    sqlx::query!("DELETE FROM rh_wiki_redirects WHERE from_slug = $1", parent)
+        .execute(&mut **tx)
+        .await
+        .map_err(query_error)?;
+    sqlx::query!(
+        "WITH retired AS (
+            DELETE FROM rh_wiki_topics WHERE slug = $1 RETURNING owner_user_id
+         )
+         INSERT INTO rh_wiki_redirects (from_slug, to_slug, created_at, owner_user_id)
+         SELECT $1, $2, $3, coalesce(rh_scope_principal(), owner_user_id) FROM retired
          ON CONFLICT (from_slug) DO UPDATE SET to_slug = EXCLUDED.to_slug",
+        child,
+        parent,
+        crate::time::BindTime::bind_time(now) as _
     )
-    .bind(child)
-    .bind(parent)
-    .bind(crate::time::BindTime::bind_time(now))
     .execute(&mut **tx)
     .await
     .map_err(query_error)?;

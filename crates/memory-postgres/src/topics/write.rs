@@ -298,7 +298,8 @@ pub(super) async fn fold_into(
 pub(super) async fn remove(conn: &mut PgConnection, topic: &Topic) -> Result<(), TopicError> {
     sqlx::query!(
         "INSERT INTO rh_topic_tombstones (kind, slug, deleted_at) VALUES ($1, $2, now())
-         ON CONFLICT (kind, slug) DO UPDATE SET deleted_at = EXCLUDED.deleted_at",
+         ON CONFLICT (kind, slug) DO UPDATE SET deleted_at = EXCLUDED.deleted_at,
+             owner_user_id = EXCLUDED.owner_user_id",
         topic.kind.to_string(),
         topic.slug.as_str()
     )
