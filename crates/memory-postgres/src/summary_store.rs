@@ -238,21 +238,8 @@ impl SummaryStore for PostgresMemory {
         &self,
         limit: u32,
     ) -> Result<Option<Box<dyn SummaryPermit>>, SummaryStoreError> {
-        use sqlx::Connection as _;
-        let mut conn = sqlx::PgConnection::connect_with(&self.pool.connect_options())
+        self.model_slot(0..i32::try_from(limit).map_err(|_| SummaryStoreError::Count)?)
             .await
-            .map_err(backend::error)?;
-        for slot in 0..i32::try_from(limit).map_err(|_| SummaryStoreError::Count)? {
-            let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(1937075568, $1)")
-                .bind(slot)
-                .fetch_one(&mut conn)
-                .await
-                .map_err(backend::error)?;
-            if locked {
-                return Ok(Some(Box::new(conn)));
-            }
-        }
-        Ok(None)
     }
 
     async fn publish_live(

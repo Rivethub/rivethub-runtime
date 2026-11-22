@@ -168,9 +168,11 @@ async fn summarize_parts(
     warnings: &BTreeSet<Uuid>,
 ) -> Result<(), WorkerError> {
     let issued_after = usize::try_from(issued_after).map_err(|_| WorkerError::Count)?;
+    let stopped = AtomicBool::new(false);
     let mut jobs = stream::iter(
         chunks
             .enumerate()
+            .take_while(|_| !stopped.load(Ordering::Relaxed))
             .map(|(position, (chunk, (number, last)))| {
                 let issued = issued_after + position + 1;
                 async move {
@@ -207,7 +209,7 @@ async fn summarize_parts(
             }),
     )
     .buffer_unordered(if run.env.conversion.is_some() {
-        1
+        run.env.summary.settings.conversion_parallelism as usize
     } else {
         settings::PART_PARALLELISM
     });
@@ -217,7 +219,7 @@ async fn summarize_parts(
             Ok(part) => parts.push(part),
             Err(error) => {
                 if run.env.conversion.is_some() {
-                    return Err(error);
+                    stopped.store(true, Ordering::Relaxed);
                 }
                 failure.get_or_insert(error);
             }

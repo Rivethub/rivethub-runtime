@@ -22,6 +22,7 @@ pub struct SummarySettings {
     pub conversion_second_pass_delay: SignedDuration,
     pub conversion_lease: SignedDuration,
     pub conversion_heartbeat: Duration,
+    pub conversion_parallelism: u32,
 }
 
 impl SummarySettings {
@@ -46,6 +47,7 @@ impl SummarySettings {
             conversion_second_pass_delay: SignedDuration::from_mins(5),
             conversion_lease: kernel::memory::summary_conversion::LEASE,
             conversion_heartbeat: Duration::from_secs(20),
+            conversion_parallelism: 1,
         })
     }
 
@@ -84,6 +86,13 @@ impl SummarySettings {
         {
             return Err(invalid(
                 "summary conversion lease must be at most one day and at least twice the positive heartbeat interval",
+            ));
+        }
+        if !(1..=self.model_concurrency.saturating_sub(1).max(1))
+            .contains(&self.conversion_parallelism)
+        {
+            return Err(invalid(
+                "summary conversion parallelism must be at least 1 and below the summary model concurrency",
             ));
         }
         Ok(())

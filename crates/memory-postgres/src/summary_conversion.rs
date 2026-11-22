@@ -484,21 +484,14 @@ impl SummaryConversion for PostgresMemory {
     async fn try_model_slot(
         &self,
         limit: u32,
+        width: u32,
     ) -> Result<Option<Box<dyn SummaryPermit>>, SummaryStoreError> {
-        use sqlx::Connection as _;
-        if limit < 2 {
+        if !(1..limit).contains(&width) {
             return Ok(None);
         }
-        let slot = i32::try_from(limit - 1).map_err(|_| SummaryStoreError::Count)?;
-        let mut conn = PgConnection::connect_with(&self.pool.connect_options())
-            .await
-            .map_err(error)?;
-        let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(1937075568, $1)")
-            .bind(slot)
-            .fetch_one(&mut conn)
-            .await
-            .map_err(error)?;
-        Ok(locked.then(|| Box::new(conn) as Box<dyn SummaryPermit>))
+        let top = i32::try_from(limit).map_err(|_| SummaryStoreError::Count)?;
+        let floor = i32::try_from(limit - width).map_err(|_| SummaryStoreError::Count)?;
+        self.model_slot((floor..top).rev()).await
     }
 
     async fn live_pending(&self) -> Result<bool, SummaryStoreError> {
