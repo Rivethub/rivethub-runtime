@@ -1,6 +1,8 @@
 use std::fs;
+use std::io::Read as _;
 use std::path::Path;
 use std::path::PathBuf;
+use std::process::Command;
 
 use kernel::harness_setup::ConnectPart;
 use kernel::harness_setup::SetupError;
@@ -9,6 +11,7 @@ use super::super::dsh_plugin;
 use super::super::locate::Locator;
 use super::super::plan::FileEdit;
 use super::super::plan::read_optional;
+use super::super::version;
 use super::FOREIGN_PLUGIN;
 use super::MARKER;
 use super::NAME_TAKEN;
@@ -29,6 +32,8 @@ use super::paths;
 use super::profile::Seen;
 use super::profile::seen_in;
 use super::unsupported;
+
+const LAUNCHER_BYTES: u64 = 4096;
 
 enum Client {
     Ready(PathBuf),
@@ -219,7 +224,52 @@ fn locate_client(locator: &Locator) -> Client {
     let Some(binary) = locator.which("dsh") else {
         return Client::NoBinary;
     };
-    find_client(&binary).map_or(Client::NoPackage, Client::Ready)
+    find_client(&binary)
+        .or_else(|| find_client(&installed_by_mise(locator, &binary)?))
+        .map_or(Client::NoPackage, Client::Ready)
+}
+
+fn names_mise(script: &[u8]) -> bool {
+    String::from_utf8_lossy(script)
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .flat_map(|line| line.split(|letter: char| !letter.is_ascii_alphanumeric()))
+        .any(|word| word == "mise")
+}
+
+fn hands_off_to_mise(launcher: &Path, mise: &Path) -> bool {
+    if canonical_or_given(launcher) == canonical_or_given(mise) {
+        return true;
+    }
+    let mut script = Vec::new();
+    let read = fs::File::open(launcher)
+        .and_then(|file| file.take(LAUNCHER_BYTES + 1).read_to_end(&mut script));
+    match read {
+        Ok(_) => script.len() as u64 <= LAUNCHER_BYTES && names_mise(&script),
+        Err(error) => {
+            tracing::debug!(%error, path = %launcher.display(), "read the dsh launcher");
+            false
+        }
+    }
+}
+
+fn installed_by_mise(locator: &Locator, launcher: &Path) -> Option<PathBuf> {
+    let mise = locator.which("mise")?;
+    if !hands_off_to_mise(launcher, &mise) {
+        return None;
+    }
+    let mut command = Command::new(&mise);
+    command.args(["which", "dsh"]);
+    if let Some(home) = locator.home() {
+        command.current_dir(home);
+    }
+    match version::answer(&mut command) {
+        Ok(answer) => Some(PathBuf::from(answer.trim())).filter(|binary| binary.is_file()),
+        Err(error) => {
+            tracing::debug!(%error, "mise which dsh");
+            None
+        }
+    }
 }
 
 fn find_client(binary: &Path) -> Option<PathBuf> {
@@ -251,6 +301,14 @@ fn walk_for_client(start: &Path) -> Option<PathBuf> {
         let sibling = dir.join("dsh-mcp-client/lib/index.js");
         if sibling.is_file() {
             return Some(canonical_or_given(&sibling));
+        }
+        if let Ok(package) = fs::canonicalize(dir.join("node_modules/@deepseek-ai/dsh")) {
+            let beside = package
+                .with_file_name("dsh-mcp-client")
+                .join("lib/index.js");
+            if beside.is_file() {
+                return Some(canonical_or_given(&beside));
+            }
         }
         if !dir.pop() {
             break;

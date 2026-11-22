@@ -61,6 +61,11 @@ impl Locator {
     }
 
     #[must_use]
+    pub fn home(&self) -> Option<&Path> {
+        self.home.as_deref()
+    }
+
+    #[must_use]
     pub fn opencode_plugin(&self) -> Option<&Path> {
         self.opencode_plugin.as_deref()
     }
