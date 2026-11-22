@@ -94,6 +94,7 @@ fn runner(
         provider: model,
         model: "fake-chat".to_owned(),
         settings: MatcherSettings::default(),
+        rewrite: workers::entity_builder::RewriteLimit::default(),
     })
     .with_pauses(store.clone()))
 }
