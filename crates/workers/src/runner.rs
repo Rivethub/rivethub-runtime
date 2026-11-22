@@ -436,7 +436,7 @@ where
                 Err(error) if error.database_unreachable() => {
                     drop(permit);
                     self.publish_idle(tasks.is_empty());
-                    if !wait_outage(notifications, cancel).await? {
+                    if !crate::outage::wait_outage(notifications, cancel).await? {
                         return Ok(());
                     }
                     continue;
@@ -613,27 +613,5 @@ where
             Some(error) => Err(error),
             None => Ok(()),
         }
-    }
-}
-
-async fn wait_outage(
-    notifications: &mut dyn JobNotifications,
-    cancel: &CancellationToken,
-) -> Result<bool, WorkerError> {
-    tokio::select! {
-        biased;
-        () = cancel.cancelled() => Ok(false),
-        incoming = notifications.recv() => match incoming {
-            Ok(()) => Ok(true),
-            Err(error) => {
-                let wrapped = WorkerError::queue(error);
-                if wrapped.database_unreachable() {
-                    Ok(crate::outage::wait(crate::outage::FLOOR, cancel).await)
-                } else {
-                    Err(wrapped)
-                }
-            }
-        },
-        () = tokio::time::sleep(crate::outage::FLOOR) => Ok(true),
     }
 }
