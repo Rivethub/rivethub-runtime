@@ -3,6 +3,7 @@ mod catalog;
 mod fixture;
 mod passages;
 mod pg;
+mod pieces;
 mod sqlite;
 mod values;
 #[cfg(test)]
@@ -61,6 +62,25 @@ pub(super) async fn run(
     (dry_run, index_key): (bool, Option<[u8; 32]>),
     shutdown: &CancellationToken,
 ) -> Result<TransferReport, Error> {
+    run_with_limits(
+        pool,
+        local,
+        [owner, local_owner],
+        direction,
+        (dry_run, index_key, pieces::Limits::DEFAULT),
+        shutdown,
+    )
+    .await
+}
+
+async fn run_with_limits(
+    pool: &PgPool,
+    local: &SqliteStore,
+    [owner, local_owner]: [&Owner; 2],
+    direction: Direction,
+    (dry_run, index_key, limits): (bool, Option<[u8; 32]>, pieces::Limits),
+    shutdown: &CancellationToken,
+) -> Result<TransferReport, Error> {
     let mut remote = pg::begin(pool, direction).await?;
     let tables = plan(&mut remote, local).await?;
     let owner = owner.as_str();
@@ -71,8 +91,15 @@ pub(super) async fn run(
                 sqlite::snapshot(local, tables, local_owner, shutdown.clone()).await?;
             remap_owner(&mut batches, local_owner, owner);
             passages::align(&mut batches, index_key);
-            let (read, added) =
-                pg::load(&mut remote, &mut batches, seeds, owner, index_key, shutdown).await?;
+            let (read, added) = pg::load(
+                &mut remote,
+                &mut batches,
+                seeds,
+                owner,
+                (index_key, limits),
+                shutdown,
+            )
+            .await?;
             cancelled(shutdown)?;
             if dry_run {
                 remote.rollback().await.map_err(pg::error)?;
@@ -84,7 +111,7 @@ pub(super) async fn run(
         Direction::ToSqlite => {
             let seeds = pg::seeds(&mut remote).await?;
             let mut batches = pg::snapshot(&mut remote, tables, owner, shutdown).await?;
-            let omitted = pg::omissions(&mut remote, owner, &batches).await?;
+            let omitted = pg::omissions(&mut remote, owner, &batches, limits).await?;
             remote.rollback().await.map_err(pg::error)?;
             let read = counts(&batches);
             remap_owner(&mut batches, owner, local_owner);

@@ -49,20 +49,12 @@ fn compatible_summaries(batches: &[Batch], key: Option<&str>) -> BTreeSet<String
         .collect()
 }
 
-fn record_ids(batch: &Batch) -> BTreeSet<&str> {
-    let record = position(&batch.table, "record_id");
-    batch
-        .rows
-        .iter()
-        .filter_map(|row| cell(row, record))
-        .collect()
+fn record_ids<'a>(table: &Table, rows: &'a [Row]) -> BTreeSet<&'a str> {
+    let record = position(table, "record_id");
+    rows.iter().filter_map(|row| cell(row, record)).collect()
 }
 
-pub(super) async fn finish_postgres(
-    conn: &mut PgConnection,
-    batch: &Batch,
-    key: &[u8; 32],
-) -> Result<(), Error> {
+pub(super) async fn fill_postgres(conn: &mut PgConnection) -> Result<(), Error> {
     sqlx::query(
         "UPDATE rh_summary_passages p SET embedding = s.embedding
          FROM transfer_rh_summary_passages s
@@ -71,7 +63,16 @@ pub(super) async fn finish_postgres(
     .execute(&mut *conn)
     .await
     .map_err(pg::error)?;
-    let records = record_ids(batch)
+    Ok(())
+}
+
+pub(super) async fn finish_postgres(
+    conn: &mut PgConnection,
+    table: &Table,
+    rows: &[Row],
+    key: &[u8; 32],
+) -> Result<(), Error> {
+    let records = record_ids(table, rows)
         .into_iter()
         .map(str::parse::<uuid::Uuid>)
         .collect::<Result<Vec<_>, _>>()
@@ -121,7 +122,7 @@ pub(super) fn finish_sqlite(
                AND id IN (SELECT id FROM ros_summary_records_indexed WHERE id = ?1)",
         )
         .map_err(memory_sqlite::SqliteError::Pragma)?;
-    for id in record_ids(batch) {
+    for id in record_ids(&batch.table, &batch.rows) {
         update
             .execute(rusqlite::params![id, key.as_slice()])
             .map_err(memory_sqlite::SqliteError::Pragma)?;

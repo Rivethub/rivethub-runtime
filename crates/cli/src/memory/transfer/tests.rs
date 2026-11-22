@@ -462,3 +462,6 @@ mod passage_tests;
 
 #[path = "principal_tests.rs"]
 mod principal_tests;
+
+#[path = "load_tests.rs"]
+mod load_tests;

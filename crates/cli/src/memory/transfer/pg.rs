@@ -14,6 +14,7 @@ use super::Row;
 use super::Seeds;
 use super::catalog::Relation;
 use super::catalog::Table;
+use super::pieces::Limits;
 use super::values::Kind;
 use super::{cancelled, counts, identifier, invalid, remap_topics};
 use crate::Error;
@@ -137,27 +138,31 @@ pub(super) async fn omissions(
     conn: &mut PgConnection,
     owner: &str,
     batches: &[Batch],
+    limits: Limits,
 ) -> Result<super::Omissions, Error> {
     let pages = batches
         .iter()
         .find(|batch| batch.table.relation == Relation::WikiTopics)
         .ok_or_else(|| invalid("missing wiki pages from transfer snapshot"))?;
     let slug = super::position(&pages.table, "slug");
-    let slugs: Vec<_> = pages
-        .rows
-        .iter()
-        .filter_map(|row| super::cell(row, slug).map(str::to_owned))
-        .collect();
     let claims_on_other_topics = excluded_claims(conn, owner).await?;
-    let redirects_owned_by_others = sqlx::query_scalar!(
-        r#"SELECT count(*) AS "count!" FROM rh_wiki_redirects r
+    let mut redirects_owned_by_others = 0;
+    for rows in limits.split(pages) {
+        let slugs: Vec<_> = rows
+            .iter()
+            .filter_map(|row| super::cell(row, slug).map(str::to_owned))
+            .collect();
+        let excluded = sqlx::query_scalar!(
+            r#"SELECT count(*) AS "count!" FROM rh_wiki_redirects r
          WHERE r.owner_user_id <> $1 AND r.to_slug = ANY($2)"#,
-        owner,
-        &slugs
-    )
-    .fetch_one(&mut *conn)
-    .await
-    .map_err(error)?;
+            owner,
+            &slugs
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(error)?;
+        redirects_owned_by_others += omission_count(excluded)?;
+    }
     let unattributed_topic_tombstones = sqlx::query_scalar!(
         r#"SELECT count(*) AS "count!" FROM rh_topic_tombstones WHERE owner_user_id IS NULL"#
     )
@@ -166,7 +171,7 @@ pub(super) async fn omissions(
     .map_err(error)?;
     Ok(super::Omissions {
         claims_on_other_topics,
-        redirects_owned_by_others: omission_count(redirects_owned_by_others)?,
+        redirects_owned_by_others,
         unattributed_topic_tombstones: omission_count(unattributed_topic_tombstones)?,
     })
 }
@@ -223,7 +228,7 @@ pub(super) async fn load(
     batches: &mut [Batch],
     source_seeds: Seeds,
     owner: &str,
-    index_key: Option<[u8; 32]>,
+    (index_key, limits): (Option<[u8; 32]>, Limits),
     shutdown: &CancellationToken,
 ) -> Result<(Counts, Counts), Error> {
     let read = counts(batches);
@@ -231,17 +236,7 @@ pub(super) async fn load(
     remap_topics(batches, source_seeds, &seeds(conn).await?).map_err(invalid)?;
     for batch in &mut *batches {
         cancelled(shutdown)?;
-        let inserted = if batch.rows.is_empty() {
-            0
-        } else {
-            insert(conn, batch).await?
-        };
-        if batch.table.relation == Relation::SummaryPassages
-            && !batch.rows.is_empty()
-            && let Some(key) = index_key
-        {
-            super::passages::finish_postgres(conn, batch, &key).await?;
-        }
+        let inserted = load_table(conn, batch, index_key, shutdown, limits).await?;
         added.insert(batch.table.relation.pg(), inserted);
     }
     sqlx::query!("SELECT rh_refresh_owner($1)", owner)
@@ -255,7 +250,11 @@ pub(super) async fn load(
                 Relation::Topics | Relation::Conversations
             )
         {
-            verify_visibility(conn, batch.table.relation).await?;
+            for rows in limits.split(batch) {
+                cancelled(shutdown)?;
+                stage(conn, &batch.table, rows).await?;
+                verify_visibility(conn, batch.table.relation).await?;
+            }
         }
     }
     sqlx::raw_sql("SET CONSTRAINTS ALL IMMEDIATE")
@@ -273,29 +272,91 @@ pub(super) async fn seeds(conn: &mut PgConnection) -> Result<Seeds, Error> {
     Ok(rows.into_iter().map(|r| (r.slug, r.id)).collect())
 }
 
-async fn stage(conn: &mut PgConnection, batch: &Batch, stage: &str) -> Result<(), Error> {
+async fn load_table(
+    conn: &mut PgConnection,
+    batch: &Batch,
+    index_key: Option<[u8; 32]>,
+    shutdown: &CancellationToken,
+    limits: Limits,
+) -> Result<u64, Error> {
+    if batch.rows.is_empty() {
+        return Ok(0);
+    }
+    let relation = batch.table.relation;
+    let table = relation.pg();
+    let stage_name = format!("transfer_{table}");
     let names = batch.table.names().join(", ");
-    let (parameters, projections): (Vec<_>, Vec<_>) = batch
-        .table
+    let sql = format!(
+        "CREATE TEMP TABLE {stage_name} ON COMMIT DROP AS
+         SELECT {names} FROM public.{table} WITH NO DATA"
+    );
+    sqlx::query(AssertSqlSafe(sql))
+        .execute(&mut *conn)
+        .await
+        .map_err(error)?;
+    let mut added = 0;
+    for rows in limits.split(batch) {
+        cancelled(shutdown)?;
+        stage(conn, &batch.table, rows).await?;
+        if relation.authorization() {
+            check_existing(conn, batch, &stage_name)
+                .await
+                .map_err(|error| {
+                    invalid(format!(
+                        "hub space and membership must already match the SQLite source: {error}"
+                    ))
+                })?;
+        } else {
+            check_deletions(conn, relation, &stage_name).await?;
+            added += insert(conn, &table, &names, &stage_name).await?;
+        }
+    }
+    let passage_key = index_key.filter(|_| relation == Relation::SummaryPassages);
+    if !relation.authorization() && added < batch.rows.len() as u64 {
+        for rows in limits.split(batch) {
+            cancelled(shutdown)?;
+            stage(conn, &batch.table, rows).await?;
+            check_existing(conn, batch, &stage_name).await?;
+            if passage_key.is_some() {
+                super::passages::fill_postgres(conn).await?;
+            }
+        }
+    }
+    if let Some(key) = passage_key {
+        for rows in limits.split(batch) {
+            cancelled(shutdown)?;
+            super::passages::finish_postgres(conn, &batch.table, rows, &key).await?;
+        }
+    }
+    Ok(added)
+}
+
+async fn stage(conn: &mut PgConnection, table: &Table, rows: &[Row]) -> Result<(), Error> {
+    let stage = format!("transfer_{}", table.relation.pg());
+    sqlx::query(AssertSqlSafe(format!("TRUNCATE {stage}")))
+        .execute(&mut *conn)
+        .await
+        .map_err(error)?;
+    let names = table.names().join(", ");
+    let (parameters, projections): (Vec<_>, Vec<_>) = table
         .columns
         .iter()
         .enumerate()
         .map(|(i, c)| {
             let parameter = format!("${}::text[]", i + 1);
             let value = c.kind.cast(&format!("incoming.{}", c.name), &c.cast);
-            (parameter, format!("{value} AS {}", c.name))
+            (parameter, value)
         })
         .unzip();
     let sql = format!(
-        "CREATE TEMP TABLE {stage} ON COMMIT DROP AS
+        "INSERT INTO {stage} ({names})
         SELECT {} FROM unnest({}) AS incoming ({names})",
         projections.join(", "),
         parameters.join(", ")
     );
     let mut query = sqlx::query(AssertSqlSafe(sql));
-    for (index, _) in batch.table.columns.iter().enumerate() {
-        let data: Vec<_> = batch
-            .rows
+    for (index, _) in table.columns.iter().enumerate() {
+        let data: Vec<_> = rows
             .iter()
             .map(|row| row.get(index).and_then(Option::as_deref))
             .collect();
@@ -305,33 +366,20 @@ async fn stage(conn: &mut PgConnection, batch: &Batch, stage: &str) -> Result<()
     Ok(())
 }
 
-async fn insert(conn: &mut PgConnection, batch: &Batch) -> Result<u64, Error> {
-    let table = batch.table.relation.pg();
-    let stage_name = format!("transfer_{table}");
-    stage(conn, batch, &stage_name).await?;
-    let names = batch.table.names().join(", ");
-    if batch.table.relation.authorization() {
-        check_existing(conn, batch, &stage_name)
-            .await
-            .map_err(|error| {
-                invalid(format!(
-                    "hub space and membership must already match the SQLite source: {error}"
-                ))
-            })?;
-        return Ok(0);
-    }
-    check_deletions(conn, batch.table.relation, &stage_name).await?;
+async fn insert(
+    conn: &mut PgConnection,
+    table: &str,
+    names: &str,
+    stage_name: &str,
+) -> Result<u64, Error> {
     let sql = format!(
         "INSERT INTO public.{table} ({names}) SELECT {names} FROM {stage_name} ON CONFLICT DO NOTHING"
     );
     let added = sqlx::query(AssertSqlSafe(sql))
-        .execute(&mut *conn)
+        .execute(conn)
         .await
         .map_err(|source| invalid(format!("{table}: {source}")))?
         .rows_affected();
-    if added < batch.rows.len() as u64 {
-        check_existing(conn, batch, &stage_name).await?;
-    }
     Ok(added)
 }
 
