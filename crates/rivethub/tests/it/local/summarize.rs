@@ -1,36 +1,22 @@
 use std::path::Path;
 use std::time::Duration;
 
-use rusqlite::OptionalExtension as _;
-
-use super::{REPLY, TestResult, model_stub, provider_at, start, stop, write_state};
+use super::summary_index::{IndexedSession, assert_vector_hit, config, index_key, indexed_session};
+use super::{REPLY, TestResult, model_stub, start, stop, write_state};
 
 const SUMMARY_WAIT: Duration = Duration::from_secs(20);
 const POLL: Duration = Duration::from_millis(100);
 
-fn summary(path: &Path, conversation: &str) -> TestResult<Option<String>> {
-    let conn = rusqlite::Connection::open(path)?;
-    conn.busy_timeout(Duration::from_secs(5))?;
-    Ok(conn
-        .query_row(
-            "SELECT s.content FROM ros_summaries s
-               JOIN ros_summary_sources src ON src.summary_id = s.id
-               JOIN ros_messages m ON m.id = src.message_id
-              WHERE m.conversation_id = ?1 AND s.kind = 'session'
-                AND s.index_needs_repair = 0 AND s.embedding IS NOT NULL
-              LIMIT 1",
-            [conversation],
-            |row| row.get(0),
-        )
-        .optional()?)
-}
-
-async fn wait_summary(path: &Path, conversation: &str) -> TestResult<Option<String>> {
+async fn wait_summary(
+    path: &Path,
+    conversation: &str,
+    key: [u8; 32],
+) -> TestResult<Option<IndexedSession>> {
     let mut ticks = tokio::time::interval(POLL);
     let waited = tokio::time::timeout(SUMMARY_WAIT, async {
         loop {
             ticks.tick().await;
-            match summary(path, conversation) {
+            match indexed_session(path, conversation, key) {
                 Ok(Some(content)) => return Ok(content),
                 Ok(None) => {}
                 Err(error) => return Err(error.to_string()),
@@ -40,7 +26,7 @@ async fn wait_summary(path: &Path, conversation: &str) -> TestResult<Option<Stri
     .await;
     match waited {
         Ok(inner) => inner.map(Some).map_err(Into::into),
-        Err(_) => Ok(None),
+        Err(_elapsed) => Ok(None),
     }
 }
 
@@ -60,14 +46,8 @@ async fn local_publish(multipart: bool) -> TestResult {
     let database = home.join(".rivethub").join("memory.sqlite");
     let stub = model_stub().await?;
     let port = testkit::ports::claim()?;
-    let mut config = provider_at(
-        home,
-        &format!("http://{}", stub.addr),
-        &format!(
-            "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\n    workers: true\ngateway:\n  host: 127.0.0.1\n  port: {port}\n",
-            database.display()
-        ),
-    );
+    let endpoint = format!("http://{}", stub.addr);
+    let mut config = config(home, &database, &endpoint, port.number());
     if multipart {
         config = config.replace(
             "    type: openai-compatible",
@@ -88,6 +68,7 @@ async fn local_publish(multipart: bool) -> TestResult {
         .args(["memory", "settle", "live-ledger", "--json"])
         .env_clear()
         .env("HOME", home)
+        .env("PATH", "/usr/bin:/bin")
         .output()
         .await?;
     assert!(
@@ -97,12 +78,22 @@ async fn local_publish(multipart: bool) -> TestResult {
     );
     let state: kernel::memory::settlement::SettleResult = serde_json::from_slice(&settled.stdout)?;
     let conversation = state.conversation_id.to_string();
-    let summarized = wait_summary(&database, &conversation).await;
+    let summarized = wait_summary(&database, &conversation, index_key(&endpoint)).await;
+    let searched = if let Ok(Some(summary)) = &summarized {
+        assert_vector_hit(home, port.number(), summary).await
+    } else {
+        Ok(())
+    };
     let logs = stop(started).await;
     let closed = stub.close().await;
     let logs = logs?;
     closed?;
-    assert_eq!(summarized?.as_deref(), Some(REPLY), "{logs}");
+    assert_eq!(
+        summarized?.as_ref().map(|summary| summary.content.as_str()),
+        Some(REPLY),
+        "{logs}"
+    );
+    searched?;
     let conn = rusqlite::Connection::open(&database)?;
     let part_count: i64 = conn.query_row(
         "SELECT count(*) FROM ros_summaries WHERE conversation_id = ?1 AND kind = 'part'",
