@@ -217,7 +217,7 @@ async fn retire(
             DELETE FROM rh_wiki_topics WHERE slug = $1 RETURNING owner_user_id
          )
          INSERT INTO rh_wiki_redirects (from_slug, to_slug, created_at, owner_user_id)
-         SELECT $1, $2, $3, coalesce(rh_scope_principal(), owner_user_id) FROM retired
+         SELECT $1, $2, $3, coalesce(rh_scope_principal(), (SELECT owner_user_id FROM retired))
          ON CONFLICT (from_slug) DO UPDATE SET to_slug = EXCLUDED.to_slug,
              owner_user_id = coalesce(rh_wiki_redirects.owner_user_id, EXCLUDED.owner_user_id)",
         child,
@@ -253,5 +253,25 @@ async fn folding_adopts_a_legacy_redirect(
             .fetch_one(&mut *tx)
             .await?;
     assert_eq!(owner.as_deref(), Some("alice"));
+    Ok(())
+}
+
+#[cfg(test)]
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn folding_a_child_with_no_page_row_still_redirects(
+    pool: sqlx::PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut tx = pool.begin().await?;
+    sqlx::raw_sql(
+        "INSERT INTO rh_wiki_topics (slug, title, owner_user_id) VALUES ('parent', 'Parent', 'alice')",
+    )
+    .execute(&mut *tx)
+    .await?;
+    retire(&mut tx, "child", "parent", Timestamp::now(), &[]).await?;
+    let target: Option<String> =
+        sqlx::query_scalar("SELECT to_slug FROM rh_wiki_redirects WHERE from_slug = 'child'")
+            .fetch_optional(&mut *tx)
+            .await?;
+    assert_eq!(target.as_deref(), Some("parent"));
     Ok(())
 }

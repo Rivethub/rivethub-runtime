@@ -77,7 +77,7 @@ async fn transfer_ownership_writes_use_indexed_keys(pool: PgPool) -> TestResult 
          )
          INSERT INTO rh_wiki_redirects (from_slug, to_slug, created_at, owner_user_id)
          SELECT 'transfer-plan-1', 'transfer-plan-2', now(),
-             coalesce(rh_scope_principal(), owner_user_id) FROM retired
+             coalesce(rh_scope_principal(), (SELECT owner_user_id FROM retired))
          ON CONFLICT (from_slug) DO UPDATE SET to_slug = EXCLUDED.to_slug,
              owner_user_id = coalesce(rh_wiki_redirects.owner_user_id, EXCLUDED.owner_user_id)",
     )
