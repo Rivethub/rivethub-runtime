@@ -41,3 +41,4 @@ mod wiki_gate;
 mod wiki_integrity;
 mod wiki_runtime;
 mod wiki_scopes;
+mod worker_pause;

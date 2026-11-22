@@ -35,6 +35,7 @@ pub(super) async fn run(
     match command {
         MemoryCommand::Settle(args) => super::settle::run(args, env).await,
         MemoryCommand::Resummarize(args) => super::resummarize::run(args, env, shutdown).await,
+        MemoryCommand::Pause(args) => super::pause::run(args, env).await,
         MemoryCommand::QueueStatus { json } => queue_status(json, env).await,
         MemoryCommand::Retry {
             tasks,

@@ -13,6 +13,7 @@ pub use job_settings::tuned_embed;
 pub use job_settings::tuned_summary;
 pub use job_settings::worker_concurrency;
 mod outage;
+mod pause;
 mod report;
 mod role;
 mod runner;

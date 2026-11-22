@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use kernel::model::ModelCallFailure;
 use kernel::model::ModelProviderError;
+use kernel::queue::JobNotifications;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
@@ -203,6 +204,28 @@ fn io_refused(error: &(dyn std::error::Error + 'static)) -> bool {
 
 fn text_refused(text: &str) -> bool {
     text.to_ascii_lowercase().contains("connection refused")
+}
+
+pub(crate) async fn wait_outage(
+    notifications: &mut dyn JobNotifications,
+    cancel: &CancellationToken,
+) -> Result<bool, WorkerError> {
+    tokio::select! {
+        biased;
+        () = cancel.cancelled() => Ok(false),
+        incoming = notifications.recv() => match incoming {
+            Ok(()) => Ok(true),
+            Err(error) => {
+                let wrapped = WorkerError::queue(error);
+                if wrapped.database_unreachable() {
+                    Ok(wait(FLOOR, cancel).await)
+                } else {
+                    Err(wrapped)
+                }
+            }
+        },
+        () = tokio::time::sleep(FLOOR) => Ok(true),
+    }
 }
 
 #[cfg(test)]

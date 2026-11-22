@@ -6236,6 +6236,14 @@
       ],
       "type": "object"
     },
+    "PausableRole": {
+      "enum": [
+        "categorizer",
+        "wiki-builder",
+        "entity-builder"
+      ],
+      "type": "string"
+    },
     "PendingTagAction": {
       "enum": [
         "add",
@@ -14062,6 +14070,66 @@
       },
       "required": [
         "failing"
+      ],
+      "type": "object"
+    },
+    "WorkerPause": {
+      "properties": {
+        "paused": {
+          "type": "boolean"
+        },
+        "pausedAt": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "pausedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "queued": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "role": {
+          "$ref": "#/$defs/PausableRole"
+        }
+      },
+      "required": [
+        "role",
+        "paused",
+        "queued"
+      ],
+      "type": "object"
+    },
+    "WorkerPauseUpdate": {
+      "additionalProperties": false,
+      "properties": {
+        "paused": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "paused"
+      ],
+      "type": "object"
+    },
+    "WorkerPauses": {
+      "properties": {
+        "roles": {
+          "items": {
+            "$ref": "#/$defs/WorkerPause"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "roles"
       ],
       "type": "object"
     },

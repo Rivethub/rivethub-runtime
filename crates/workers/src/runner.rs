@@ -91,6 +91,7 @@ pub struct Runner<Q> {
     deletions: Option<Arc<dyn kernel::memory::SessionDeletion>>,
     digests: Option<crate::digest::DailyDigests>,
     scopes: Option<crate::OwnerScopes>,
+    pauses: crate::pause::Pauses,
     queue: Arc<Q>,
     targets: Arc<dyn EmbeddingStore>,
     summaries: Arc<dyn SummaryStore>,
@@ -131,6 +132,7 @@ where
             deletions: None,
             digests: None,
             scopes: deps.scopes,
+            pauses: crate::pause::Pauses::default(),
             queue,
             targets: deps.targets,
             summaries: deps.summaries,
@@ -215,6 +217,12 @@ where
     #[must_use]
     pub fn with_entity_builder(mut self, deps: EntityBuilderDeps) -> Self {
         self.entity = Some(deps);
+        self
+    }
+
+    #[must_use]
+    pub fn with_pauses(mut self, store: Arc<dyn kernel::queue::pause::WorkerPauses>) -> Self {
+        self.pauses = crate::pause::Pauses::reading(store);
         self
     }
 
@@ -436,7 +444,7 @@ where
                 Err(error) if error.database_unreachable() => {
                     drop(permit);
                     self.publish_idle(tasks.is_empty());
-                    if !wait_outage(notifications, cancel).await? {
+                    if !crate::outage::wait_outage(notifications, cancel).await? {
                         return Ok(());
                     }
                     continue;
@@ -469,7 +477,11 @@ where
         roles: &[WorkerRole],
         cancel: &CancellationToken,
     ) -> Result<Option<ClaimedJob>, WorkerError> {
+        let roles = self.pauses.claimable(roles).await?;
         let count = roles.len();
+        if count == 0 {
+            return Ok(None);
+        }
         let start = self.cursor.fetch_add(1, Ordering::Relaxed) % count;
         for role in roles.iter().cycle().skip(start).take(count) {
             if cancel.is_cancelled() {
@@ -613,27 +625,5 @@ where
             Some(error) => Err(error),
             None => Ok(()),
         }
-    }
-}
-
-async fn wait_outage(
-    notifications: &mut dyn JobNotifications,
-    cancel: &CancellationToken,
-) -> Result<bool, WorkerError> {
-    tokio::select! {
-        biased;
-        () = cancel.cancelled() => Ok(false),
-        incoming = notifications.recv() => match incoming {
-            Ok(()) => Ok(true),
-            Err(error) => {
-                let wrapped = WorkerError::queue(error);
-                if wrapped.database_unreachable() {
-                    Ok(crate::outage::wait(crate::outage::FLOOR, cancel).await)
-                } else {
-                    Err(wrapped)
-                }
-            }
-        },
-        () = tokio::time::sleep(crate::outage::FLOOR) => Ok(true),
     }
 }

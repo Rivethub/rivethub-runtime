@@ -8,6 +8,8 @@ use std::str::FromStr;
 use thiserror::Error;
 use values::JsonObject;
 
+pub mod pause;
+
 #[derive(Debug, Error)]
 pub enum JobQueueError {
     #[error("job queue is unavailable")]

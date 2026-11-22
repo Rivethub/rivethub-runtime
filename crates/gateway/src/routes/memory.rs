@@ -93,6 +93,14 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
             routing::get(super::memory_models::list).fallback(super::method_not_allowed),
         )
         .route(
+            "/workers/pauses",
+            routing::get(super::worker_pauses::list).fallback(super::method_not_allowed),
+        )
+        .route(
+            "/workers/{role}/pause",
+            routing::put(super::worker_pauses::set).fallback(super::method_not_allowed),
+        )
+        .route(
             "/flagged",
             routing::get(super::flagged::list).fallback(super::method_not_allowed),
         )

@@ -9,6 +9,12 @@ pub enum Error {
         "usage: rh memory resummarize <start|pause|resume|status|retry|release|arm-opening|rehearse>"
     )]
     ResummarizeUsage,
+    #[error(
+        "usage: rh memory pause [<role>] [--json] | rh memory resume <role> [--json]; roles: categorizer, wiki-builder, entity-builder"
+    )]
+    PauseUsage,
+    #[error(transparent)]
+    Unpausable(#[from] kernel::queue::pause::Unpausable),
     #[error(transparent)]
     ConversionStore(#[from] kernel::memory::SummaryStoreError),
     #[error("no unique owned conversation matches {0}")]

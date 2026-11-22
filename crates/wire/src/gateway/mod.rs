@@ -18,6 +18,7 @@ pub mod today;
 pub mod topics;
 pub mod users;
 pub mod wiki;
+pub mod worker_pauses;
 
 use crate::harness::HarnessId;
 use serde::{Deserialize, Serialize};

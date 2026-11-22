@@ -9,6 +9,7 @@ mod inbox;
 mod io;
 mod merge;
 mod parse;
+mod pause;
 mod receiving;
 mod recompile;
 mod resummarize;
@@ -76,6 +77,8 @@ Commands:\n\
   resummarize rehearse <conversation-id>... [--sqlite <file>] [--json]\n\
   resummarize status [--watch] [--sqlite <file>] [--json]\n\
   queue-status [--json]\n\
+  pause [categorizer|wiki-builder|entity-builder] [--json]\n\
+  resume categorizer|wiki-builder|entity-builder [--json]\n\
   retry-failed --task <identifier> [--task <identifier>] [--error <substring>] [--limit <n>] [--dry-run] [--json]\n\
   requeue --task <identifier> [--limit <n>] [--dry-run] [--json]\n\
   backfill-tool-synth [--limit <n>] [--dry-run] [--json]\n\
