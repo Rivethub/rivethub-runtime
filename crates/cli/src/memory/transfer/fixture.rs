@@ -132,9 +132,9 @@ INSERT INTO rh_space_members (space_id, user_id, role)
 SELECT id, 'bob', 'member' FROM rh_spaces WHERE id = 'team';
 INSERT INTO rh_topics (id, slug, name, kind, owner_user_id, created_at, updated_at)
 VALUES (gen_random_uuid(), 'cedar-owned-delete', 'Cedar owned delete', 'entity', 'bob', now(), now());
-INSERT INTO rh_topic_tombstones (kind, slug, deleted_at) VALUES ('entity', 'cedar-owned-delete', now());
+INSERT INTO rh_topic_tombstones (kind, slug, deleted_at, owner_user_id) VALUES ('entity', 'cedar-owned-delete', now(), 'bob');
 DELETE FROM rh_topics WHERE slug = 'cedar-owned-delete';
-INSERT INTO rh_topic_tombstones (kind, slug, deleted_at) VALUES ('entity', 'secret-deal', now());
+INSERT INTO rh_topic_tombstones (kind, slug, deleted_at, owner_user_id) VALUES ('entity', 'secret-deal', now(), 'bob');
 INSERT INTO rh_summaries (id, content, kind, owner_user_id, created_at)
 VALUES ('10000000-0000-0000-0000-000000000063', 'Private', 'leaf', 'bob', now());
 INSERT INTO rh_summary_passages
@@ -160,7 +160,7 @@ VALUES (gen_random_uuid(), '10000000-0000-0000-0000-000000000019', 'Cedar claim'
 pub(super) const HUB_MEMORY: &str = r#"
 INSERT INTO rh_topics (id, slug, name, kind, owner_user_id, created_at, updated_at)
 VALUES (gen_random_uuid(), 'owned-delete', 'Owned deleted topic', 'work', 'alice', now(), now());
-INSERT INTO rh_topic_tombstones (kind, slug, deleted_at) VALUES ('work', 'owned-delete', now());
+INSERT INTO rh_topic_tombstones (kind, slug, deleted_at, owner_user_id) VALUES ('work', 'owned-delete', now(), 'alice');
 DELETE FROM rh_topics WHERE slug = 'owned-delete';
 UPDATE rh_wiki_topics SET archived_sections = '[{"heading":"Hub archive","body":"Compiled on the hub"}]'
 WHERE slug = 'transfer';

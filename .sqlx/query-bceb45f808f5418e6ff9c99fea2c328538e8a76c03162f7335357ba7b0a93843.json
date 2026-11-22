@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO rh_topic_tombstones (kind, slug, deleted_at, owner_user_id)\n         VALUES ('entity', $1, $2, nullif($3, ''))\n         ON CONFLICT (kind, slug) DO UPDATE SET deleted_at = EXCLUDED.deleted_at,\n             owner_user_id = coalesce(EXCLUDED.owner_user_id, rh_topic_tombstones.owner_user_id)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bceb45f808f5418e6ff9c99fea2c328538e8a76c03162f7335357ba7b0a93843"
+}

@@ -56,7 +56,7 @@ async fn carries_own_claims_on_owned_topics_and_global_types(pool: PgPool) -> Te
     for who in ["alice", "bob"] {
         let local = store(&directory, who)?;
         let report = copy(&pool, &local, who, Direction::ToSqlite).await?;
-        assert_eq!(report.claims_on_other_topics, 1);
+        assert_eq!(report.omissions.claims_on_other_topics, 1);
         assert_eq!(
             strings(
                 &local,
@@ -151,20 +151,29 @@ async fn exports_redirects_by_creator_and_target(pool: PgPool) -> TestResult {
          INSERT INTO rh_wiki_redirects (from_slug, to_slug, created_at)
             VALUES ('bob-cross', 'alice-page', now());
          INSERT INTO rh_wiki_redirects (from_slug, to_slug, created_at, owner_user_id)
-            VALUES ('legacy', 'alice-page', now(), NULL)",
+            VALUES ('legacy', 'alice-page', now(), NULL), ('legacy-bob', 'bob-page', now(), NULL)",
     )
     .execute(&pool)
     .await?;
     let directory = tempfile::tempdir()?;
     let local = store(&directory, "local")?;
-    copy(&pool, &local, "alice", Direction::ToSqlite).await?;
+    let report = copy(&pool, &local, "alice", Direction::ToSqlite).await?;
     assert_eq!(
         strings(
             &local,
-            "SELECT from_slug || ':' || owner_user_id FROM ros_wiki_redirects"
+            "SELECT from_slug || ':' || owner_user_id FROM ros_wiki_redirects ORDER BY from_slug"
         )
         .await?,
-        vec!["alice-redirect:alice"]
+        vec!["alice-redirect:alice", "legacy:alice"]
+    );
+    assert_eq!(report.omissions.redirects_owned_by_others, 1);
+    assert_eq!(
+        copy(&pool, &local, "alice", Direction::ToPostgres)
+            .await?
+            .added
+            .values()
+            .sum::<u64>(),
+        0
     );
     Ok(())
 }
@@ -266,7 +275,8 @@ async fn legacy_deletes_stay_unattributed_and_redeletes_gain_the_live_topic_owne
     let local = store(&directory, "local")?;
     let again = TopicId::from_uuid(uuid::uuid!("00000000-0000-0000-0000-000000000011"));
     PostgresMemory::new(pool.clone()).delete(again).await?;
-    copy(&pool, &local, "alice", Direction::ToSqlite).await?;
+    let report = copy(&pool, &local, "alice", Direction::ToSqlite).await?;
+    assert_eq!(report.omissions.unattributed_topic_tombstones, 3);
     assert_eq!(
         strings(
             &local,
@@ -304,7 +314,8 @@ async fn comparison_reads_null_and_transfer_assigns_only_local_personal_rows(
         })
         .await?;
     let before = verify::sqlite(&pool, &local).await?;
-    copy(&pool, &local, "alice", Direction::ToPostgres).await?;
+    let report = copy(&pool, &local, "alice", Direction::ToPostgres).await?;
+    assert_eq!(report.omissions.unattributed_topic_tombstones, 1);
     copy(&pool, &restored, "alice", Direction::ToSqlite).await?;
     let after = verify::sqlite(&pool, &restored).await?;
     assert_ne!(before.get("rh_topics"), after.get("rh_topics"));

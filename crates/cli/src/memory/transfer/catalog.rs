@@ -148,7 +148,7 @@ impl Scope {
                         OR (t.owner_user_id IS NULL AND t.kind = 'type')))"
             }
             Self::OwnedRedirect => {
-                "r.owner_user_id = $1 AND r.to_slug IN
+                "(r.owner_user_id = $1 OR r.owner_user_id IS NULL) AND r.to_slug IN
                     (SELECT slug FROM rh_wiki_topics WHERE owner_user_id = $1)"
             }
             Self::Taxonomy => {

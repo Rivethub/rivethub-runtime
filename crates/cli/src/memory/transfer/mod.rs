@@ -41,8 +41,16 @@ pub(super) struct TransferReport {
     pub added: Counts,
     pub committed: bool,
     pub embeddings: &'static str,
-    pub claims_on_other_topics: u64,
+    #[serde(flatten)]
+    pub omissions: Omissions,
     pub excluded: &'static str,
+}
+
+#[derive(Debug, Default, serde::Serialize)]
+pub(super) struct Omissions {
+    pub claims_on_other_topics: u64,
+    pub redirects_owned_by_others: u64,
+    pub unattributed_topic_tombstones: u64,
 }
 
 pub(super) async fn run(
@@ -57,9 +65,9 @@ pub(super) async fn run(
     let tables = plan(&mut remote, local).await?;
     let owner = owner.as_str();
     let local_owner = local_owner.as_str();
-    let (read, added, claims_on_other_topics) = match direction {
+    let (read, added, omissions) = match direction {
         Direction::ToPostgres => {
-            let (mut batches, seeds) =
+            let (mut batches, seeds, omissions) =
                 sqlite::snapshot(local, tables, local_owner, shutdown.clone()).await?;
             remap_owner(&mut batches, local_owner, owner);
             passages::align(&mut batches, index_key);
@@ -71,12 +79,12 @@ pub(super) async fn run(
             } else {
                 remote.commit().await.map_err(pg::error)?;
             }
-            (read, added, 0)
+            (read, added, omissions)
         }
         Direction::ToSqlite => {
             let seeds = pg::seeds(&mut remote).await?;
             let mut batches = pg::snapshot(&mut remote, tables, owner, shutdown).await?;
-            let omitted = pg::excluded_claims(&mut remote, owner).await?;
+            let omitted = pg::omissions(&mut remote, owner, &batches).await?;
             remote.rollback().await.map_err(pg::error)?;
             let read = counts(&batches);
             remap_owner(&mut batches, owner, local_owner);
@@ -97,9 +105,9 @@ pub(super) async fn run(
         read,
         added,
         committed: !dry_run,
-        claims_on_other_topics,
+        omissions,
         embeddings: "Postgres indexes entity vectors as halfvec and retains SQLite f32 originals when rounding is needed. Summary passage vectors are reused only for the destination index key. The destination rebuilds other search embeddings and indexes.",
-        excluded: "Excluded: other people's rows and memberships, spaces outside the selected membership, global type definitions, unused global tag vocabulary, claims on other people’s topics, wiki redirects without established hub ownership or an exported target, unattributed topic tombstones, archived tasks and delegation runs, Git-backed wiki files and history, wiki recompile revisions, worker pauses, runs and reports, queued jobs, flags, failures, priorities and leases, message chunks, the summary conversion controller, merge and migration bookkeeping, hub state, role principals, and membership authority. Message counts and embedding retry state are rebuilt.",
+        excluded: "Excluded: other people's rows and memberships, spaces outside the selected membership, global type definitions, unused global tag vocabulary, claims on other people’s topics, wiki redirects owned by someone else or without an exported target, unattributed topic tombstones, archived tasks and delegation runs, Git-backed wiki files and history, wiki recompile revisions, worker pauses, runs and reports, queued jobs, flags, failures, priorities and leases, message chunks, the summary conversion controller, merge and migration bookkeeping, hub state, role principals, and membership authority. Message counts and embedding retry state are rebuilt.",
     })
 }
 

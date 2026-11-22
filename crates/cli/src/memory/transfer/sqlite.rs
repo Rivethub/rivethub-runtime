@@ -57,7 +57,7 @@ pub(super) async fn snapshot(
     tables: Vec<Table>,
     owner: &str,
     shutdown: CancellationToken,
-) -> Result<(Vec<Batch>, Seeds), Error> {
+) -> Result<(Vec<Batch>, Seeds, super::Omissions), Error> {
     let owner = owner.to_owned();
     Ok(store
         .with_conn(move |conn| {
@@ -69,7 +69,15 @@ pub(super) async fn snapshot(
                 let rows = read(&tx, &table, &owner)?;
                 batches.push(Batch { table, rows });
             }
-            Ok((batches, seeds(&tx)?))
+            let unattributed: i64 = tx.query_row(
+                "SELECT count(*) FROM rh_topic_tombstones WHERE owner_user_id IS NULL AND NOT locally_deleted",
+                [], |row| row.get(0),
+            ).map_err(query)?;
+            Ok((batches, seeds(&tx)?, super::Omissions {
+                unattributed_topic_tombstones: u64::try_from(unattributed)
+                    .map_err(|source| invalid(source.to_string()))?,
+                ..super::Omissions::default()
+            }))
         })
         .await?)
 }
@@ -404,6 +412,12 @@ fn check_sql(table: &Table, columns: &[(usize, &PgColumn)]) -> String {
     format!("SELECT EXISTS (SELECT 1 FROM {name} WHERE {equal})")
 }
 
+    if table.relation == Relation::WikiRedirects {
+        conn.execute(
+            "UPDATE ros_wiki_redirects SET owner_user_id = ?2 WHERE from_slug = ?1 AND owner_user_id IS NULL",
+            rusqlite::params![find("from_slug"), find("owner_user_id")],
+        ).map_err(query)?;
+    }
 fn apply_extra(conn: &Connection, table: &Table, row: &Row) -> Result<(), SqliteError> {
     let find = |name| super::cell(row, super::position(table, name));
     if table.relation == Relation::Conversations {

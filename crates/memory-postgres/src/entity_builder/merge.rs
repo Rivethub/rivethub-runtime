@@ -320,7 +320,9 @@ async fn redirect_wiki(
     sqlx::query!(
         "INSERT INTO rh_wiki_redirects (from_slug, to_slug, created_at, owner_user_id)
          VALUES ($1, $2, $3, coalesce(rh_scope_principal(), nullif($4, '')))
-         ON CONFLICT (from_slug) DO UPDATE SET to_slug = EXCLUDED.to_slug, created_at = EXCLUDED.created_at",
+         ON CONFLICT (from_slug) DO UPDATE SET to_slug = EXCLUDED.to_slug,
+             created_at = EXCLUDED.created_at,
+             owner_user_id = coalesce(rh_wiki_redirects.owner_user_id, EXCLUDED.owner_user_id)",
         absorbed.slug,
         survivor.slug,
         crate::time::BindTime::bind_time(now) as _,
@@ -466,11 +468,13 @@ async fn retire(
     now: Timestamp,
 ) -> Result<(), sqlx::Error> {
     sqlx::query!(
-        "INSERT INTO rh_topic_tombstones (kind, slug, deleted_at) VALUES ('entity', $1, $2)
+        "INSERT INTO rh_topic_tombstones (kind, slug, deleted_at, owner_user_id)
+         VALUES ('entity', $1, $2, nullif($3, ''))
          ON CONFLICT (kind, slug) DO UPDATE SET deleted_at = EXCLUDED.deleted_at,
-             owner_user_id = EXCLUDED.owner_user_id",
+             owner_user_id = coalesce(EXCLUDED.owner_user_id, rh_topic_tombstones.owner_user_id)",
         absorbed.slug,
-        crate::time::BindTime::bind_time(now) as _
+        crate::time::BindTime::bind_time(now) as _,
+        absorbed.owner_user_id
     )
     .execute(&mut **tx)
     .await?;

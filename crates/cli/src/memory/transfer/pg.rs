@@ -131,7 +131,49 @@ pub(super) async fn snapshot(
     Ok(snapshot)
 }
 
-pub(super) async fn excluded_claims(conn: &mut PgConnection, owner: &str) -> Result<u64, Error> {
+pub(super) async fn omissions(
+    conn: &mut PgConnection,
+    owner: &str,
+    batches: &[Batch],
+) -> Result<super::Omissions, Error> {
+    let pages = batches
+        .iter()
+        .find(|batch| batch.table.relation == Relation::WikiTopics)
+        .ok_or_else(|| invalid("missing wiki pages from transfer snapshot"))?;
+    let slug = super::position(&pages.table, "slug");
+    let slugs: Vec<_> = pages
+        .rows
+        .iter()
+        .filter_map(|row| super::cell(row, slug).map(str::to_owned))
+        .collect();
+    let claims_on_other_topics = excluded_claims(conn, owner).await?;
+    let redirects_owned_by_others = sqlx::query_scalar!(
+        r#"SELECT count(*) AS "count!" FROM rh_wiki_redirects r
+         WHERE r.owner_user_id <> $1 AND r.to_slug = ANY($2)"#,
+        owner,
+        &slugs
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(error)?;
+    let unattributed_topic_tombstones = sqlx::query_scalar!(
+        r#"SELECT count(*) AS "count!" FROM rh_topic_tombstones WHERE owner_user_id IS NULL"#
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(error)?;
+    Ok(super::Omissions {
+        claims_on_other_topics,
+        redirects_owned_by_others: omission_count(redirects_owned_by_others)?,
+        unattributed_topic_tombstones: omission_count(unattributed_topic_tombstones)?,
+    })
+}
+
+fn omission_count(count: i64) -> Result<u64, Error> {
+    u64::try_from(count).map_err(|err| invalid(err.to_string()))
+}
+
+async fn excluded_claims(conn: &mut PgConnection, owner: &str) -> Result<u64, Error> {
     let predicate = Relation::EntityFactClaims.owner_predicate()?;
     let sql = format!(
         "SELECT count(*) FROM rh_entity_fact_claims r WHERE r.owner_user_id = $1 AND NOT ({predicate})"
@@ -141,7 +183,7 @@ pub(super) async fn excluded_claims(conn: &mut PgConnection, owner: &str) -> Res
         .fetch_one(conn)
         .await
         .map_err(error)?;
-    u64::try_from(count).map_err(|err| invalid(err.to_string()))
+    omission_count(count)
 }
 
 fn projection(relation: Relation, column: &PgColumn) -> String {
@@ -149,6 +191,7 @@ fn projection(relation: Relation, column: &PgColumn) -> String {
     match (relation, name.as_str()) {
         (Relation::Messages | Relation::Summaries, "access_count" | "last_accessed_at") => {
             let (table, key) = if relation == Relation::Messages {
+        (Relation::WikiRedirects, "owner_user_id") => "coalesce(r.owner_user_id, $1)".to_owned(),
                 ("rh_message_access", "message_id")
             } else {
                 ("rh_summary_access", "summary_id")
@@ -320,7 +363,11 @@ async fn check_existing(conn: &mut PgConnection, batch: &Batch, stage: &str) -> 
                     format!("coalesce((SELECT {name} FROM rh_summary_access WHERE summary_id = r.id), r.{name})"),
                 _ => format!("r.{name}"),
             };
-            format!("s.{name} IS NOT DISTINCT FROM {value}")
+            if batch.table.relation == Relation::WikiRedirects && name == "owner_user_id" {
+                format!("({value} IS NULL OR s.{name} = {value})")
+            } else {
+                format!("s.{name} IS NOT DISTINCT FROM {value}")
+            }
         })
         .collect::<Vec<_>>().join(" AND ");
     let query = format!(

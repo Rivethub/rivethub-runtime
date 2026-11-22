@@ -114,8 +114,10 @@ missing, the command lists its slug before inserting any destination rows. Provi
 types on the destination and retry. Conflicting rows abort the destination transaction.
 
 The copy includes claims on the person's own topics and on global types. It reports how
-many of their claims refer to topics another person owns. Wiki redirects require both
-known ownership by the selected hub person and a page that travels with the copy.
+many of their claims refer to topics another person owns. A hub wiki redirect travels
+when its target page travels and its owner is the selected hub person or is unknown.
+The SQLite copy assigns the selected SQLite principal to legacy redirects with unknown
+owners. The report counts redirects to copied pages left behind because someone else owns them.
 The copy preserves each tag's stored display and includes shared taxonomy entries for its
 key and value. Without a taxonomy entry, the tag still has its own display text or the raw
 key and value. Unused shared vocabulary and other people's private vocabulary stay behind.
@@ -123,6 +125,7 @@ key and value. Unused shared vocabulary and other people's private vocabulary st
 The copy assigns ownerless personal rows in a standalone SQLite file to the chosen
 principal. Global type and shared taxonomy rows retain their shared status. Legacy
 `work`, `entity`, and `type` topic tombstones without evidence of ownership stay behind.
+The report counts those unattributed tombstones.
 
 SQLite stores entity vectors as f32 blobs. Postgres stores them at half precision and
 retains the original SQLite vector when the conversion rounds it. Summary passages travel

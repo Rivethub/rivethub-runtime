@@ -332,8 +332,12 @@ async fn transfer(
             "dry run, rolled back"
         };
         format!(
-            "merge-store {state}, {read} rows read, {added} added\nClaims left behind on other people’s topics = {}\n{}\n{}\n",
-            report.claims_on_other_topics, report.embeddings, report.excluded
+            "merge-store {state}, {read} rows read, {added} added\nClaims left behind on other people’s topics = {}\nRedirects left behind with another owner = {}\nUnattributed topic tombstones left behind = {}\n{}\n{}\n",
+            report.omissions.claims_on_other_topics,
+            report.omissions.redirects_owned_by_others,
+            report.omissions.unattributed_topic_tombstones,
+            report.embeddings,
+            report.excluded
         )
     }))
 }

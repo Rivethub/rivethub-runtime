@@ -5,19 +5,6 @@ BEGIN
     END IF;
 
     ALTER TABLE rh_topic_tombstones ADD COLUMN owner_user_id text;
-    CREATE FUNCTION rh_capture_topic_tombstone_owner() RETURNS trigger
-        LANGUAGE plpgsql
-        AS $owner$
-        BEGIN
-            IF NEW.owner_user_id IS NULL THEN
-                SELECT owner_user_id INTO NEW.owner_user_id FROM rh_topics
-                WHERE kind = NEW.kind AND slug = NEW.slug;
-            END IF;
-            RETURN NEW;
-        END
-        $owner$;
-    CREATE TRIGGER rh_capture_topic_tombstone_owner BEFORE INSERT ON rh_topic_tombstones
-        FOR EACH ROW EXECUTE FUNCTION rh_capture_topic_tombstone_owner();
 
     ALTER TABLE rh_wiki_redirects ADD COLUMN owner_user_id text;
     ALTER TABLE rh_wiki_redirects ALTER COLUMN owner_user_id SET DEFAULT rh_scope_principal();
