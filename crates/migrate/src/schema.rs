@@ -9,7 +9,7 @@ use crate::error::Error;
 use crate::upgrade;
 use crate::version::SchemaVersion;
 
-const CURRENT: SchemaVersion = SchemaVersion::V42;
+const CURRENT: SchemaVersion = SchemaVersion::V43;
 
 const SCHEMA_SQL: &str = include_str!("schema/schema_v7.sql");
 
@@ -230,6 +230,7 @@ fn create_fresh(conn: &mut Connection) -> Result<(), Error> {
     upgrade::add_conversion_second_pass(&tx).map_err(Error::SqliteCreate)?;
     upgrade::add_opening_checked_user_count(&tx).map_err(Error::SqliteCreate)?;
     upgrade::add_entity_builder(&tx).map_err(Error::SqliteCreate)?;
+    upgrade::add_summary_passages(&tx).map_err(Error::SqliteCreate)?;
     apply_tail_indexes(&tx)?;
     stamp_current(&tx)?;
     tx.commit().map_err(Error::SqliteCreate)

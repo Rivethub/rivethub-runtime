@@ -476,6 +476,7 @@ fn top_down_upgrade_from_sqlite_35_preserves_legacy_kinds_and_matches_fresh() ->
     let conn = Connection::open(&fresh)?;
     conn.execute("VACUUM INTO ?1", [upgraded.to_string_lossy().as_ref()])?;
     let old = Connection::open(&upgraded)?;
+    drop_summary_passage_schema(&old)?;
     old.execute_batch(
         "DROP VIEW rh_transcript_times;
          DROP INDEX rh_transcript_seek; DROP INDEX rh_transcript_recent;
@@ -547,6 +548,53 @@ fn top_down_upgrade_from_sqlite_35_preserves_legacy_kinds_and_matches_fresh() ->
     assert_eq!(row, ("branch".to_owned(), 2, None, false));
     assert_eq!(sqlite_definitions(&conn)?, sqlite_definitions(&up)?);
     Ok(())
+}
+
+#[test]
+fn summary_passage_upgrade_marks_pooled_indexes_for_repair() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("memory.sqlite");
+    migrate::sqlite(&path)?;
+    let old = rusqlite::Connection::open(&path)?;
+    drop_summary_passage_schema(&old)?;
+    old.execute_batch(
+        "INSERT INTO ros_summaries (id, kind, content, created_at, embedding, index_key)
+         VALUES ('modern', 'session', 'Paired records', '2026-01-01T00:00:00Z', zeroblob(4096), zeroblob(32)),
+                ('legacy', 'leaf', 'Older record', '2026-01-01T00:00:00Z', zeroblob(4096), NULL);
+         PRAGMA user_version = 42;",
+    )?;
+    drop(old);
+    migrate::sqlite(&path)?;
+    let current = rusqlite::Connection::open(&path)?;
+    let mut statement = current.prepare(
+        "SELECT id, embedding IS NOT NULL, index_needs_repair FROM ros_summaries ORDER BY id",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, bool>(1)?,
+                row.get::<_, bool>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(
+        rows,
+        [
+            ("legacy".to_owned(), true, false),
+            ("modern".to_owned(), false, true)
+        ]
+    );
+    Ok(())
+}
+
+fn drop_summary_passage_schema(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "DROP VIEW ros_summary_records_indexed;
+         DROP TRIGGER ros_summary_passages_invalidate;
+         DROP TABLE ros_summary_passages_fts;
+         DROP TABLE ros_summary_passages;",
+    )
 }
 
 fn sqlite_definitions(conn: &rusqlite::Connection) -> rusqlite::Result<Vec<(String, String)>> {

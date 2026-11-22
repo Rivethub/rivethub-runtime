@@ -107,7 +107,13 @@ async fn summary_search_hides_the_legacy_rows_of_a_session_tree() -> TestResult 
                  VALUES ('mixed', 'cli:mixed', 'fixture','2026-10-10T00:00:00Z','2026-10-10T00:00:00Z');
                  INSERT INTO ros_summaries (id, conversation_id, kind, content, created_at, latest_at)
                  VALUES ('old', 'mixed', 'leaf', 'invented tray legacy', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
-                        ('new', 'mixed', 'session', 'invented tray session', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');",
+                        ('new', 'mixed', 'session', 'invented tray session', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+                 UPDATE ros_summaries SET index_key = zeroblob(32) WHERE id = 'new';
+                 INSERT INTO ros_summary_passages (id, record_id, ordinal, char_start, char_end, content,
+                     earliest_at, latest_at, index_key, embedding)
+                 SELECT 'piece', id, 0, 0, length(content), content, latest_at, latest_at, index_key, zeroblob(4096)
+                 FROM ros_summaries WHERE id = 'new';
+                 UPDATE ros_summaries SET index_needs_repair = 0 WHERE id = 'new';",
             )
             .map_err(failed)
         })
@@ -121,6 +127,10 @@ async fn summary_search_hides_the_legacy_rows_of_a_session_tree() -> TestResult 
             )
             .await?;
         assert_eq!(result.results.len(), 1, "{mode}");
+        assert_eq!(
+            result.results.first().ok_or("session hit")?.detail_id(),
+            "piece"
+        );
         assert_eq!(
             result
                 .results

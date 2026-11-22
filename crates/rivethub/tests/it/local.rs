@@ -15,6 +15,8 @@ mod memory_http;
 #[path = "local/summarize.rs"]
 mod summarize;
 mod summary_conversion;
+#[path = "local/summary_index.rs"]
+mod summary_index;
 
 use jiff::Timestamp;
 use std::path::Path;

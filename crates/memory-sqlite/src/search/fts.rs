@@ -1,9 +1,17 @@
 pub(crate) fn fts_or(text: &str) -> Option<String> {
+    fts(text, " OR ")
+}
+
+pub(super) fn fts_and(text: &str) -> Option<String> {
+    fts(text, " AND ")
+}
+
+fn fts(text: &str, join: &str) -> Option<String> {
     let tokens: Vec<String> = text.split_whitespace().filter_map(fts_token).collect();
     if tokens.is_empty() {
         None
     } else {
-        Some(tokens.join(" OR "))
+        Some(tokens.join(join))
     }
 }
 

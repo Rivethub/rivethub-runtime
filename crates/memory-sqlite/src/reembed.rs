@@ -67,6 +67,13 @@ fn reset(conn: &Connection, now: Timestamp) -> Result<ReembedReport, SqliteError
             }
         }
     }
+    let cleared = conn
+        .execute(
+            "UPDATE ros_summary_passages SET embedding = NULL WHERE embedding IS NOT NULL",
+            [],
+        )
+        .map_err(SqliteError::query("reembed summary passages"))?;
+    report.cleared += u64::try_from(cleared).map_err(SqliteError::Count)?;
     let mut owners = conn
         .prepare("SELECT id FROM ros_summaries WHERE kind IN ('session', 'part')")
         .map_err(SqliteError::query("reembed session records"))?;

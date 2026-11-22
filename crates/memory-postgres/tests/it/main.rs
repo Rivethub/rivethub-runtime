@@ -32,6 +32,7 @@ mod shared_trash;
 mod store;
 mod store_edges;
 mod summary_dag;
+mod summary_passage_parity;
 mod summary_store;
 mod tag_suggest;
 mod tags;

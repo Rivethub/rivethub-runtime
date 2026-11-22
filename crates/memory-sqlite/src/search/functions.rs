@@ -15,6 +15,12 @@ pub(crate) fn compile(pattern: &str) -> Result<Regex, regex::Error> {
         .build()
 }
 
+pub(super) fn literal_lower(text: &str) -> String {
+    text.chars()
+        .flat_map(|character| character.to_lowercase().take(1))
+        .collect()
+}
+
 pub(crate) fn register(conn: &Connection) -> Result<(), SqliteError> {
     let flags = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
     conn.create_scalar_function("regexp", 2, flags, |ctx| {
@@ -25,6 +31,10 @@ pub(crate) fn register(conn: &Connection) -> Result<(), SqliteError> {
         Ok(text.map(|text| regex.is_match(&text)))
     })
     .map_err(SqliteError::query("register regexp"))?;
+    conn.create_scalar_function("rh_literal_lower", 1, flags, |ctx| {
+        Ok(literal_lower(&ctx.get::<String>(0)?))
+    })
+    .map_err(SqliteError::query("register literal case conversion"))?;
     let scorer = crate::trigrams::Scorer::new()?;
     conn.create_scalar_function("rh_similarity", 2, flags, move |ctx| {
         let left = ctx.get::<String>(0)?;

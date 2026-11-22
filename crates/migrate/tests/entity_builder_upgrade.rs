@@ -24,7 +24,7 @@ fn version_41_gains_entity_storage_and_preserves_existing_topics() -> Outcome {
     )?;
     drop(conn);
     let upgraded = migrate::sqlite(&path)?;
-    assert_eq!(upgraded.current, 42);
+    assert_eq!(upgraded.current, memory_sqlite::SCHEMA_VERSION);
     let conn = Connection::open(&path)?;
     let tables: i64 = conn.query_row(
         "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name IN (

@@ -31,7 +31,10 @@ const DAG_SQL: &str = "WITH RECURSIVE dag(id, level) AS ( \
     SELECT s.id, s.parent_id, CASE WHEN s.pipeline_version = 7 THEN s.depth ELSE max(dag.level) END AS level, s.kind, s.content, s.message_count, \
            s.earliest_at, s.latest_at, s.created_at, \
            CASE WHEN s.kind = 'section' THEN 'skipped' \
-                WHEN s.index_needs_repair OR (s.kind IN ('session', 'part') AND (s.index_key IS NULL OR (?2 IS NOT NULL AND s.index_key IS NOT ?2))) THEN 'pending' \
+                WHEN s.kind IN ('session', 'part') THEN
+                    CASE WHEN NOT s.index_needs_repair AND (?2 IS NULL OR s.index_key = ?2)
+                           AND EXISTS (SELECT 1 FROM ros_summary_records_indexed WHERE id = s.id)
+                         THEN 'embedded' ELSE 'pending' END \
                 WHEN s.embedding IS NOT NULL THEN 'embedded' \
                 WHEN s.embed_status = 'failed' THEN 'failed' \
                 WHEN s.embed_status = 'unembeddable' THEN 'skipped' \
