@@ -70,12 +70,11 @@ pub(super) enum Unread {
 }
 
 pub(super) fn installed(binary: &Path) -> Result<Version, Unread> {
-    Version::parse(&answer(binary, &["--version"])?)
+    Version::parse(&answer(Command::new(binary).arg("--version"))?)
 }
 
-pub(super) fn answer(binary: &Path, arguments: &[&str]) -> Result<String, Unread> {
-    let child = Command::new(binary)
-        .args(arguments)
+pub(super) fn answer(command: &mut Command) -> Result<String, Unread> {
+    let child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

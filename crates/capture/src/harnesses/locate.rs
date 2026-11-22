@@ -61,6 +61,11 @@ impl Locator {
     }
 
     #[must_use]
+    pub fn home(&self) -> Option<&Path> {
+        self.home.as_deref()
+    }
+
+    #[must_use]
     pub fn opencode_plugin(&self) -> Option<&Path> {
         self.opencode_plugin.as_deref()
     }
@@ -124,13 +129,9 @@ impl Locator {
 
     #[must_use]
     pub fn which(&self, binary: &str) -> Option<PathBuf> {
-        self.every(binary).next()
-    }
-
-    pub fn every(&self, binary: &str) -> impl Iterator<Item = PathBuf> {
         self.path_dirs
             .iter()
-            .map(move |dir| dir.join(binary))
-            .filter(|candidate| candidate.is_file())
+            .map(|dir| dir.join(binary))
+            .find(|candidate| candidate.is_file())
     }
 }

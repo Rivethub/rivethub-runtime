@@ -833,6 +833,37 @@ fn dsh_recall_follows_a_launcher_that_hands_off_to_mise() -> TestResult {
 }
 
 #[test]
+fn dsh_recall_does_not_ask_mise_about_a_launcher_that_is_not_its_own() -> TestResult {
+    use std::os::unix::fs::PermissionsExt as _;
+    let machine = machine()?;
+    isolated_dsh_install(&machine)?;
+    fs::write(
+        machine.path("bin/dsh"),
+        "#!/bin/sh\nexec /opt/dsh/bin/dsh \"$@\"\n",
+    )?;
+    fs::write(
+        machine.path("bin/mise"),
+        format!(
+            "#!/bin/sh\necho {}\n",
+            machine.path("install/node_modules/.bin/dsh").display()
+        ),
+    )?;
+    fs::set_permissions(machine.path("bin/mise"), fs::Permissions::from_mode(0o755))?;
+    machine.write(".dsh/.keep", "")?;
+    let refused = machine
+        .connect("dsh", Some(ConnectPart::Recall), false)
+        .err()
+        .ok_or("another launcher's install is not this dsh")?;
+    assert!(
+        refused
+            .to_string()
+            .contains("no @deepseek-ai/dsh-mcp-client"),
+        "{refused}"
+    );
+    Ok(())
+}
+
+#[test]
 fn dsh_recall_alone_is_an_error_when_rh_cannot_find_the_client() -> TestResult {
     let machine = machine()?;
     machine.write(".dsh/.keep", "")?;
