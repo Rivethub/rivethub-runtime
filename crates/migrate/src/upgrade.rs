@@ -76,7 +76,7 @@ fn step(conn: &mut Connection, to: SchemaVersion, now: Timestamp) -> Result<(), 
         | SchemaVersion::V40
         | SchemaVersion::V41
         | SchemaVersion::V42
-        | SchemaVersion::V45 => late_step(conn, to),
+        | SchemaVersion::V43 => late_step(conn, to),
     }
 }
 
@@ -122,7 +122,7 @@ fn late_step(conn: &mut Connection, to: SchemaVersion) -> Result<(), Error> {
         SchemaVersion::V40 => in_transaction(conn, to, add_conversion_second_pass),
         SchemaVersion::V41 => in_transaction(conn, to, add_opening_checked_user_count),
         SchemaVersion::V42 => in_transaction(conn, to, add_entity_builder),
-        SchemaVersion::V45 => in_transaction(conn, to, add_summary_passages),
+        SchemaVersion::V43 => in_transaction(conn, to, add_summary_passages),
         SchemaVersion::V37 => in_transaction(conn, to, add_opening_work),
         SchemaVersion::V35 => in_transaction(conn, to, |tx| {
             tx.execute_batch(include_str!("schema/model_calls_v35.sql"))
@@ -153,7 +153,7 @@ fn late_step(conn: &mut Connection, to: SchemaVersion) -> Result<(), Error> {
 }
 
 pub(crate) fn add_summary_passages(tx: &Transaction<'_>) -> rusqlite::Result<()> {
-    tx.execute_batch(include_str!("schema/summary_passages_v45.sql"))
+    tx.execute_batch(include_str!("schema/summary_passages_v43.sql"))
 }
 
 pub(crate) fn add_entity_builder(tx: &Transaction<'_>) -> rusqlite::Result<()> {
