@@ -6,7 +6,6 @@ mod lease;
 mod merge;
 mod pages;
 mod transcript;
-mod trigrams;
 mod types;
 mod work;
 

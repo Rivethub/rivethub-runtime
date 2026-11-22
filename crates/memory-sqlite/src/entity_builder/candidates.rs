@@ -8,7 +8,8 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 use uuid::Uuid;
 
 use super::identity::{self, EntityRow};
-use super::{claims, error, query, rows, stamp, trigrams, uuid};
+use super::{claims, error, query, rows, stamp, uuid};
+use crate::trigrams::Scorer;
 use crate::vector;
 
 const DIMENSIONS: usize = 1024;
@@ -33,11 +34,12 @@ pub(super) fn gather(
         .collect();
     let mut ordered = Vec::new();
     if !names.is_empty() {
-        let scored = entities
+        let scorer = Scorer::new().map_err(error)?;
+        let ranked = entities
             .iter()
-            .map(|row| (row, trigram(row, &names)))
+            .map(|row| (row, trigram(row, &names, scorer)))
             .collect();
-        for (row, score) in top(scored, TRIGRAM_LIMIT) {
+        for (row, score) in top(ranked, TRIGRAM_LIMIT) {
             push(&mut ordered, row, score, true);
         }
     }
@@ -85,13 +87,13 @@ fn keys(names: &[&str], markers: &[String]) -> Vec<String> {
     keys
 }
 
-fn trigram(row: &EntityRow, terms: &[&str]) -> f32 {
+fn trigram(row: &EntityRow, terms: &[&str], scorer: Scorer) -> f32 {
     terms
         .iter()
         .flat_map(|term| {
             std::iter::once(&row.name)
                 .chain(row.aliases.iter().map(|alias| &alias.name))
-                .map(move |name| trigrams::score(term, name))
+                .map(move |name| scorer.score(term, name))
         })
         .fold(0.0, f32::max)
 }

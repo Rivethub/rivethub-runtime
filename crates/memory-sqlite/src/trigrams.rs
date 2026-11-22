@@ -1,37 +1,59 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
+
+use regex::Regex;
 
 type Trigram = [u8; 3];
 
-pub(super) fn score(needle: &str, haystack: &str) -> f32 {
-    let needle = trigrams(needle).into_iter().collect::<HashSet<_>>();
-    let haystack = trigrams(haystack);
-    if needle.is_empty() || haystack.is_empty() {
-        return 0.0;
+static LIBC_C_UTF8_WORDS: LazyLock<Result<Regex, regex::Error>> = LazyLock::new(|| {
+    Regex::new(
+        r"[[\p{Alphabetic}\p{Nd}]&&\p{Age=14.0}--[\u{0363}-\u{036F}\u{0C04}\u{0F82}-\u{0F83}\u{1DD3}-\u{1DE6}\u{11080}-\u{11081}]]+",
+    )
+});
+
+#[derive(Clone, Copy)]
+pub(crate) struct Scorer(&'static Regex);
+
+impl Scorer {
+    pub(crate) fn new() -> Result<Self, regex::Error> {
+        LIBC_C_UTF8_WORDS.as_ref().map(Self).map_err(Clone::clone)
     }
-    let unique = haystack.iter().copied().collect::<HashSet<_>>();
-    let full = similarity(
-        needle.intersection(&unique).count(),
-        needle.len(),
-        unique.len(),
-    );
-    full.max(word_similarity(&needle, &haystack))
+
+    pub(crate) fn score(self, needle: &str, haystack: &str) -> f32 {
+        let needle = self.unique(needle);
+        let haystack = self.trigrams(haystack);
+        let full = set_similarity(&needle, &haystack.iter().copied().collect());
+        full.max(word_similarity(&needle, &haystack))
+    }
+
+    pub(crate) fn similarity(self, left: &str, right: &str) -> f32 {
+        set_similarity(&self.unique(left), &self.unique(right))
+    }
+
+    fn unique(self, text: &str) -> HashSet<Trigram> {
+        self.trigrams(text).into_iter().collect()
+    }
+
+    fn trigrams(self, text: &str) -> Vec<Trigram> {
+        let mut result = Vec::new();
+        for word in self.0.find_iter(text) {
+            let mut leading = ' ';
+            let mut middle = ' ';
+            let lowered = word
+                .as_str()
+                .chars()
+                .filter_map(|ch| ch.to_lowercase().next());
+            for trailing in lowered.chain(std::iter::once(' ')) {
+                result.push(compact([leading, middle, trailing]));
+                (leading, middle) = (middle, trailing);
+            }
+        }
+        result
+    }
 }
 
-fn trigrams(text: &str) -> Vec<Trigram> {
-    let text = text.to_lowercase();
-    let mut result = Vec::new();
-    for word in text
-        .split(|ch: char| !ch.is_alphanumeric())
-        .filter(|word| !word.is_empty())
-    {
-        let mut leading = ' ';
-        let mut middle = ' ';
-        for trailing in word.chars().chain(std::iter::once(' ')) {
-            result.push(compact([leading, middle, trailing]));
-            (leading, middle) = (middle, trailing);
-        }
-    }
-    result
+fn set_similarity(left: &HashSet<Trigram>, right: &HashSet<Trigram>) -> f32 {
+    ratio(left.intersection(right).count(), left.len(), right.len())
 }
 
 fn compact(characters: [char; 3]) -> Trigram {
@@ -42,18 +64,22 @@ fn compact(characters: [char; 3]) -> Trigram {
     for ch in characters {
         let mut utf8 = [0; 4];
         for byte in ch.encode_utf8(&mut utf8).bytes() {
-            crc ^= u32::from(byte) << 24;
+            let mut entry = (crc >> 24) ^ u32::from(byte);
             for _ in 0..8 {
-                let mask = 0_u32.wrapping_sub(crc >> 31);
-                crc = (crc << 1) ^ (mask & 0x04c1_1db7);
+                let mask = 0_u32.wrapping_sub(entry & 1);
+                entry = (entry >> 1) ^ (mask & 0xedb8_8320);
             }
+            crc = (crc << 8) ^ entry;
         }
     }
     let [first, second, third, _] = (!crc).to_ne_bytes();
     [first, second, third]
 }
 
-fn similarity(common: usize, needle: usize, extent: usize) -> f32 {
+fn ratio(common: usize, needle: usize, extent: usize) -> f32 {
+    if common == 0 {
+        return 0.0;
+    }
     #[expect(clippy::cast_precision_loss)]
     let ratio = common as f32 / (needle + extent - common) as f32;
     ratio
@@ -114,14 +140,14 @@ fn best_extent(
     upper: usize,
 ) -> (Extent, f32) {
     let mut best = extent;
-    let mut score = similarity(extent.common, needle.len(), extent.unique);
+    let mut score = ratio(extent.common, needle.len(), extent.unique);
     for (index, gram) in haystack
         .iter()
         .enumerate()
         .take(upper + 1)
         .skip(extent.lower)
     {
-        let next = similarity(extent.common, needle.len(), extent.unique);
+        let next = ratio(extent.common, needle.len(), extent.unique);
         if next > score {
             extent.lower = index;
             best = extent;
@@ -134,3 +160,6 @@ fn best_extent(
     }
     (best, score)
 }
+
+#[cfg(test)]
+mod parity;

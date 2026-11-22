@@ -43,6 +43,7 @@ mod tags_write;
 mod taxonomy;
 mod tenancy;
 mod tidy;
+mod trigrams;
 mod time;
 mod title;
 mod topic_pages;
