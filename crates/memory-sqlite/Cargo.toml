@@ -13,7 +13,7 @@ serde_with.workspace = true
 async-trait = { workspace = true }
 jiff = { workspace = true }
 hex = { workspace = true }
-half = "2"
+half = { workspace = true }
 kernel = { workspace = true }
 parking_lot = { workspace = true }
 rusqlite = { workspace = true, features = ["functions"] }

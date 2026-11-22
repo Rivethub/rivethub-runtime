@@ -39,6 +39,7 @@ getrandom = "0.4"
 harness-acp = { path = "crates/harness-acp", version = "0.8.3" }
 governor = { version = "0.10", default-features = false, features = ["std", "dashmap"] }
 headers = "0.4"
+half = "2"
 hex = "0.4"
 hmac = "0.13"
 http-body = { version = "1", default-features = false }

@@ -148,7 +148,7 @@ impl SqliteStore {
             } else {
                 Vec::new()
             };
-            tx.execute_batch(include_str!("entity_references.sql")).map_err(failure)?;
+            tx.execute_batch(sql::ENTITY_REFERENCES).map_err(failure)?;
             tx.execute_batch(sql::REFERENCES).map_err(failure)?;
             finish_revision(&tx, &prepared, conversion.is_some())?;
             tx.commit().map_err(failure)?;
