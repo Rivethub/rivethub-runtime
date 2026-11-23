@@ -39,7 +39,7 @@ pub(super) fn merge(
         let Some(parent) = message_parent(rows, &message_id) else {
             continue;
         };
-        apply(found, parent, &chosen, vector)?;
+        apply(found, parent, &chosen);
     }
     Ok(())
 }
@@ -50,12 +50,7 @@ fn message_parent<'a>(rows: &'a [ArmRow], message_id: &str) -> Option<&'a ArmRow
     })
 }
 
-fn apply(
-    found: &mut Vec<ArmRow>,
-    parent: &ArmRow,
-    chosen: &Chosen,
-    vector: &[f32],
-) -> Result<(), SqliteError> {
+fn apply(found: &mut Vec<ArmRow>, parent: &ArmRow, chosen: &Chosen) {
     if let Some(row) = found.iter_mut().find(|row| {
         row.candidate.id == parent.candidate.id
             && matches!(row.candidate.kind, Kind::Message { .. })
@@ -64,29 +59,12 @@ fn apply(
             row.score = chosen.score;
             row.candidate.chunk = Some(chosen.chunk.clone());
         }
-        return Ok(());
+        return;
     }
-    let (score, chunk) = kept_score(parent, chosen, vector)?;
     let mut row = parent.clone();
-    row.score = score;
-    row.candidate.chunk = chunk;
+    row.score = chosen.score;
+    row.candidate.chunk = Some(chosen.chunk.clone());
     found.push(row);
-    Ok(())
-}
-
-fn kept_score(
-    parent: &ArmRow,
-    chosen: &Chosen,
-    vector: &[f32],
-) -> Result<(f64, Option<MemoryChunkMatch>), SqliteError> {
-    let Some(bytes) = &parent.embedding else {
-        return Ok((chosen.score, Some(chosen.chunk.clone())));
-    };
-    let parent_score = cosine(bytes, vector)?;
-    if parent_score.total_cmp(&chosen.score).is_gt() {
-        return Ok((parent_score, None));
-    }
-    Ok((chosen.score, Some(chosen.chunk.clone())))
 }
 
 struct Chosen {

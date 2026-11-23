@@ -82,7 +82,7 @@ pub(crate) fn archive_job(
          SELECT j.task, j.job_key, j.payload, COALESCE(p.priority, 0), j.max_attempts,
                 MAX(COALESCE(f.failures, 0), j.attempts, 1), ?2,
                 COALESCE(f.first_failed_at, j.updated_at),
-                COALESCE(f.last_failed_at, ?3), ?3
+                COALESCE(f.last_failed_at, j.updated_at), ?3
            FROM ros_jobs j
            LEFT JOIN rh_job_priorities p ON p.job_id = j.id
            LEFT JOIN rh_job_failures f ON f.job_key = COALESCE(j.job_key, 'job:' || j.id)

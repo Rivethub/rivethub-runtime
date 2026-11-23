@@ -322,32 +322,24 @@ fn require_model(
 }
 
 pub(crate) fn require_width(conn: &rusqlite::Connection, got: usize) -> Result<(), SqliteError> {
-    let Some(expected) = recorded_width(conn)? else {
-        return Ok(());
-    };
-    same_width(got, expected)
+    adopt_width(conn, got)
 }
 
 pub(crate) fn require_chunk_width(
     conn: &rusqlite::Connection,
-    message_id: Option<&str>,
     got: usize,
 ) -> Result<(), SqliteError> {
-    let Some(expected) = established_width(conn, message_id)? else {
-        return Ok(());
-    };
-    same_width(got, expected)
+    adopt_width(conn, got)
 }
 
-fn established_width(
-    conn: &rusqlite::Connection,
-    message_id: Option<&str>,
-) -> Result<Option<usize>, SqliteError> {
-    if let Some(message_id) = message_id
-        && let Some(width) = parent_width(conn, message_id)?
-    {
-        return Ok(Some(width));
+fn adopt_width(conn: &rusqlite::Connection, got: usize) -> Result<(), SqliteError> {
+    if let Some(expected) = store_width(conn)? {
+        same_width(got, expected)?;
     }
+    meta::record_absent(conn, MetaKey::EmbedDims, &got.to_string())
+}
+
+fn store_width(conn: &rusqlite::Connection) -> Result<Option<usize>, SqliteError> {
     if let Some(width) = recorded_width(conn)? {
         return Ok(Some(width));
     }
@@ -377,21 +369,6 @@ fn stored_sample(conn: &rusqlite::Connection) -> Result<Option<usize>, SqliteErr
         conn,
         "SELECT length(embedding) FROM ros_wiki_topics WHERE embedding IS NOT NULL LIMIT 1",
     )
-}
-
-fn parent_width(
-    conn: &rusqlite::Connection,
-    message_id: &str,
-) -> Result<Option<usize>, SqliteError> {
-    let length: Option<i64> = conn
-        .query_row(
-            "SELECT length(embedding) FROM ros_messages WHERE id = ?1 AND embedding IS NOT NULL",
-            [message_id],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(SqliteError::query("embed width"))?;
-    width_of(length)
 }
 
 fn sample_width(conn: &rusqlite::Connection, sql: &str) -> Result<Option<usize>, SqliteError> {

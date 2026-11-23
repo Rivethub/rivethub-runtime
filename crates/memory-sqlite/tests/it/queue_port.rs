@@ -1,4 +1,5 @@
 use jiff::Timestamp;
+use kernel::flagged::FlaggedJobs as _;
 use kernel::queue::FixedJob;
 use kernel::queue::Job;
 use kernel::queue::JobId;
@@ -233,7 +234,7 @@ async fn complete_of_a_finished_claim_does_not_take_the_next_job() -> TestResult
 }
 
 #[tokio::test]
-async fn a_null_payload_is_dead_on_claim() -> TestResult {
+async fn a_null_payload_is_flagged_on_claim() -> TestResult {
     let opened = open()?;
     let store = &opened.store;
     store
@@ -266,10 +267,20 @@ async fn a_null_payload_is_dead_on_claim() -> TestResult {
         Some("alive")
     );
     let rows = jobs(store).await?;
-    let poison = row_with(&rows, "job_key", "poison")?;
-    assert_eq!(cell(poison, "state"), &Json::from("dead"));
+    assert_eq!(
+        rows.iter()
+            .find(|row| cell(row, "job_key") == &Json::from("poison")),
+        None
+    );
     let alive = row_with(&rows, "job_key", "embed-ros_messages-alive")?;
     assert_eq!(cell(alive, "state"), &Json::from("running"));
+    let flagged = store.flagged().await?;
+    assert_eq!(flagged.len(), 1);
+    let poison = flagged
+        .first()
+        .ok_or("the rejected payload left the ledger")?;
+    assert_eq!(poison.key.as_deref(), Some("poison"));
+    assert_eq!(store.flag_stuck().await?, 0);
     Ok(())
 }
 

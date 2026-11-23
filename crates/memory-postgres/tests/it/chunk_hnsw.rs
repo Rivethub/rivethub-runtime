@@ -74,13 +74,26 @@ fn is_limit(text: &str) -> bool {
 }
 
 fn blocks_the_index_order(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    lower.starts_with("sort")
-        || lower.starts_with("incremental sort")
-        || lower.starts_with("unique")
-        || lower.starts_with("hashaggregate")
-        || lower.starts_with("group")
-        || lower.starts_with("windowagg")
+    !allowed_under_the_limit(text)
+}
+
+fn allowed_under_the_limit(text: &str) -> bool {
+    text.to_ascii_lowercase().starts_with("nested loop")
+}
+
+#[test]
+fn an_aggregate_between_the_limit_and_the_hnsw_scan_is_rejected() {
+    let plan =
+        "Limit\n  -> Aggregate\n       -> Index Scan using ros_message_chunks_embedding_hnsw\n";
+    let found = hnsw_sits_under_the_limit(plan);
+    assert!(found.is_err(), "{found:?}");
+}
+
+#[test]
+fn a_nested_loop_between_the_limit_and_the_hnsw_scan_is_kept() {
+    let plan =
+        "Limit\n  -> Nested Loop\n       -> Index Scan using ros_message_chunks_embedding_hnsw\n";
+    assert_eq!(hnsw_sits_under_the_limit(plan), Ok(()));
 }
 
 fn probe_vector() -> Vec<f32> {

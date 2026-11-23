@@ -36,7 +36,7 @@ pub(crate) fn insert(
     now: Timestamp,
 ) -> Result<(), SqliteError> {
     if let Some(vector) = chunk.vector.as_deref() {
-        crate::embed_store::require_chunk_width(conn, Some(message_id), vector.len())?;
+        crate::embed_store::require_chunk_width(conn, vector.len())?;
     }
     let id = Uuid::new_v4().to_string();
     let bytes = chunk.vector.as_deref().map(vector::pack);
@@ -66,16 +66,6 @@ pub(crate) fn insert(
     Ok(())
 }
 
-fn message_of(conn: &rusqlite::Connection, id: &str) -> Result<Option<String>, SqliteError> {
-    conn.query_row(
-        &format!("SELECT message_id FROM {TABLE} WHERE id = ?1"),
-        [id],
-        |row| row.get(0),
-    )
-    .optional()
-    .map_err(SqliteError::query("load message chunk"))
-}
-
 pub(crate) fn load(conn: &rusqlite::Connection, id: &str) -> Result<Option<String>, SqliteError> {
     conn.query_row(
         &format!("SELECT content FROM {TABLE} WHERE id = ?1"),
@@ -95,8 +85,7 @@ pub(crate) fn write_embedding(
     if bytes.len() != got * 4 {
         return Err(SqliteError::StoredEmbedding);
     }
-    let message = message_of(conn, id)?;
-    crate::embed_store::require_chunk_width(conn, message.as_deref(), got)?;
+    crate::embed_store::require_chunk_width(conn, got)?;
     conn.execute(
         &format!(
             "UPDATE {TABLE} SET embedding = ?2, embed_error = NULL, embed_status = 'done', \

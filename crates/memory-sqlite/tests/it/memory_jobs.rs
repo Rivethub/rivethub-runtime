@@ -57,6 +57,28 @@ async fn a_chunk_write_rejects_a_vector_wider_than_the_message() -> TestResult {
 }
 
 #[tokio::test]
+async fn a_chunk_written_first_fixes_the_store_width() -> TestResult {
+    let fresh = fresh_store()?;
+    testkit::memory_jobs::a_chunk_written_first_fixes_the_store_width(&fresh.store).await
+}
+
+#[tokio::test]
+async fn a_parent_outside_the_cap_uses_the_chunk_score() -> TestResult {
+    let fresh = fresh_store()?;
+    let provider: Arc<dyn kernel::model::ModelProvider> =
+        Arc::new(FakeProvider::new(vec![Script::Embed(vec![Embedding {
+            vector: testkit::memory_jobs::query_vector(),
+        }])]));
+    let store = fresh.store.with_query_embed(QueryEmbed::new(
+        provider,
+        kernel::memory_core::DEFAULT_EMBED_QUERY_INSTRUCTION.to_owned(),
+        Duration::from_secs(5),
+        CancellationToken::new(),
+    ));
+    testkit::memory_jobs::a_parent_outside_the_cap_uses_the_chunk_score(&store).await
+}
+
+#[tokio::test]
 async fn a_chunk_embedding_write_rejects_a_vector_wider_than_the_message() -> TestResult {
     let fresh = fresh_store()?;
     let message = Uuid::new_v4().to_string();
