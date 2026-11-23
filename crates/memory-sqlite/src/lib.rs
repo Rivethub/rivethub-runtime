@@ -20,6 +20,7 @@ mod memory_port;
 mod message;
 mod meta;
 mod model_calls;
+mod page_files;
 mod port;
 mod queue;
 mod read;
@@ -51,15 +52,19 @@ mod tidy;
 mod time;
 mod title;
 mod topic_pages;
+mod topic_write;
 mod topics;
 mod trigrams;
 mod unembedded;
 mod vector;
+mod wiki_archive;
 mod wiki_builder;
 mod wiki_citations;
 mod wiki_consolidate;
 mod wiki_held;
 mod wiki_history;
+mod wiki_materialize;
+mod wiki_page_files;
 mod wiki_read;
 mod wiki_topics;
 mod worker_pauses;
@@ -67,6 +72,7 @@ mod worker_pauses;
 use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicI64;
@@ -80,6 +86,9 @@ pub use capture::MAX_CONTENT_CHARS;
 pub use error::SqliteError;
 #[doc(hidden)]
 pub use flagged::archive_for_test;
+pub use page_files::set_lock_pause;
+#[doc(hidden)]
+pub use page_files::set_row_pause;
 pub use queue::ClaimedSqliteJob;
 pub use queue::FailOutcome;
 pub use queue::JobInsert;
@@ -112,6 +121,24 @@ pub const SCHEMA_VERSION: i64 = 47;
 mod entity_builder;
 
 const FILE_PRAGMAS: &str = "PRAGMA journal_mode = wal;\nPRAGMA foreign_keys = ON;";
+const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+fn prepare_conn(conn: &Connection) -> Result<(), SqliteError> {
+    conn.execute_batch(FILE_PRAGMAS)
+        .map_err(SqliteError::Pragma)?;
+    conn.busy_timeout(BUSY_TIMEOUT)
+        .map_err(SqliteError::Pragma)?;
+    register(conn)
+}
+
+pub(crate) fn open_writer(path: &Path) -> Result<Connection, SqliteError> {
+    let conn = Connection::open(path).map_err(|source| SqliteError::Open {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    prepare_conn(&conn)?;
+    Ok(conn)
+}
 
 #[derive(Debug, Default)]
 struct ClaimIds {
@@ -131,6 +158,7 @@ pub struct SqliteStore {
     query_embed: Option<QueryEmbed>,
     embed_model: Option<String>,
     summary_index_key: Option<[u8; 32]>,
+    wiki_directory: Option<Arc<PathBuf>>,
     notifications: tokio::sync::watch::Sender<()>,
     pause_watch: Arc<job_notify::PauseWatch>,
     summaries_written: tokio::sync::broadcast::Sender<kernel::memory::WrittenSummary>,
@@ -169,6 +197,17 @@ impl SqliteStore {
     pub fn with_embed_model(mut self, model: &str) -> Self {
         self.embed_model = Some(model.to_owned());
         self
+    }
+
+    #[must_use]
+    pub fn with_wiki_directory(mut self, directory: PathBuf) -> Self {
+        self.wiki_directory = Some(Arc::new(directory));
+        self
+    }
+
+    #[must_use]
+    pub fn wiki_directory(&self) -> Option<&Path> {
+        self.wiki_directory.as_deref().map(PathBuf::as_path)
     }
 
     #[must_use]
@@ -268,13 +307,15 @@ fn opened(path: &Path, read_only: bool) -> Result<SqliteStore, SqliteError> {
     let found = read_user_version(path)?;
     verify(path, found)?;
     let conn = open_file(path, read_only)?;
-    let pragmas = if read_only {
-        "PRAGMA foreign_keys = ON;"
+    if read_only {
+        conn.execute_batch("PRAGMA foreign_keys = ON;")
+            .map_err(SqliteError::Pragma)?;
+        conn.busy_timeout(BUSY_TIMEOUT)
+            .map_err(SqliteError::Pragma)?;
+        register(&conn)?;
     } else {
-        FILE_PRAGMAS
-    };
-    conn.execute_batch(pragmas).map_err(SqliteError::Pragma)?;
-    register(&conn)?;
+        prepare_conn(&conn)?;
+    }
     Ok(from_conn(conn, SharedClock::new(Timestamp::now)))
 }
 
@@ -310,6 +351,7 @@ fn from_conn(conn: Connection, clock: SharedClock) -> SqliteStore {
         query_embed: None,
         embed_model: None,
         summary_index_key: None,
+        wiki_directory: None,
         notifications: tokio::sync::watch::channel(()).0,
         pause_watch: Arc::new(job_notify::PauseWatch::new()),
         summaries_written: tokio::sync::broadcast::channel(SUMMARY_WRITTEN_BUFFER).0,

@@ -1,7 +1,7 @@
-pub(crate) mod archive;
+pub mod archive;
 mod history;
 mod lock;
-pub(crate) mod references;
+pub mod references;
 
 use jiff::Timestamp;
 use std::path::{Component, Path, PathBuf};
@@ -13,6 +13,14 @@ use kernel::wiki::page::lead::stable_summary;
 use kernel::wiki::page::{
     PagePatch, WikiPage, apply_patch, normalize_slug, parse_wiki_page, serialize_wiki_page,
 };
+#[cfg(feature = "git-fault")]
+use parking_lot::Mutex;
+#[cfg(feature = "git-fault")]
+use std::sync::LazyLock;
+#[cfg(feature = "git-fault")]
+use std::sync::atomic::AtomicU64;
+#[cfg(feature = "git-fault")]
+use std::sync::atomic::Ordering;
 use tokio::process::Command;
 
 use lock::WriterLock;
@@ -37,7 +45,7 @@ impl WikiRepository {
         }
     }
 
-    pub(crate) fn for_store(root: PathBuf) -> Self {
+    pub fn for_store(root: PathBuf) -> Self {
         Self {
             root,
             sql_references: true,
@@ -82,6 +90,18 @@ repository holder can still acquire a pooled connection."]
             sql_references: self.sql_references,
         })
     }
+
+    pub async fn try_lock(&self) -> Result<Option<LockedRepository>, WikiWriteError> {
+        let root = prepare_root(&self.root).await?;
+        let Some(lock) = WriterLock::try_acquire(&root).await? else {
+            return Ok(None);
+        };
+        Ok(Some(LockedRepository {
+            root,
+            lock,
+            sql_references: self.sql_references,
+        }))
+    }
 }
 
 #[derive(Debug)]
@@ -92,6 +112,11 @@ pub struct LockedRepository {
 }
 
 impl LockedRepository {
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     pub async fn apply(
         &mut self,
         patch: PagePatch,
@@ -411,6 +436,74 @@ async fn write_page(temporary: &Path, path: &Path, markdown: &[u8]) -> Result<()
 }
 
 pub(super) async fn git(root: &Path, args: &[&str]) -> Result<String, WikiWriteError> {
+    #[cfg(feature = "git-fault")]
+    if let Some(error) = git_fault(root, args) {
+        return Err(error);
+    }
+    run_git(root, args).await
+}
+
+#[cfg(feature = "git-fault")]
+struct GitFault {
+    id: u64,
+    root: PathBuf,
+    command: &'static str,
+}
+
+#[cfg(feature = "git-fault")]
+static GIT_FAULTS: LazyLock<Mutex<Vec<GitFault>>> = LazyLock::new(Mutex::default);
+
+#[cfg(feature = "git-fault")]
+static GIT_FAULT_IDS: AtomicU64 = AtomicU64::new(1);
+
+#[cfg(feature = "git-fault")]
+#[derive(Debug)]
+pub struct GitFaultGuard {
+    id: u64,
+}
+
+#[cfg(feature = "git-fault")]
+impl Drop for GitFaultGuard {
+    fn drop(&mut self) {
+        GIT_FAULTS.lock().retain(|fault| fault.id != self.id);
+    }
+}
+
+#[cfg(feature = "git-fault")]
+pub fn fail_git(root: &Path, command: &'static str) -> GitFaultGuard {
+    let id = GIT_FAULT_IDS.fetch_add(1, Ordering::Relaxed);
+    GIT_FAULTS.lock().push(GitFault {
+        id,
+        root: root.to_path_buf(),
+        command,
+    });
+    GitFaultGuard { id }
+}
+
+#[cfg(feature = "git-fault")]
+fn git_fault(root: &Path, args: &[&str]) -> Option<WikiWriteError> {
+    let command = args.first().copied()?;
+    let roots: Vec<PathBuf> = GIT_FAULTS
+        .lock()
+        .iter()
+        .filter(|fault| fault.command == command)
+        .map(|fault| fault.root.clone())
+        .collect();
+    if !roots.iter().any(|fault| same_root(fault, root)) {
+        return None;
+    }
+    Some(WikiWriteError::Git {
+        operation: args.join(" "),
+        message: "injected git failure".to_owned(),
+    })
+}
+
+#[cfg(feature = "git-fault")]
+fn same_root(fault: &Path, root: &Path) -> bool {
+    fault == root || std::fs::canonicalize(fault).is_ok_and(|canonical| canonical == root)
+}
+
+async fn run_git(root: &Path, args: &[&str]) -> Result<String, WikiWriteError> {
     let output = Command::new("git")
         .current_dir(root)
         .args(["-c", "gc.auto=0", "-c", "maintenance.auto=false"])

@@ -58,11 +58,31 @@ impl EntityLease for Lease {
     ) -> Result<PublishOutcome, EntityStoreError> {
         let key = self.guard.key()?;
         let body = body.clone();
-        write(&self.store, move |tx| {
-            key.check(tx)?;
-            apply(tx, key.id, &body, now)
-        })
-        .await
+        let Some(directory) = self
+            .store
+            .wiki_directory()
+            .map(std::path::Path::to_path_buf)
+        else {
+            return write(&self.store, move |tx| {
+                key.check(tx)?;
+                apply(tx, key.id, &body, now)
+            })
+            .await;
+        };
+        let body = body.clone();
+        super::filed::commit_filed(
+            &self.store,
+            &directory,
+            key,
+            now,
+            move |tx| {
+                let filed = stage_rewrite(tx, key.id, &body)?;
+                Ok(Some((filed.view, filed.prose)))
+            },
+            move |tx, view, page, sha| pages::store_rendered(tx, view, page, sha, now),
+        )
+        .await?
+        .ok_or_else(|| error(std::io::Error::other("entity rewrite produced no page")))
     }
 
     async fn record_mention(
@@ -72,16 +92,44 @@ impl EntityLease for Lease {
     ) -> Result<Option<String>, EntityStoreError> {
         let key = self.guard.key()?;
         let note = note.clone();
-        write(&self.store, move |tx| {
-            key.check(tx)?;
-            mention(tx, key.id, &note, now)
-        })
-        .await
+        let Some(directory) = self
+            .store
+            .wiki_directory()
+            .map(std::path::Path::to_path_buf)
+        else {
+            return write(&self.store, move |tx| {
+                key.check(tx)?;
+                mention(tx, key.id, &note, now)
+            })
+            .await;
+        };
+        let note = note.clone();
+        match super::filed::commit_filed(
+            &self.store,
+            &directory,
+            key,
+            now,
+            move |tx| Ok(stage_mention(tx, key.id, &note)?.map(|filed| (filed.view, filed.prose))),
+            move |tx, view, page, sha| pages::store_rendered(tx, view, page, sha, now),
+        )
+        .await?
+        {
+            None => Ok(None),
+            Some(PublishOutcome::Stored { git_sha, .. }) => Ok(Some(git_sha)),
+            Some(PublishOutcome::Stale(_)) => Err(error(std::io::Error::other(
+                "entity changed during mention storage",
+            ))),
+        }
     }
 
     async fn release(&mut self) -> Result<(), EntityStoreError> {
         self.guard.release().await
     }
+}
+
+struct Filed {
+    view: kernel::wiki::entity_pass::EntityView,
+    prose: EntityProse,
 }
 
 fn apply(
@@ -90,6 +138,15 @@ fn apply(
     body: &StoredRewrite,
     now: Timestamp,
 ) -> Result<PublishOutcome, EntityStoreError> {
+    let filed = stage_rewrite(tx, id, body)?;
+    pages::store(tx, &filed.view, &filed.prose, now)
+}
+
+fn stage_rewrite(
+    tx: &Transaction<'_>,
+    id: Uuid,
+    body: &StoredRewrite,
+) -> Result<Filed, EntityStoreError> {
     if body.owner.trim().is_empty() {
         return Err(error(std::io::Error::other("entity rewrite has no owner")));
     }
@@ -115,7 +172,10 @@ fn apply(
             article: body.article.clone(),
         }
     };
-    pages::store(tx, &pages::view(tx, id)?, &prose, now)
+    Ok(Filed {
+        view: pages::view(tx, id)?,
+        prose,
+    })
 }
 
 fn mention(
@@ -124,6 +184,22 @@ fn mention(
     note: &MentionNote,
     now: Timestamp,
 ) -> Result<Option<String>, EntityStoreError> {
+    let Some(filed) = stage_mention(tx, id, note)? else {
+        return Ok(None);
+    };
+    match pages::store(tx, &filed.view, &filed.prose, now)? {
+        PublishOutcome::Stored { git_sha, .. } => Ok(Some(git_sha)),
+        PublishOutcome::Stale(_) => Err(error(std::io::Error::other(
+            "entity changed during mention storage",
+        ))),
+    }
+}
+
+fn stage_mention(
+    tx: &Transaction<'_>,
+    id: Uuid,
+    note: &MentionNote,
+) -> Result<Option<Filed>, EntityStoreError> {
     if note.owner.trim().is_empty() {
         return Err(error(std::io::Error::other("entity mention has no owner")));
     }
@@ -137,12 +213,10 @@ fn mention(
     };
     pages::write_history(tx, id, line, &note.owner, true)?;
     let prose = current_prose(tx, &view)?;
-    match pages::store(tx, &pages::view(tx, id)?, &prose, now)? {
-        PublishOutcome::Stored { git_sha, .. } => Ok(Some(git_sha)),
-        PublishOutcome::Stale(_) => Err(error(std::io::Error::other(
-            "entity changed during mention storage",
-        ))),
-    }
+    Ok(Some(Filed {
+        view: pages::view(tx, id)?,
+        prose,
+    }))
 }
 
 fn current_prose(

@@ -2923,6 +2923,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
+ "wiki-files",
  "wire",
 ]
 
@@ -2953,6 +2954,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
+ "wiki-files",
  "wire",
 ]
 
@@ -5731,6 +5733,20 @@ dependencies = [
  "libredox",
  "objc2-system-configuration",
  "web-sys",
+]
+
+[[package]]
+name = "wiki-files"
+version = "0.8.3"
+dependencies = [
+ "jiff 1.0.1",
+ "kernel",
+ "parking_lot",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+ "wire",
 ]
 
 [[package]]

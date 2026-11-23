@@ -379,7 +379,7 @@ async fn import(
         Target::Postgres(url) => {
             import_postgres(&url, &loaded.text, dry_run, header, shutdown).await
         }
-        Target::Sqlite(path) => import_sqlite(path, loaded, dry_run, header, shutdown).await,
+        Target::Sqlite(path) => import_sqlite(path, loaded, dry_run, header, shutdown, env).await,
     }
 }
 
@@ -466,9 +466,11 @@ async fn import_sqlite(
     dry_run: bool,
     header: io::Header,
     shutdown: &CancellationToken,
+    env: &Environment,
 ) -> Result<Report, Error> {
     let origin = io::finish_origin(header, super::target::sqlite_origin()?);
-    let store = open_sqlite(&database).await?;
+    let directory = configured_wiki(env)?;
+    let store = open_sqlite(&database).await?.with_wiki_directory(directory);
     let dump = loaded.dump_path();
     let report = if dry_run {
         store.preview_pg_dump(dump, shutdown.clone()).await?
@@ -482,6 +484,12 @@ async fn import_sqlite(
         Some(report.summary_records_losing_passage_vectors),
         dry_run,
     )
+}
+
+fn configured_wiki(env: &Environment) -> Result<PathBuf, Error> {
+    Ok(super::target::load_present(env)?
+        .unwrap_or_default()
+        .wiki_directory(env))
 }
 
 async fn publish(out: Option<PathBuf>, bytes: Vec<u8>, tty: bool) -> Result<Report, Error> {

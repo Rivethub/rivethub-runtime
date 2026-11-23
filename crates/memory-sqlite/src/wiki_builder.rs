@@ -17,6 +17,7 @@ use rusqlite::Connection;
 use rusqlite::OptionalExtension as _;
 use rusqlite::Transaction;
 use rusqlite::params;
+use std::path::PathBuf;
 use uuid::Uuid;
 
 use crate::SqliteStore;
@@ -53,10 +54,13 @@ impl WikiBuilderStore for SqliteStore {
     ) -> Result<Vec<String>, WikiStoreError> {
         let job = job.clone();
         let routing = routing.clone();
-        blocking(self, move |conn| {
-            apply_all(conn, &job, patches, &routing, now)
-        })
-        .await
+        let Some(directory) = self.wiki_directory().map(std::path::Path::to_path_buf) else {
+            return blocking(self, move |conn| {
+                apply_all(conn, &job, patches, &routing, now)
+            })
+            .await;
+        };
+        file_apply(self, job, patches, routing, now, directory).await
     }
 
     async fn fail_wiki(
@@ -128,10 +132,161 @@ fn work(conn: &Connection, job: &ExtractWiki) -> Result<WikiWork, WikiStoreError
     Ok(WikiWork::Pending(summary))
 }
 
+struct Ready {
+    summary: WikiSummary,
+    patches: Vec<WikiPatch>,
+    routing: WikiRouting,
+    now: Timestamp,
+}
+
+enum Prepared {
+    Done(Vec<String>),
+    Ready(Box<Ready>),
+}
+
+async fn file_apply(
+    store: &SqliteStore,
+    job: ExtractWiki,
+    patches: Vec<WikiPatch>,
+    routing: WikiRouting,
+    now: Timestamp,
+    directory: PathBuf,
+) -> Result<Vec<String>, WikiStoreError> {
+    reject_empty(&patches)?;
+    let path = crate::page_files::database_path(store).await?;
+    let locked = crate::page_files::Files::wiki(&directory).lock().await?;
+    crate::page_files::blocking_locked(locked, move |locked| {
+        let mut held = crate::page_files::HeldTx::open(&path)?;
+        let tx = held.immediate()?;
+        let ready = match prepare_file(&tx, &job, patches, &routing, now)? {
+            Prepared::Done(topics) => {
+                tx.commit().map_err(query)?;
+                return Ok(topics);
+            }
+            Prepared::Ready(ready) => ready,
+        };
+        checked_deferred(&ready.summary, &ready.routing)?;
+        let (touched, last_sha) = crate::wiki_page_files::write_in_order(
+            locked,
+            &tx,
+            &ready.summary,
+            ready.patches,
+            &ready.routing,
+            ready.now,
+        )?;
+        let touched = close_file(
+            &tx,
+            &ready.summary,
+            touched,
+            last_sha.as_deref(),
+            &ready.routing,
+            ready.now,
+        )?;
+        tx.commit().map_err(query)?;
+        Ok(touched)
+    })
+    .await
+}
+
+fn checked_deferred(summary: &WikiSummary, routing: &WikiRouting) -> Result<(), WikiStoreError> {
+    if let Some(deferred) = &routing.deferred
+        && deferred.summary_id != summary.id
+    {
+        return Err(SummaryReferenceError::Stale(deferred.summary_id).into());
+    }
+    Ok(())
+}
+
+fn prepare_file(
+    tx: &Transaction<'_>,
+    job: &ExtractWiki,
+    patches: Vec<WikiPatch>,
+    routing: &WikiRouting,
+    now: Timestamp,
+) -> Result<Prepared, WikiStoreError> {
+    let input = summary_replace::shared(tx, job.summary_id).map_err(fence_error)?;
+    if let Some(expected) = &routing.input
+        && (expected.id != job.summary_id
+            || expected.conversation_id.map(|id| id.to_string()) != input.conversation_id
+            || expected.owner.as_ref().map(Owner::as_str) != input.owner.as_deref()
+            || expected.content != input.content)
+    {
+        return Err(SummaryReferenceError::Stale(job.summary_id).into());
+    }
+    let summary = load_summary(tx, job)?;
+    if summary.delivery.as_ref()
+        != routing
+            .input
+            .as_ref()
+            .and_then(|input| input.delivery.as_ref())
+    {
+        return Err(SummaryReferenceError::Stale(job.summary_id).into());
+    }
+    if summary
+        .delivery
+        .as_ref()
+        .is_some_and(|delivery| delivery.pending.is_empty())
+    {
+        return Ok(Prepared::Done(Vec::new()));
+    }
+    if summary.delivery.is_none()
+        && let Some(topics) = completed(tx, job.summary_id)?
+    {
+        return Ok(Prepared::Done(topics));
+    }
+    Ok(Prepared::Ready(Box::new(Ready {
+        summary,
+        patches,
+        routing: routing.clone(),
+        now,
+    })))
+}
+
+fn close_file(
+    tx: &Transaction<'_>,
+    summary: &WikiSummary,
+    mut touched: Vec<String>,
+    last_sha: Option<&str>,
+    routing: &WikiRouting,
+    now: Timestamp,
+) -> Result<Vec<String>, WikiStoreError> {
+    for slug in &routing.cited {
+        crate::wiki_topics::cite(tx, slug.as_ref(), summary, now)?;
+    }
+    touched.sort();
+    touched.dedup();
+    if let Some(deferred) = &routing.deferred {
+        wiki_held::upsert(tx, deferred)?;
+    }
+    record_done(tx, summary.id, &touched, last_sha, now)?;
+    if let Some(delivery) = &summary.delivery {
+        summary_replace::complete(
+            tx,
+            summary.id,
+            SummaryConsumer::Wiki,
+            &delivery.pending,
+            WIKI_PIPELINE_VERSION,
+        )
+        .map_err(fence_error)?;
+    } else {
+        summary_replace::complete_legacy(
+            tx,
+            summary.id,
+            SummaryConsumer::Wiki,
+            WIKI_PIPELINE_VERSION,
+        )
+        .map_err(query)?;
+    }
+    for slug in &touched {
+        tracing::info!("wiki topic stored {slug}");
+    }
+    Ok(touched)
+}
+
 fn apply_all(
     conn: &mut Connection,
     job: &ExtractWiki,
-    mut patches: Vec<WikiPatch>,
+    patches: Vec<WikiPatch>,
     routing: &WikiRouting,
     now: Timestamp,
 ) -> Result<Vec<String>, WikiStoreError> {
@@ -168,17 +323,7 @@ fn apply_all(
         tx.commit().map_err(query)?;
         return Ok(topics);
     }
-    patches.sort_by(|left, right| left.slug.as_ref().cmp(right.slug.as_ref()));
-    let mut touched = Vec::new();
-    for mut patch in patches {
-        let page = routing.topic_page.as_ref();
-        if let Some(merged) = routing.merged(patch.slug.as_ref()) {
-            crate::wiki_topics::rebase_merged(&tx, &mut patch, &merged.base)?;
-        }
-        if let Some(slug) = crate::wiki_topics::apply(&tx, &summary, &patch, page, now)? {
-            touched.push(slug);
-        }
-    }
+    let (mut touched, last_sha) = touched(&tx, patches, &summary, routing, now)?;
     for slug in &routing.cited {
         crate::wiki_topics::cite(&tx, slug.as_ref(), &summary, now)?;
     }
@@ -190,7 +335,7 @@ fn apply_all(
         }
         wiki_held::upsert(&tx, deferred)?;
     }
-    record_done(&tx, job.summary_id, &touched, now)?;
+    record_done(&tx, job.summary_id, &touched, last_sha.as_deref(), now)?;
     if let Some(delivery) = &summary.delivery {
         summary_replace::complete(
             &tx,
@@ -214,6 +359,26 @@ fn apply_all(
         tracing::info!("wiki topic stored {slug}");
     }
     Ok(touched)
+}
+
+fn touched(
+    conn: &Connection,
+    patches: Vec<WikiPatch>,
+    summary: &WikiSummary,
+    routing: &WikiRouting,
+    now: Timestamp,
+) -> Result<(Vec<String>, Option<String>), WikiStoreError> {
+    let mut touched = Vec::new();
+    for mut patch in patches {
+        let page = routing.topic_page.as_ref();
+        if let Some(merged) = routing.merged(patch.slug.as_ref()) {
+            crate::wiki_topics::rebase_merged(conn, &mut patch, &merged.base)?;
+        }
+        if let Some(slug) = crate::wiki_topics::apply(conn, summary, &patch, page, now)? {
+            touched.push(slug);
+        }
+    }
+    Ok((touched, None))
 }
 
 fn reject_empty(patches: &[WikiPatch]) -> Result<(), WikiStoreError> {
@@ -295,26 +460,28 @@ fn fail(
     Ok(())
 }
 
-fn record_done(
+pub(crate) fn record_done(
     conn: &Connection,
     summary_id: Uuid,
     touched: &[String],
+    git_sha: Option<&str>,
     now: Timestamp,
 ) -> Result<(), WikiStoreError> {
     let topics =
         serde_json::to_string(touched).map_err(|source| WikiStoreError::Query(Box::new(source)))?;
     conn.execute(
         "INSERT INTO ros_wiki_extractions
-            (summary_id, status, pipeline_version, topics_touched, extracted_at)
-         VALUES (?1, 'done', ?2, ?3, ?4)
+            (summary_id, status, pipeline_version, topics_touched, git_sha, extracted_at)
+         VALUES (?1, 'done', ?2, ?3, ?4, ?5)
          ON CONFLICT(summary_id) DO UPDATE SET status = 'done',
             pipeline_version = excluded.pipeline_version,
-            topics_touched = excluded.topics_touched, error = NULL,
+            topics_touched = excluded.topics_touched, git_sha = excluded.git_sha, error = NULL,
             extracted_at = excluded.extracted_at",
         params![
             summary_id.to_string(),
             WIKI_PIPELINE_VERSION,
             topics,
+            git_sha,
             time_stamp(now)
         ],
     )
@@ -379,7 +546,10 @@ pub(crate) fn load_summary(
     })
 }
 
-fn completed(conn: &Connection, summary_id: Uuid) -> Result<Option<Vec<String>>, WikiStoreError> {
+pub(crate) fn completed(
+    conn: &Connection,
+    summary_id: Uuid,
+) -> Result<Option<Vec<String>>, WikiStoreError> {
     let topics = conn
         .query_row(
             "SELECT topics_touched FROM ros_wiki_extractions
@@ -401,7 +571,7 @@ fn read_tx(conn: &mut Connection) -> Result<Transaction<'_>, WikiStoreError> {
     conn.transaction().map_err(query)
 }
 
-fn write_tx(conn: &mut Connection) -> Result<Transaction<'_>, WikiStoreError> {
+pub(crate) fn write_tx(conn: &mut Connection) -> Result<Transaction<'_>, WikiStoreError> {
     conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(query)
 }

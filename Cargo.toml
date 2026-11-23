@@ -108,6 +108,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 url = "2"
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
 values = { path = "crates/values", version = "0.8.3" }
+wiki-files = { path = "crates/wiki-files", version = "0.8.3" }
 wire = { path = "crates/wire", version = "0.8.3" }
 workers = { path = "crates/workers", version = "0.8.3" }
 x509-parser = { version = "0.18", features = ["verify-aws"] }

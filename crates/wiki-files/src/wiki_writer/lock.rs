@@ -38,23 +38,49 @@ impl WriterLock {
         .map_err(|_| WikiWriteError::LockTimeout)?
     }
 
+    pub(super) async fn try_acquire(root: &Path) -> Result<Option<Self>, WikiWriteError> {
+        let permit = match semaphore(root).try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(tokio::sync::TryAcquireError::NoPermits | tokio::sync::TryAcquireError::Closed) => {
+                return Ok(None);
+            }
+        };
+        let path = root.join(".wiki-writer.lock");
+        let token = format!("{}-{}", std::process::id(), Uuid::new_v4());
+        for _ in 0..8_u32 {
+            let lock_path = path.clone();
+            let lock_token = token.clone();
+            let attempt = tokio::task::spawn_blocking(move || {
+                acquire_once(&lock_path, &lock_token, RECLAIM_AGE_MILLIS)
+            })
+            .await??;
+            match attempt {
+                Attempt::Owned(mut acquired) => {
+                    let refresh_path = path.clone();
+                    let refresh_token = token;
+                    let refresh = Refresher::start(REFRESH_INTERVAL, move || {
+                        refresh_lock(&refresh_path, &refresh_token)
+                    })?;
+                    acquired.cleanup_on_drop = false;
+                    return Ok(Some(Self {
+                        refresh,
+                        acquired,
+                        _permit: permit,
+                    }));
+                }
+                Attempt::Reclaimed => {}
+                Attempt::Busy => return Ok(None),
+            }
+        }
+        Ok(None)
+    }
+
     async fn acquire_with_timing(
         root: &Path,
         reclaim_age_millis: i64,
         refresh_interval: Duration,
     ) -> Result<Self, WikiWriteError> {
-        let owner = {
-            let mut owners = OWNERS.lock();
-            owners.retain(|_, owner| owner.strong_count() > 0);
-            if let Some(owner) = owners.get(root).and_then(Weak::upgrade) {
-                owner
-            } else {
-                let owner = Arc::new(Semaphore::new(1));
-                owners.insert(root.to_path_buf(), Arc::downgrade(&owner));
-                owner
-            }
-        };
-        let permit = owner
+        let permit = semaphore(root)
             .acquire_owned()
             .await
             .map_err(|error| std::io::Error::other(error.to_string()))?;
@@ -170,6 +196,17 @@ enum Attempt {
     Owned(Acquisition),
     Reclaimed,
     Busy,
+}
+
+fn semaphore(root: &Path) -> Arc<Semaphore> {
+    let mut owners = OWNERS.lock();
+    owners.retain(|_, owner| owner.strong_count() > 0);
+    if let Some(owner) = owners.get(root).and_then(Weak::upgrade) {
+        return owner;
+    }
+    let owner = Arc::new(Semaphore::new(1));
+    owners.insert(root.to_path_buf(), Arc::downgrade(&owner));
+    owner
 }
 
 fn acquire_once(path: &Path, token: &str, reclaim_age_millis: i64) -> std::io::Result<Attempt> {

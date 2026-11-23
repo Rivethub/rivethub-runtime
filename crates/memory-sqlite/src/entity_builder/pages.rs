@@ -92,22 +92,16 @@ fn history(conn: &Connection, id: Uuid) -> Result<Vec<HistoryLine>, EntityStoreE
     .collect()
 }
 
-pub(crate) fn history_markdown(
+pub(crate) fn history_entries(
     conn: &Connection,
     topic: &str,
-) -> Result<String, crate::SqliteError> {
-    let entries = uuid(topic)
+) -> Result<Vec<kernel::wiki::page::WikiHistoryEntry>, crate::SqliteError> {
+    let lines = uuid(topic)
         .and_then(|id| history(conn, id))
         .map_err(|error| crate::SqliteError::Invalid {
             message: format!("entity page history: {error}"),
         })?;
-    if entries.is_empty() {
-        Ok(String::new())
-    } else {
-        Ok(kernel::wiki::page::history_section(&render_history(
-            &entries,
-        )))
-    }
+    Ok(render_history(&lines))
 }
 
 pub(super) fn write_history(
@@ -158,20 +152,36 @@ pub(super) fn load_prose(
     .map(Option::unwrap_or_default)
 }
 
+pub(super) enum Staged {
+    Stale(Box<EntityView>),
+    Ready(Box<EntityView>),
+}
+
+pub(super) fn stage_publish(
+    tx: &Transaction<'_>,
+    prior: &EntityView,
+) -> Result<Staged, EntityStoreError> {
+    for line in &prior.history {
+        summary_replace::shared(tx, line.summary_id).map_err(fence)?;
+    }
+    let fresh = view(tx, prior.id)?;
+    if fresh.snapshot == prior.snapshot {
+        Ok(Staged::Ready(Box::new(fresh)))
+    } else {
+        Ok(Staged::Stale(Box::new(fresh)))
+    }
+}
+
 pub(super) fn publish(
     tx: &Transaction<'_>,
     prior: &EntityView,
     prose: &EntityProse,
     now: Timestamp,
 ) -> Result<PublishOutcome, EntityStoreError> {
-    for line in &prior.history {
-        summary_replace::shared(tx, line.summary_id).map_err(fence)?;
+    match stage_publish(tx, prior)? {
+        Staged::Stale(fresh) => Ok(PublishOutcome::Stale(fresh)),
+        Staged::Ready(fresh) => store(tx, &fresh, prose, now),
     }
-    let fresh = view(tx, prior.id)?;
-    if fresh.snapshot != prior.snapshot {
-        return Ok(PublishOutcome::Stale(Box::new(fresh)));
-    }
-    store(tx, &fresh, prose, now)
 }
 
 pub(super) fn store(
@@ -181,16 +191,32 @@ pub(super) fn store(
     now: Timestamp,
 ) -> Result<PublishOutcome, EntityStoreError> {
     let page = entity_page(view, prose)?;
-    write_page(conn, &page, now)?;
+    store_rendered(conn, view, &page, "", now)
+}
+
+pub(super) fn store_rendered(
+    conn: &Connection,
+    view: &EntityView,
+    page: &WikiPage,
+    sha: &str,
+    now: Timestamp,
+) -> Result<PublishOutcome, EntityStoreError> {
+    let git_sha = (!sha.is_empty()).then_some(sha);
+    write_page(conn, page, git_sha, now)?;
     bind(conn, view.id, &view.slug)?;
-    cite(conn, view, &page, now)?;
+    cite(conn, view, page, now)?;
     Ok(PublishOutcome::Stored {
         slug: view.slug.clone(),
-        git_sha: String::new(),
+        git_sha: sha.to_owned(),
     })
 }
 
-fn write_page(conn: &Connection, page: &WikiPage, now: Timestamp) -> Result<(), EntityStoreError> {
+fn write_page(
+    conn: &Connection,
+    page: &WikiPage,
+    git_sha: Option<&str>,
+    now: Timestamp,
+) -> Result<(), EntityStoreError> {
     let meta = &page.meta;
     let mut indexed = page.clone();
     let related: Option<String> = conn
@@ -209,19 +235,29 @@ fn write_page(conn: &Connection, page: &WikiPage, now: Timestamp) -> Result<(), 
     let history = serde_json::to_string(&page.history).map_err(error)?;
     conn.execute(
         "INSERT INTO ros_wiki_topics (slug, title, aliases, tags, current_state, article, history,
-                                     search_text, history_count, last_verified_at, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?10)
+                                     search_text, history_count, git_sha, last_verified_at, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?11)
          ON CONFLICT (slug) DO UPDATE SET title = excluded.title, aliases = excluded.aliases,
             tags = excluded.tags, current_state = excluded.current_state, article = excluded.article,
-            history = excluded.history,
-            git_sha = NULL,
+            history = excluded.history, git_sha = excluded.git_sha,
             search_text = excluded.search_text, history_count = excluded.history_count,
             last_verified_at = excluded.last_verified_at, updated_at = excluded.updated_at,
             embedding = NULL, embed_status = NULL, embed_failures = 0, embed_error = NULL",
-        params![meta.slug.as_ref(), meta.title, serde_json::to_string(&meta.aliases).map_err(error)?,
-            serde_json::to_string(&meta.tags).map_err(error)?, page.current_state, page.article, history,
-            search, i64::try_from(page.history.len()).map_err(error)?, stamp(now)],
-    ).map_err(query)?;
+        params![
+            meta.slug.as_ref(),
+            meta.title,
+            serde_json::to_string(&meta.aliases).map_err(error)?,
+            serde_json::to_string(&meta.tags).map_err(error)?,
+            page.current_state,
+            page.article,
+            history,
+            search,
+            i64::try_from(page.history.len()).map_err(error)?,
+            git_sha,
+            stamp(now)
+        ],
+    )
+    .map_err(query)?;
     Ok(())
 }
 

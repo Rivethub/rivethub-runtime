@@ -1,5 +1,6 @@
 mod candidates;
 mod claims;
+mod filed;
 mod identity;
 mod known;
 mod lease;
@@ -13,6 +14,7 @@ mod work;
 use async_trait::async_trait;
 use jiff::Timestamp;
 use kernel::wiki::builder::BackfillBudget;
+use kernel::wiki::builder::WikiStoreError;
 use kernel::wiki::entity_pass::{
     CandidateQuery, EntityLeaf, EntityLease, EntityMerge, EntityProse, EntityStore,
     EntityStoreError, EntityView, EntityWork, ExtractEntities, FollowingLeaf, MatchCandidate,
@@ -98,10 +100,13 @@ impl EntityStore for SqliteStore {
     ) -> Result<PublishOutcome, EntityStoreError> {
         let view = view.clone();
         let prose = prose.clone();
-        locks::scoped(self, [view.id], move |tx| {
-            pages::publish(tx, &view, &prose, now)
-        })
-        .await
+        let Some(directory) = self.wiki_directory().map(std::path::Path::to_path_buf) else {
+            return locks::scoped(self, [view.id], move |tx| {
+                pages::publish(tx, &view, &prose, now)
+            })
+            .await;
+        };
+        filed::publish(self, &directory, &view, &prose, now).await
     }
 
     async fn finish_entities(
@@ -235,10 +240,21 @@ impl EntityStore for SqliteStore {
         if left == right {
             return Ok(None);
         }
-        locks::scoped(self, [left, right], move |tx| {
+        let work = locks::scoped(self, [left, right], move |tx| {
             merge::pair(tx, left, right, now)
         })
-        .await
+        .await?;
+        if let Some(root) = self.wiki_directory().map(std::path::Path::to_path_buf) {
+            if let Some(slug) = work.drop_slug.as_deref()
+                && let Err(error) = remove_merged_file(&root, slug).await
+            {
+                tracing::warn!(%error, slug, "merged entity page file was not removed");
+            }
+            if let Err(error) = sweep_leftovers(self, &root).await {
+                tracing::warn!(%error, "merged entity leftover page was not removed");
+            }
+        }
+        Ok(work.outcome)
     }
 
     async fn lease_entity(&self, id: Uuid) -> Result<Box<dyn EntityLease>, EntityStoreError> {
@@ -301,6 +317,68 @@ fn error(error: impl std::error::Error + Send + Sync + 'static) -> EntityStoreEr
     EntityStoreError::Query(Box::new(error))
 }
 
+async fn sweep_leftovers(
+    store: &SqliteStore,
+    root: &std::path::Path,
+) -> Result<(), EntityStoreError> {
+    let slugs = read(store, leftover_slugs).await?;
+    for slug in slugs {
+        if let Err(error) = remove_merged_file(root, &slug).await {
+            tracing::warn!(%error, slug, "merged entity leftover page was not removed");
+        }
+    }
+    Ok(())
+}
+
+fn leftover_slugs(conn: &Connection) -> Result<Vec<String>, EntityStoreError> {
+    let mut statement = conn
+        .prepare(
+            "SELECT from_slug FROM ros_wiki_redirects
+              WHERE NOT EXISTS (
+                  SELECT 1 FROM ros_wiki_topics WHERE slug = ros_wiki_redirects.from_slug
+              )",
+        )
+        .map_err(query)?;
+    let rows = statement.query_map([], |row| row.get(0)).map_err(query)?;
+    rows.collect::<rusqlite::Result<Vec<String>>>()
+        .map_err(query)
+}
+
+async fn remove_merged_file(root: &std::path::Path, slug: &str) -> Result<(), EntityStoreError> {
+    let owned = slug.to_owned();
+    let mut locked = crate::page_files::Files::entity(root)
+        .lock()
+        .await
+        .map_err(store_error)?;
+    let message = format!("entity merge: remove {slug}");
+    let removed = locked
+        .remove(std::slice::from_ref(&owned), &message)
+        .await
+        .map(|_| ())
+        .map_err(WikiStoreError::from);
+    crate::page_files::finish(locked, removed)
+        .await
+        .map_err(store_error)
+}
+
+pub(super) fn store_error(error: WikiStoreError) -> EntityStoreError {
+    match error {
+        WikiStoreError::DirectoryMissing => EntityStoreError::DirectoryMissing,
+        WikiStoreError::Page(error) => EntityStoreError::Page(error),
+        WikiStoreError::Reference(error) => EntityStoreError::Reference(error),
+        WikiStoreError::Missing(id) => EntityStoreError::Missing(id),
+        WikiStoreError::Query(error) => EntityStoreError::Query(error),
+        WikiStoreError::ConversationMismatch(id) => {
+            EntityStoreError::Query(Box::new(std::io::Error::other(id.to_string())))
+        }
+        WikiStoreError::SlugConflict(slug)
+        | WikiStoreError::TopicMissing(slug)
+        | WikiStoreError::InvalidPatch(slug) => {
+            EntityStoreError::Query(Box::new(std::io::Error::other(slug)))
+        }
+    }
+}
+
 fn query(error: rusqlite::Error) -> EntityStoreError {
     self::error(error)
 }
@@ -330,4 +408,4 @@ fn at(text: &str) -> Result<Timestamp, EntityStoreError> {
 
 pub(crate) use candidates::register;
 
-pub(crate) use pages::history_markdown;
+pub(crate) use pages::history_entries;

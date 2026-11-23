@@ -51,6 +51,7 @@ mod vector_search;
 mod verify;
 mod visibility;
 mod wiki_bounded;
+mod wiki_files;
 mod wiki_imports;
 mod wiki_parity;
 mod wiki_routes;

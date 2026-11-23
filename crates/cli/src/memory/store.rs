@@ -15,7 +15,7 @@ use wire::capture::BundledSession;
 #[derive(Debug, Clone)]
 pub enum SessionStore {
     Postgres(Arc<PostgresMemory>),
-    Sqlite(SqliteStore),
+    Sqlite(Box<SqliteStore>),
 }
 
 impl SessionStore {

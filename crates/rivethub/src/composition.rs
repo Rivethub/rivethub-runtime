@@ -257,7 +257,7 @@ impl Composition {
         let backing = Backing {
             export: Some(Arc::new(MemoryExporter::sqlite(Arc::clone(store)))),
             ports: Some(StorePorts::of(store, store.clone())),
-            sessions: Some(SessionStore::Sqlite(SqliteStore::clone(store))),
+            sessions: Some(SessionStore::Sqlite(Box::new(SqliteStore::clone(store)))),
             reports: None,
             pauses: Some(store.clone() as Arc<dyn kernel::queue::pause::WorkerPauses>),
         };
