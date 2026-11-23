@@ -297,6 +297,7 @@ fn rewrite_legacy_summary_kinds(conn: &mut Connection) -> Result<(), Error> {
     if left > 0 {
         return Err(Error::UnmappedSummaryKind);
     }
+    settle(&tx, SchemaVersion::V9).map_err(failed)?;
     tx.commit().map_err(failed)?;
     Ok(())
 }
@@ -312,7 +313,15 @@ fn in_transaction(
     };
     let tx = conn.transaction().map_err(failed)?;
     run(&tx).map_err(failed)?;
+    settle(&tx, to).map_err(failed)?;
     tx.commit().map_err(failed)
+}
+
+fn settle(tx: &Transaction<'_>, to: SchemaVersion) -> rusqlite::Result<()> {
+    if to.next().is_none() {
+        tx.execute_batch(crate::schema::TAIL_INDEXES_SQL)?;
+    }
+    tx.pragma_update(None, "user_version", to.number())
 }
 
 fn add_message_embedding_columns(tx: &Transaction<'_>) -> rusqlite::Result<()> {

@@ -13,7 +13,7 @@ const CURRENT: SchemaVersion = SchemaVersion::V44;
 
 const SCHEMA_SQL: &str = include_str!("schema/schema_v7.sql");
 
-const TAIL_INDEXES_SQL: &str = "
+pub(crate) const TAIL_INDEXES_SQL: &str = "
 CREATE INDEX IF NOT EXISTS idx_ros_messages_unembedded ON ros_messages (created_at)
           WHERE embedding IS NULL AND embed_status IS NULL;
 CREATE INDEX IF NOT EXISTS idx_ros_conversations_owner ON ros_conversations (owner_user_id)
