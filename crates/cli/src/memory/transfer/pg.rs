@@ -309,6 +309,9 @@ async fn load_table(
         } else {
             check_deletions(conn, relation, &stage_name).await?;
             added += insert(conn, &table, &names, &stage_name).await?;
+            if relation == Relation::WikiRedirects {
+                adopt_redirects(conn, &stage_name).await?;
+            }
         }
     }
     let passage_key = index_key.filter(|_| relation == Relation::SummaryPassages);
@@ -363,6 +366,19 @@ async fn stage(conn: &mut PgConnection, table: &Table, rows: &[Row]) -> Result<(
         query = query.bind(data);
     }
     query.execute(conn).await.map_err(error)?;
+    Ok(())
+}
+
+async fn adopt_redirects(conn: &mut PgConnection, stage: &str) -> Result<(), Error> {
+    let sql = format!(
+        "UPDATE public.rh_wiki_redirects r SET owner_user_id = s.owner_user_id FROM {stage} s
+         WHERE r.from_slug = s.from_slug AND r.to_slug = s.to_slug
+           AND r.owner_user_id IS NULL AND s.owner_user_id IS NOT NULL"
+    );
+    sqlx::query(AssertSqlSafe(sql))
+        .execute(conn)
+        .await
+        .map_err(error)?;
     Ok(())
 }
 
