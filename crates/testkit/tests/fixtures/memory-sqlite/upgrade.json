@@ -12057,20 +12057,6 @@
               "locked_at": null,
               "created_at": "2026-09-01T10:01:00.000Z",
               "updated_at": "2026-09-01T10:30:00.000Z"
-            },
-            {
-              "id": "00000000-0000-4000-8000-100000000042",
-              "task": "compact-conversation",
-              "job_key": "compact-00000000-0000-4000-8000-100000000002",
-              "payload": "{\"conversationId\":\"00000000-0000-4000-8000-100000000002\",\"triggerType\":\"session_idle\"}",
-              "run_at": "2026-09-02T10:00:00.000Z",
-              "attempts": 3,
-              "max_attempts": 3,
-              "state": "dead",
-              "last_error": "LLM HTTP 400 (not retrying)",
-              "locked_at": null,
-              "created_at": "2026-09-02T09:00:00.000Z",
-              "updated_at": "2026-09-02T09:30:00.000Z"
             }
           ],
           "ros_meta": [
@@ -12403,40 +12389,40 @@
           },
           "ros_jobs": {
             "id": {
-              "text": 2
+              "text": 1
             },
             "task": {
-              "text": 2
+              "text": 1
             },
             "job_key": {
-              "text": 2
+              "text": 1
             },
             "payload": {
-              "text": 2
+              "text": 1
             },
             "run_at": {
-              "text": 2
+              "text": 1
             },
             "attempts": {
-              "integer": 2
+              "integer": 1
             },
             "max_attempts": {
-              "integer": 2
+              "integer": 1
             },
             "state": {
-              "text": 2
+              "text": 1
             },
             "last_error": {
-              "text": 2
+              "text": 1
             },
             "locked_at": {
-              "null": 2
+              "null": 1
             },
             "created_at": {
-              "text": 2
+              "text": 1
             },
             "updated_at": {
-              "text": 2
+              "text": 1
             }
           },
           "ros_meta": {

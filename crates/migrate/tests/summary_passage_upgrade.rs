@@ -50,7 +50,7 @@ fn top_down_upgrade_from_sqlite_35_preserves_legacy_kinds_and_matches_fresh() ->
     let required = memory_sqlite::SCHEMA_VERSION;
     assert_eq!(
         (pending.current, pending.required, pending.pending),
-        (35, required, 9)
+        (35, required, usize::try_from(required - 35)?)
     );
     let status = migrate::sqlite(&upgraded)?;
     assert_eq!(

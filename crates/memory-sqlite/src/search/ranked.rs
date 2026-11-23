@@ -139,16 +139,8 @@ fn finish_arm(rows: Vec<ArmRow>, vector: bool) -> Result<Vec<(ArmRow, f64)>, Sql
 
 fn sort_pool(rows: &mut Vec<ArmRow>, plan: &Plan, trigram: bool) -> Result<(), SqliteError> {
     let newest_first = trigram && rows.iter().any(|row| row.candidate.passage.is_some());
-    rows.sort_by(|a, b| {
-        let score = b.score.total_cmp(&a.score);
-        if newest_first {
-            score.then_with(|| b.candidate.created_at.cmp(&a.candidate.created_at))
-        } else {
-            score.then_with(|| a.candidate.detail_id().cmp(b.candidate.detail_id()))
-        }
-    });
-    let limit = u32::try_from(plan.limit).map_err(SqliteError::Count)?;
-    let pool = hit_limit(hybrid_pool(limit))?;
+    sort_arm(rows, newest_first);
+    let pool = arm_pool(plan)?;
     let mut messages = 0;
     let mut summaries = 0;
     rows.retain(|row| {
@@ -159,8 +151,29 @@ fn sort_pool(rows: &mut Vec<ArmRow>, plan: &Plan, trigram: bool) -> Result<(), S
         *count += 1;
         *count <= pool
     });
+    interleave_hybrid(rows, plan);
+    Ok(())
+}
+
+fn sort_arm(rows: &mut [ArmRow], newest_first: bool) {
+    rows.sort_by(|a, b| {
+        let score = b.score.total_cmp(&a.score);
+        if newest_first {
+            score.then_with(|| b.candidate.created_at.cmp(&a.candidate.created_at))
+        } else {
+            score.then_with(|| a.candidate.detail_id().cmp(b.candidate.detail_id()))
+        }
+    });
+}
+
+fn arm_pool(plan: &Plan) -> Result<usize, SqliteError> {
+    let limit = u32::try_from(plan.limit).map_err(SqliteError::Count)?;
+    hit_limit(hybrid_pool(limit))
+}
+
+fn interleave_hybrid(rows: &mut Vec<ArmRow>, plan: &Plan) {
     if plan.mode != SearchMode::Hybrid || rows.iter().any(|row| row.candidate.passage.is_some()) {
-        return Ok(());
+        return;
     }
     let (messages, summaries): (Vec<_>, Vec<_>) = std::mem::take(rows)
         .into_iter()
@@ -173,7 +186,6 @@ fn sort_pool(rows: &mut Vec<ArmRow>, plan: &Plan, trigram: bool) -> Result<(), S
         rows.push(summary);
     }
     rows.extend(messages);
-    Ok(())
 }
 
 fn fts_rows(
@@ -215,39 +227,49 @@ fn vector_rows(
     let Some(vector) = vector else {
         return Ok(Vec::new());
     };
-    let mut normalized = vector.to_vec();
-    if !crate::vector::normalize(&mut normalized) {
-        return Err(SqliteError::StoredEmbedding);
+    let (mut messages, mut summaries) = scored_parents(rows, vector)?;
+    cap_arm(&mut messages, plan)?;
+    cap_arm(&mut summaries, plan)?;
+    let mut passage_rows = passages::vectors(conn, plan, vector)?;
+    if !passage_rows.is_empty() {
+        summaries.append(&mut passage_rows);
+        cap_arm(&mut summaries, plan)?;
     }
-    let mut found = passages::vectors(conn, plan, vector)?;
-    for row in rows {
-        if plan.mode == SearchMode::Hybrid && !eligible(row)? {
-            continue;
-        }
-        if let Some(bytes) = &row.embedding {
-            let score = dot(bytes, &normalized)?;
-            let mut row = row.clone();
-            row.score = score;
-            found.push(row);
-        }
-    }
-    sort_pool(&mut found, plan, false)?;
-    Ok(found)
+    super::chunks::merge(conn, rows, &mut messages, vector, plan)?;
+    messages.append(&mut summaries);
+    sort_arm(&mut messages, false);
+    interleave_hybrid(&mut messages, plan);
+    Ok(messages)
 }
 
-fn dot(bytes: &[u8], vector: &[f32]) -> Result<f64, SqliteError> {
-    if bytes.len() != vector.len() * 4 {
-        return Err(SqliteError::StoredEmbedding);
-    }
-    let mut score = 0.0;
-    for (bytes, query) in bytes.as_chunks::<4>().0.iter().zip(vector) {
-        let stored = f32::from_le_bytes(*bytes);
-        if !stored.is_finite() {
-            return Err(SqliteError::StoredEmbedding);
+fn scored_parents(
+    rows: &[ArmRow],
+    vector: &[f32],
+) -> Result<(Vec<ArmRow>, Vec<ArmRow>), SqliteError> {
+    let mut messages = Vec::new();
+    let mut summaries = Vec::new();
+    for row in rows {
+        let Some(bytes) = &row.embedding else {
+            continue;
+        };
+        let mut scored = row.clone();
+        scored.score = cosine(bytes, vector)?;
+        match scored.candidate.source() {
+            MemoryHitSource::Message => messages.push(scored),
+            MemoryHitSource::Summary => summaries.push(scored),
         }
-        score = f64::from(stored).mul_add(f64::from(*query), score);
     }
-    Ok(score)
+    Ok((messages, summaries))
+}
+
+fn cap_arm(rows: &mut Vec<ArmRow>, plan: &Plan) -> Result<(), SqliteError> {
+    sort_arm(rows, false);
+    rows.truncate(arm_pool(plan)?);
+    Ok(())
+}
+
+pub(super) fn cosine(bytes: &[u8], vector: &[f32]) -> Result<f64, SqliteError> {
+    passages::score_bytes(bytes, vector)
 }
 
 fn keyword_rows(
@@ -438,6 +460,7 @@ fn load_table(conn: &Connection, plan: &Plan, message: bool) -> Result<Vec<ArmRo
                         created_at: plan.now,
                         rank: 0.0,
                         kind,
+                        chunk: None,
                     },
                     embedding: row.get(6)?,
                     score: 0.0,
@@ -464,7 +487,7 @@ fn load_table(conn: &Connection, plan: &Plan, message: bool) -> Result<Vec<ArmRo
         .collect()
 }
 
-fn eligible(row: &ArmRow) -> Result<bool, SqliteError> {
+pub(super) fn eligible(row: &ArmRow) -> Result<bool, SqliteError> {
     let minimum = usize::try_from(HYBRID_MIN_CONTENT_LEN).map_err(SqliteError::Count)?;
     Ok(matches!(
         row.candidate.kind,

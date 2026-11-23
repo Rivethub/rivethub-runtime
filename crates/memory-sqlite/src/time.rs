@@ -1,9 +1,21 @@
 use crate::error::SqliteError;
+use jiff::SignedDuration;
 use jiff::Timestamp;
 use wire::time::TimestampFormat;
 
+const UNLOCK_AFTER: i64 = 4 * 3_600;
+
 pub(crate) fn stamp(at: Timestamp) -> String {
     at.rfc3339_millis()
+}
+
+pub(crate) fn event(at: Timestamp) -> String {
+    at.rfc3339_nanos()
+}
+
+pub(crate) fn unlock_before(now: Timestamp) -> Result<Timestamp, SqliteError> {
+    now.checked_sub(SignedDuration::from_secs(UNLOCK_AFTER))
+        .map_err(|_error| SqliteError::Clock)
 }
 
 pub(crate) fn seek_key(at: Timestamp) -> String {

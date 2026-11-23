@@ -43,10 +43,13 @@ async fn step_44_preserves_rows_and_converges_after_interruption()
     let pending = migrate::sqlite_status(&path)?;
     assert_eq!(
         (pending.current, pending.required, pending.pending),
-        (43, 44, 1)
+        (43, memory_sqlite::SCHEMA_VERSION, 3)
     );
     let upgraded = migrate::sqlite(&path)?;
-    assert_eq!((upgraded.current, upgraded.pending), (44, 0));
+    assert_eq!(
+        (upgraded.current, upgraded.pending),
+        (memory_sqlite::SCHEMA_VERSION, 0)
+    );
     let conn = Connection::open(&path)?;
     let passage: String = conn.query_row(
         "SELECT content FROM ros_summary_passages WHERE id = 'passage'",
@@ -60,7 +63,10 @@ async fn step_44_preserves_rows_and_converges_after_interruption()
     let backup = dir.path().join("memory.sqlite.v43.bak");
     assert!(backup.try_exists()?);
     std::fs::rename(backup, dir.path().join("retained.sqlite"))?;
-    assert_eq!(migrate::sqlite(&path)?.current, 44);
+    assert_eq!(
+        migrate::sqlite(&path)?.current,
+        memory_sqlite::SCHEMA_VERSION
+    );
     let upgraded = Connection::open(&path)?;
     assert_altered_rows(&upgraded)?;
     let fresh = dir.path().join("fresh.sqlite");

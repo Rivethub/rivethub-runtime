@@ -7,7 +7,7 @@ use crate::worker::ComposedRunner;
 use config::{Config, Environment, ServiceSwitch};
 use gateway::server::ServeOptions;
 use kernel::filing::FilingStore;
-use kernel::memory::jobs::UnembeddedStore;
+use kernel::memory::jobs::{MemoryJobStore, UnembeddedStore};
 use kernel::memory::{EmbeddingStore, MemoryStore, SessionDeletion, SummaryStore};
 use kernel::queue::{FixedJob, Job, JobKeyMode, JobName, JobQueue, MAINTENANCE_PRIORITY};
 use kernel::shutdown::Activities;
@@ -421,6 +421,8 @@ async fn build_runners(
     shutdown: &CancellationToken,
     activities: &Activities,
 ) -> Result<Vec<(ProcessRole, ComposedRunner<SqliteStore>)>, LocalError> {
+    let settings =
+        workers::MemoryJobSettings::from_environment(env).map_err(worker::RootError::from)?;
     let mut built = Vec::new();
     for role in roles {
         let ports = WorkerPorts {
@@ -451,6 +453,8 @@ async fn build_runners(
         }
         runner.runner = runner
             .runner
+            .with_memory_jobs(Arc::clone(store) as Arc<dyn MemoryJobStore>)
+            .with_job_settings(settings)
             .with_session_deletion(Arc::clone(store) as Arc<dyn SessionDeletion>);
         if matches!(
             role,

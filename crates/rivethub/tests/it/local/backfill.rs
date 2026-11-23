@@ -119,7 +119,7 @@ fn a_sqlite_embedder_schedules_only_the_sweeps_its_queue_claims() -> TestResult 
         .iter()
         .map(|entry| entry.identifier.as_str())
         .collect();
-    assert_eq!(identifiers, vec!["unembedded-sweep"]);
+    assert_eq!(identifiers, vec!["unembedded-sweep", "unchunked-sweep"]);
     Ok(())
 }
 
@@ -135,6 +135,6 @@ fn a_sqlite_wiki_builder_schedules_only_the_sweeps_its_queue_claims() -> TestRes
         .iter()
         .map(|entry| entry.identifier.as_str())
         .collect();
-    assert_eq!(identifiers, vec!["wiki-backfill"]);
+    assert_eq!(identifiers, vec!["wiki-backfill", "stale-wiki-sweep"]);
     Ok(())
 }

@@ -55,7 +55,8 @@ pub(super) async fn run(
             limit,
             dry_run,
             json,
-        } => tool_synth(limit, dry_run, json, env).await,
+            sqlite,
+        } => tool_synth(limit, dry_run, json, sqlite, env).await,
         MemoryCommand::Export { out, since, sqlite } => {
             export(out, since, sqlite, env, shutdown, stdout_is_terminal).await
         }
@@ -94,12 +95,7 @@ pub(super) async fn run(
             json,
             sqlite,
             model: Some(model),
-        } => match resolve(env, sqlite, Kind::Either)? {
-            Target::Postgres(url) => {
-                super::titles::backfill(&url, &model, dry_run, json, shutdown).await
-            }
-            Target::Sqlite(_) => Err(Error::TitlesSqlite),
-        },
+        } => titles_model(model, dry_run, json, sqlite, env, shutdown).await,
         MemoryCommand::Reembed { dry_run, sqlite } => reembed(dry_run, sqlite, env).await,
         MemoryCommand::MergeStore(args) => super::merge::run(args, env, shutdown).await,
         MemoryCommand::ConsolidateWiki {
@@ -171,14 +167,43 @@ async fn requeue(
     }
 }
 
+async fn titles_model(
+    model: super::titles::TitleModel,
+    dry_run: bool,
+    json: bool,
+    sqlite: Option<PathBuf>,
+    env: &Environment,
+    shutdown: &CancellationToken,
+) -> Result<Report, Error> {
+    match resolve(env, sqlite, Kind::Either)? {
+        Target::Postgres(url) => {
+            super::titles::backfill(&url, &model, dry_run, json, shutdown).await
+        }
+        Target::Sqlite(_) => Err(Error::TitlesSqlite),
+    }
+}
+
 async fn tool_synth(
     limit: Option<u32>,
     dry_run: bool,
     json: bool,
+    sqlite: Option<PathBuf>,
     env: &Environment,
 ) -> Result<Report, Error> {
-    let memory = PostgresMemory::connect(&postgres_url(env)?).await?;
-    let enqueued = memory.backfill_tool_synth(limit, dry_run).await?;
+    let enqueued = match resolve(env, sqlite, Kind::Either)? {
+        Target::Postgres(url) => {
+            PostgresMemory::connect(&url)
+                .await?
+                .backfill_tool_synth(limit, dry_run)
+                .await?
+        }
+        Target::Sqlite(path) => {
+            open_sqlite(&path)
+                .await?
+                .backfill_tool_synth(limit, dry_run)
+                .await?
+        }
+    };
     if json {
         Ok(Report::success(format!(
             "{}\n",

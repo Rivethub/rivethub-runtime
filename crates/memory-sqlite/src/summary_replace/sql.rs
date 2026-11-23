@@ -101,6 +101,8 @@ pub(super) const DELIVERIES: &str = r"WITH legacy_leaves AS (
     FROM legacy_members l JOIN rh_entity_extractions e ON e.summary_id = l.summary_id
     WHERE e.status = 'failed' AND NOT EXISTS (
         SELECT 1 FROM ros_jobs j WHERE j.job_key = 'entity-ext-' || l.summary_id AND j.state = 'dead'
+    ) AND NOT EXISTS (
+        SELECT 1 FROM rh_flagged_jobs f WHERE f.job_key = 'entity-ext-' || l.summary_id
     )
     UNION
     SELECT DISTINCT l.message_id, 'entity'

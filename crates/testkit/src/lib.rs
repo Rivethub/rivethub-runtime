@@ -1,6 +1,7 @@
 pub mod capture;
 pub mod capture_pg;
 pub mod changes;
+pub mod chunk_search;
 pub mod decisions;
 pub mod entities;
 pub mod facts;
@@ -13,7 +14,9 @@ pub mod json;
 pub mod logs;
 pub mod mcp_text;
 pub mod memory;
+pub mod memory_jobs;
 mod memory_request;
+pub mod mixed_rank;
 pub mod model_calls;
 pub mod naming;
 pub mod paths;

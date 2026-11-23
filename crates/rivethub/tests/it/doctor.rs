@@ -71,7 +71,7 @@ async fn sqlite_doctor_checks_current_and_behind_without_migrating() {
     assert_eq!(
         memory(&report).message,
         format!(
-            "Schema 0 is not current; required {required}, pending 44. Run rivethub-migrate explicitly."
+            "Schema 0 is not current; required {required}, pending {required}. Run rivethub-migrate explicitly."
         )
     );
     assert!(!path.exists(), "doctor must not create missing stores");
@@ -104,7 +104,8 @@ async fn sqlite_doctor_checks_current_and_behind_without_migrating() {
     assert_eq!(
         memory(&report).message,
         format!(
-            "Schema 6 is not current; required {required}, pending 38. Run rivethub-migrate explicitly."
+            "Schema 6 is not current; required {required}, pending {}. Run rivethub-migrate explicitly.",
+            required - 6
         )
     );
     assert_eq!(std::fs::read(&path).expect("after old schema"), before);

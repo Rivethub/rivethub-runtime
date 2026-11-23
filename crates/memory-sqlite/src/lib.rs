@@ -2,6 +2,7 @@ mod append;
 mod bundle;
 pub mod capture;
 mod changes;
+mod chunk_rows;
 mod conversation;
 mod deletion;
 mod digest;
@@ -13,6 +14,7 @@ mod flagged;
 pub mod import;
 mod insert;
 mod job_rank;
+mod memory_jobs;
 mod memory_port;
 mod message;
 mod meta;
@@ -71,6 +73,8 @@ use rusqlite::Connection;
 
 pub use capture::MAX_CONTENT_CHARS;
 pub use error::SqliteError;
+#[doc(hidden)]
+pub use flagged::archive_for_test;
 pub use queue::ClaimedSqliteJob;
 pub use queue::FailOutcome;
 pub use queue::JobInsert;
@@ -98,7 +102,7 @@ impl SharedClock {
     }
 }
 
-pub const SCHEMA_VERSION: i64 = 44;
+pub const SCHEMA_VERSION: i64 = 46;
 
 mod entity_builder;
 

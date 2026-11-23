@@ -354,11 +354,13 @@ async fn a_dead_job_is_named_by_the_conversation_it_worked_on() -> TestResult {
                 "INSERT INTO ros_conversations (id, session_key, agent, title, created_at, updated_at)
                  VALUES ('c1', 'claude-code:one', 'claude', 'Fix the flaky gate', '2026-10-30T10:00:00Z',
                          '2026-10-30T10:00:00Z');
-                 INSERT INTO ros_jobs (id, task, job_key, payload, run_at, attempts, state, created_at, updated_at)
-                 VALUES ('j1', 'compact-conversation', 'named', '{\"conversationId\":\"c1\"}',
-                         '2026-10-30T10:00:00Z', 5, 'dead', '2026-10-30T10:00:00Z', '2026-10-30T10:02:00Z'),
-                        ('j2', 'embed-target', 'bare', 'null', '2026-10-30T10:00:00Z', 5, 'dead',
-                         '2026-10-30T10:00:00Z', '2026-10-30T10:01:00Z');",
+                 INSERT INTO rh_flagged_jobs
+                     (task, job_key, payload, priority, max_attempts, failures, last_error,
+                      first_failed_at, last_failed_at, flagged_at)
+                 VALUES ('compact-conversation', 'named', '{\"conversationId\":\"c1\"}', 0, 5, 5, '',
+                         '2026-10-30T10:00:00Z', '2026-10-30T10:02:00Z', '2026-10-30T10:02:00Z'),
+                        ('embed-target', 'bare', 'null', 0, 5, 5, '',
+                         '2026-10-30T10:00:00Z', '2026-10-30T10:01:00Z', '2026-10-30T10:01:00Z');",
             ))
         })
         .await??;
