@@ -93,6 +93,8 @@ fn one(
     if note {
         note_patch(&mut page, patch, summary, now);
     }
+    page.add_aliases =
+        crate::wiki_topics::claimable_aliases(conn, &slug, std::mem::take(&mut page.add_aliases))?;
     let noted = page.history_entry.as_ref().map(|entry| entry.body.clone());
     let stored = stored_page(conn, &slug, exists)?;
     Ok(FiledPatch {
