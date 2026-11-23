@@ -98,7 +98,7 @@ impl SharedClock {
     }
 }
 
-pub const SCHEMA_VERSION: i64 = 43;
+pub const SCHEMA_VERSION: i64 = 44;
 
 mod entity_builder;
 

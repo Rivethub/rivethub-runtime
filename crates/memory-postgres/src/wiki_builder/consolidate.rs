@@ -208,23 +208,22 @@ async fn retire(
         .execute(&mut **tx)
         .await
         .map_err(query_error)?;
-    for (statement, slug) in [
-        ("DELETE FROM rh_wiki_redirects WHERE from_slug = $1", parent),
-        ("DELETE FROM rh_wiki_topics WHERE slug = $1", child),
-    ] {
-        sqlx::query(statement)
-            .bind(slug)
-            .execute(&mut **tx)
-            .await
-            .map_err(query_error)?;
-    }
-    sqlx::query(
-        "INSERT INTO rh_wiki_redirects (from_slug, to_slug, created_at) VALUES ($1, $2, $3)
-         ON CONFLICT (from_slug) DO UPDATE SET to_slug = EXCLUDED.to_slug",
+    sqlx::query!("DELETE FROM rh_wiki_redirects WHERE from_slug = $1", parent)
+        .execute(&mut **tx)
+        .await
+        .map_err(query_error)?;
+    sqlx::query!(
+        "WITH retired AS (
+            DELETE FROM rh_wiki_topics WHERE slug = $1 RETURNING owner_user_id
+         )
+         INSERT INTO rh_wiki_redirects (from_slug, to_slug, created_at, owner_user_id)
+         SELECT $1, $2, $3, coalesce(rh_scope_principal(), (SELECT owner_user_id FROM retired))
+         ON CONFLICT (from_slug) DO UPDATE SET to_slug = EXCLUDED.to_slug,
+             owner_user_id = coalesce(rh_wiki_redirects.owner_user_id, EXCLUDED.owner_user_id)",
+        child,
+        parent,
+        crate::time::BindTime::bind_time(now) as _
     )
-    .bind(child)
-    .bind(parent)
-    .bind(crate::time::BindTime::bind_time(now))
     .execute(&mut **tx)
     .await
     .map_err(query_error)?;
@@ -233,4 +232,46 @@ async fn retire(
 
 fn count(value: i64) -> Result<u64, WikiStoreError> {
     u64::try_from(value).map_err(|error| WikiStoreError::Query(Box::new(error)))
+}
+
+#[cfg(test)]
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn folding_adopts_a_legacy_redirect(
+    pool: sqlx::PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut tx = pool.begin().await?;
+    sqlx::raw_sql(
+        "INSERT INTO rh_wiki_topics (slug, title, owner_user_id)
+         VALUES ('child', 'Child', 'alice'), ('parent', 'Parent', 'alice');
+         INSERT INTO rh_wiki_redirects (from_slug, to_slug) VALUES ('child', 'parent')",
+    )
+    .execute(&mut *tx)
+    .await?;
+    retire(&mut tx, "child", "parent", Timestamp::now(), &[]).await?;
+    let owner: Option<String> =
+        sqlx::query_scalar("SELECT owner_user_id FROM rh_wiki_redirects WHERE from_slug = 'child'")
+            .fetch_one(&mut *tx)
+            .await?;
+    assert_eq!(owner.as_deref(), Some("alice"));
+    Ok(())
+}
+
+#[cfg(test)]
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn folding_a_child_with_no_page_row_still_redirects(
+    pool: sqlx::PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut tx = pool.begin().await?;
+    sqlx::raw_sql(
+        "INSERT INTO rh_wiki_topics (slug, title, owner_user_id) VALUES ('parent', 'Parent', 'alice')",
+    )
+    .execute(&mut *tx)
+    .await?;
+    retire(&mut tx, "child", "parent", Timestamp::now(), &[]).await?;
+    let target: Option<String> =
+        sqlx::query_scalar("SELECT to_slug FROM rh_wiki_redirects WHERE from_slug = 'child'")
+            .fetch_optional(&mut *tx)
+            .await?;
+    assert_eq!(target.as_deref(), Some("parent"));
+    Ok(())
 }

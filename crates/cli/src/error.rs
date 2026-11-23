@@ -184,6 +184,8 @@ pub enum Error {
     ImportOne,
     #[error("merge-store: {0}")]
     MergeStore(String),
+    #[error("merge-store database: {0}")]
+    TransferDatabase(#[from] sqlx::Error),
     #[error("reembed runs on a SQLite memory file; pass --sqlite <file>")]
     ReembedSqlite,
     #[error("--sqlite requires a file path")]

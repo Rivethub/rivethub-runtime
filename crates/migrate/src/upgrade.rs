@@ -77,6 +77,7 @@ fn step(conn: &mut Connection, to: SchemaVersion, now: Timestamp) -> Result<(), 
         | SchemaVersion::V41
         | SchemaVersion::V42
         | SchemaVersion::V43 => late_step(conn, to),
+        SchemaVersion::V44 => in_transaction(conn, to, add_memory_transfer),
     }
 }
 
@@ -127,7 +128,8 @@ fn late_step(conn: &mut Connection, to: SchemaVersion) -> Result<(), Error> {
         SchemaVersion::V35 => in_transaction(conn, to, |tx| {
             tx.execute_batch(include_str!("schema/model_calls_v35.sql"))
         }),
-        SchemaVersion::V1
+        SchemaVersion::V44
+        | SchemaVersion::V1
         | SchemaVersion::V2
         | SchemaVersion::V3
         | SchemaVersion::V4
@@ -451,4 +453,48 @@ fn column_present(conn: &Connection, table: &str, column: &str) -> rusqlite::Res
 #[must_use]
 fn timestamp(now: Timestamp) -> String {
     format!("{now:.3}")
+}
+
+pub(crate) fn add_memory_transfer(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(include_str!("schema/memory_transfer_v44.sql"))?;
+    for (table, column, definition) in [
+        (
+            "ros_wiki_topics",
+            "visibility",
+            "TEXT NOT NULL DEFAULT 'private'",
+        ),
+        (
+            "ros_wiki_topics",
+            "scope",
+            "TEXT REFERENCES rh_wiki_scopes (scope)",
+        ),
+        ("ros_wiki_topics", "local_slug", "TEXT"),
+        (
+            "rh_topic_pages",
+            "sections_were_null",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (sections_were_null IN (0, 1))",
+        ),
+        ("ros_wiki_redirects", "owner_user_id", "TEXT"),
+        ("ros_tag_taxonomy", "owner_user_id", "TEXT"),
+        (
+            "ros_tag_taxonomy",
+            "globally_shared",
+            "INTEGER CHECK (globally_shared = 1)",
+        ),
+        ("rh_topic_tombstones", "owner_user_id", "TEXT"),
+        (
+            "rh_topic_tombstones",
+            "locally_deleted",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (locally_deleted IN (0, 1))",
+        ),
+    ] {
+        if !column_present(tx, table, column)? {
+            tx.execute_batch(&format!(
+                "ALTER TABLE {table} ADD COLUMN {column} {definition}"
+            ))?;
+        }
+    }
+    tx.execute_batch(
+        "CREATE UNIQUE INDEX IF NOT EXISTS rh_wiki_topics_scope_local ON ros_wiki_topics (scope, local_slug)",
+    )
 }

@@ -259,6 +259,9 @@ async fn legacy_leaves_are_materialized_once_by_the_sqlite_upgrade() -> TestResu
     let id = Uuid::new_v4();
     {
         let conn = rusqlite::Connection::open(&path)?;
+        conn.execute_batch(include_str!(
+            "../../../migrate/tests/fixtures/pre_memory_transfer.txt"
+        ))?;
         conn.execute_batch(
             "ALTER TABLE ros_conversations DROP COLUMN title_from_capture; PRAGMA user_version=36;",
         )?;

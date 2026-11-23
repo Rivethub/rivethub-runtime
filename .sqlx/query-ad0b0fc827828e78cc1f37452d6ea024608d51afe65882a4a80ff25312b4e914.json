@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE rh_conversations SET title = 'newer title', updated_at = now() WHERE owner_user_id = 'alice'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "ad0b0fc827828e78cc1f37452d6ea024608d51afe65882a4a80ff25312b4e914"
+}

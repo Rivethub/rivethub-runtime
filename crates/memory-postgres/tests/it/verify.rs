@@ -154,3 +154,34 @@ async fn a_serving_login_that_bypasses_row_security_is_refused(pool: PgPool) -> 
     PostgresMemory::connect(&url(&pool)).await?;
     Ok(())
 }
+
+#[sqlx::test(migrations = false)]
+async fn memory_transfer_requires_postgres_migrations_through_84(pool: PgPool) -> TestResult {
+    let through_82 = migrate::POSTGRES
+        .migrations
+        .partition_point(|migration| migration.version <= 82);
+    let legacy = migrate::POSTGRES
+        .migrations
+        .get(..through_82)
+        .ok_or("missing migrations through 82")?;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Borrowed(legacy),
+        ..sqlx::migrate::Migrator::DEFAULT
+    };
+    before.run(&pool).await?;
+    match PostgresMemory::connect(&url(&pool)).await {
+        Err(Error::SchemaBehind { found, required }) => assert_eq!((found, required), (82, 84)),
+        other => panic!("expected SchemaBehind, got {other:?}"),
+    }
+    let versions: Vec<i64> = migrate::POSTGRES
+        .migrations
+        .iter()
+        .filter(|migration| migration.version > 82)
+        .map(|migration| migration.version)
+        .collect();
+    assert_eq!(versions, vec![83, 84]);
+    let stats = migrate::postgres_pool(&pool).await?;
+    assert_eq!((stats.current, stats.pending), (84, 0));
+    PostgresMemory::connect(&url(&pool)).await?;
+    Ok(())
+}

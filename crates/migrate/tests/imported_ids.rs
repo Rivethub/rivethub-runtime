@@ -78,6 +78,7 @@ fn seed(path: &Path) -> TestResult {
         )?;
     }
     seed_references(&conn)?;
+    conn.execute_batch(include_str!("fixtures/pre_memory_transfer.txt"))?;
     conn.execute_batch(
         "PRAGMA wal_checkpoint(TRUNCATE);
          PRAGMA journal_mode = DELETE;
@@ -238,7 +239,10 @@ fn undashed_ids_are_canonical_in_every_table_that_holds_or_references_them() -> 
     drop(conn);
 
     std::fs::remove_file(backup(&path))?;
-    Connection::open(&path)?.execute_batch("PRAGMA user_version = 9;")?;
+    let conn = Connection::open(&path)?;
+    conn.execute_batch(include_str!("fixtures/pre_memory_transfer.txt"))?;
+    conn.execute_batch("PRAGMA user_version = 9;")?;
+    drop(conn);
     migrate::sqlite(&path)?;
     assert_eq!(snapshot(&path)?, migrated, "a second pass changes nothing");
     Ok(())

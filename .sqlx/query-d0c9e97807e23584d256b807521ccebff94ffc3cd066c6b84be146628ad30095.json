@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO rh_wiki_redirects (from_slug, to_slug, created_at, owner_user_id)\n         VALUES ($1, $2, $3, coalesce(rh_scope_principal(), nullif($4, '')))\n         ON CONFLICT (from_slug) DO UPDATE SET to_slug = EXCLUDED.to_slug,\n             created_at = EXCLUDED.created_at,\n             owner_user_id = coalesce(rh_wiki_redirects.owner_user_id, EXCLUDED.owner_user_id)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d0c9e97807e23584d256b807521ccebff94ffc3cd066c6b84be146628ad30095"
+}

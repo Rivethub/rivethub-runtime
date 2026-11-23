@@ -192,14 +192,27 @@ pub(super) fn store(
 
 fn write_page(conn: &Connection, page: &WikiPage, now: Timestamp) -> Result<(), EntityStoreError> {
     let meta = &page.meta;
-    let search = build_wiki_search_text(page);
+    let mut indexed = page.clone();
+    let related: Option<String> = conn
+        .query_row(
+            "SELECT related FROM ros_wiki_topics WHERE slug = ?1",
+            [meta.slug.as_ref()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(query)?
+        .flatten();
+    if let Some(related) = related {
+        indexed.meta.related = serde_json::from_str(&related).map_err(error)?;
+    }
+    let search = build_wiki_search_text(&indexed);
     conn.execute(
         "INSERT INTO ros_wiki_topics (slug, title, aliases, tags, current_state, article,
                                      search_text, history_count, last_verified_at, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?9)
          ON CONFLICT (slug) DO UPDATE SET title = excluded.title, aliases = excluded.aliases,
             tags = excluded.tags, current_state = excluded.current_state, article = excluded.article,
-            entities = excluded.entities, related = excluded.related, git_sha = NULL,
+            git_sha = NULL,
             search_text = excluded.search_text, history_count = excluded.history_count,
             last_verified_at = excluded.last_verified_at, updated_at = excluded.updated_at,
             embedding = NULL, embed_status = NULL, embed_failures = 0, embed_error = NULL",
