@@ -19,6 +19,7 @@ use kernel::wiki::entity_pass::session_history;
 use kernel::wiki::entity_vocab::VocabEntry;
 use kernel::wiki::entity_vocab::vocabulary;
 use serde::Serialize;
+use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tokio::sync::SemaphorePermit;
 use wire::time::TimestampFormat as _;
@@ -37,7 +38,49 @@ use super::report::record_reconciliation;
 const OLDER_EVIDENCE_PROMPT: &str = "\
 This call is older evidence. Instructions above that say the latest passage wins apply inside this session only. The current page already reflects later sessions. Only facts with no newer counterpart may be added. Do not replace a value a later session established. history_sentence describes this older session and is filed in date order.";
 
-static REWRITE_PERMITS: Semaphore = Semaphore::const_new(8);
+const REWRITE_CONCURRENCY: usize = 2;
+
+const REWRITE_CONCURRENCY_MAX: usize = 64;
+
+#[derive(Debug, Clone)]
+pub struct RewriteLimit {
+    permits: Arc<Semaphore>,
+}
+
+impl RewriteLimit {
+    pub fn from_config(config: &config::Config) -> Result<Self, String> {
+        let Some(value) = config
+            .entities
+            .as_ref()
+            .and_then(|section| section.rewrite_concurrency)
+        else {
+            return Ok(Self::default());
+        };
+        let out_of_range = || {
+            format!(
+                "entities.rewrite_concurrency must be between 1 and {REWRITE_CONCURRENCY_MAX}, not {value}"
+            )
+        };
+        let permits = usize::try_from(value).map_err(|_| out_of_range())?;
+        if !(1..=REWRITE_CONCURRENCY_MAX).contains(&permits) {
+            return Err(out_of_range());
+        }
+        Ok(Self::with_permits(permits))
+    }
+
+    fn with_permits(permits: usize) -> Self {
+        Self {
+            permits: Arc::new(Semaphore::new(permits)),
+        }
+    }
+}
+
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
+impl Default for RewriteLimit {
+    fn default() -> Self {
+        Self::with_permits(REWRITE_CONCURRENCY)
+    }
+}
 
 #[derive(Debug)]
 pub(in crate::entity_builder) struct StoredPage {
@@ -169,8 +212,8 @@ async fn rewrite_one(
     }
 }
 
-async fn acquire(env: &EntityBuilderEnv<'_>) -> Result<SemaphorePermit<'static>, WorkerError> {
-    let waiting = REWRITE_PERMITS.acquire();
+async fn acquire<'a>(env: &EntityBuilderEnv<'a>) -> Result<SemaphorePermit<'a>, WorkerError> {
+    let waiting = env.rewrite.permits.acquire();
     tokio::select! {
         biased;
         () = env.cancel.cancelled() => Err(WorkerError::Cancelled),

@@ -10,6 +10,10 @@ use crate::BoxError;
 use crate::owner::Owner;
 use crate::topics::TopicId;
 
+pub const DEFAULT_SPACE: &str = "household";
+const LEGACY_DEFAULT_SPACE_NAME: &str = "Household";
+pub const ONE_MEMBER_SPACE_NAME: &str = "This device";
+pub const SHARED_SPACE_NAME: &str = "This hub";
 const PRIVATE: &str = "private";
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -43,7 +47,7 @@ impl fmt::Display for SpaceId {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SpaceKind {
-    Household,
+    Device,
     Team,
     Compartment,
 }
@@ -52,7 +56,7 @@ impl SpaceKind {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Household => "household",
+            Self::Device => "household",
             Self::Team => "team",
             Self::Compartment => "compartment",
         }
@@ -60,7 +64,7 @@ impl SpaceKind {
 
     pub fn parse(text: &str) -> Result<Self, TenancyError> {
         match text {
-            "household" => Ok(Self::Household),
+            "household" | "device" => Ok(Self::Device),
             "team" => Ok(Self::Team),
             "compartment" => Ok(Self::Compartment),
             other => Err(TenancyError::InvalidKind(other.to_owned())),
@@ -74,6 +78,26 @@ pub struct Space {
     pub kind: SpaceKind,
     pub name: String,
     pub members: Vec<Owner>,
+}
+
+impl Space {
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        self.id.as_str() == DEFAULT_SPACE && self.kind == SpaceKind::Device
+    }
+
+    #[must_use]
+    pub fn synced_name<'a>(&'a self, stored_default_name: Option<&'a str>) -> &'a str {
+        if self.is_default()
+            && let Some(stored) = stored_default_name
+            && stored != LEGACY_DEFAULT_SPACE_NAME
+            && stored != ONE_MEMBER_SPACE_NAME
+            && stored != SHARED_SPACE_NAME
+        {
+            return stored;
+        }
+        &self.name
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]

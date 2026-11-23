@@ -26,14 +26,20 @@ use crate::wiki_builder::query;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct StoredSection {
-    topic: Option<TopicId>,
-    heading: String,
-    body: String,
+    pub(crate) topic: Option<TopicId>,
+    pub(crate) heading: String,
+    pub(crate) body: String,
 }
 
 #[async_trait]
 impl TopicPageStore for SqliteStore {
     async fn topic_page(&self, slug: &WikiSlug) -> Result<Option<TopicPage>, WikiStoreError> {
+        let slug = slug.clone();
+        if let Some(root) = self.wiki_directory()
+            && let Some(page) = crate::wiki_page_files::read_topic(root, &slug).await?
+        {
+            return Ok(Some(page));
+        }
         let slug = slug.clone();
         blocking(self, move |conn| read(conn, &slug)).await
     }
@@ -58,8 +64,11 @@ impl TopicPageStore for SqliteStore {
         page: &TopicPage,
         now: Timestamp,
     ) -> Result<(), WikiStoreError> {
-        let page = page.clone();
         let origin = kernel::wiki::origin::NoteOrigin::current();
+        if let Some(root) = self.wiki_directory() {
+            return crate::topic_write::save_filed(self, root, topic, page, now, origin).await;
+        }
+        let page = page.clone();
         blocking(self, move |conn| {
             let tx = crate::summary_replace::immediate(conn).map_err(query)?;
             if let Some(id) = origin {
@@ -80,6 +89,17 @@ impl TopicPageStore for SqliteStore {
     ) -> Result<bool, WikiStoreError> {
         let (slug, edit) = (slug.clone(), edit.clone());
         let origin = kernel::wiki::origin::NoteOrigin::current();
+        if let Some(root) = self.wiki_directory() {
+            let bound = blocking(self, {
+                let slug = slug.clone();
+                move |conn| page_bound(conn, &slug)
+            })
+            .await?;
+            if !bound {
+                return Ok(false);
+            }
+            return crate::topic_write::edit_filed(self, root, &slug, &edit, now, origin).await;
+        }
         blocking(self, move |conn| {
             let tx = crate::summary_replace::immediate(conn).map_err(query)?;
             if let Some(id) = origin {
@@ -121,6 +141,7 @@ impl TopicPageStore for SqliteStore {
         now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         let origin = kernel::wiki::origin::NoteOrigin::current();
+        let directory = self.wiki_directory().map(std::path::Path::to_path_buf);
         for _ in 0..CHANGE_ATTEMPTS {
             let before = self
                 .topic_page(slug)
@@ -131,23 +152,44 @@ impl TopicPageStore for SqliteStore {
             if after == before {
                 return Ok(());
             }
-            let swapped = blocking(self, move |conn| {
+            if let Some(path) = directory.as_deref() {
+                if crate::topic_write::change_locked(
+                    self,
+                    path,
+                    crate::topic_write::FiledEdit {
+                        root,
+                        before: &before,
+                        after: &after,
+                        now,
+                        origin,
+                    },
+                )
+                .await?
+                {
+                    return Ok(());
+                }
+                continue;
+            }
+            let current = {
+                let slug = before.slug.clone();
+                blocking(self, move |conn| read(conn, &slug)).await?
+            };
+            if current.as_ref() != Some(&before) {
+                continue;
+            }
+            let saved = after.clone();
+            blocking(self, move |conn| {
                 let tx = crate::summary_replace::immediate(conn).map_err(query)?;
                 if let Some(id) = origin {
                     crate::summary_replace::shared(&tx, id)
                         .map_err(crate::wiki_builder::fence_error)?;
                 }
-                if read(&tx, &before.slug)?.as_ref() != Some(&before) {
-                    return Ok(false);
-                }
-                save(&tx, root, &after, &time::stamp(now))?;
+                save(&tx, root, &saved, &time::stamp(now))?;
                 tx.commit().map_err(query)?;
-                Ok(true)
+                Ok(())
             })
             .await?;
-            if swapped {
-                return Ok(());
-            }
+            return Ok(());
         }
         Err(WikiStoreError::InvalidPatch(format!(
             "topic page {} kept changing under the update",
@@ -195,22 +237,32 @@ impl TopicPageStore for SqliteStore {
 
     async fn remove_page(&self, slug: &WikiSlug) -> Result<(), WikiStoreError> {
         let slug = slug.as_ref().to_owned();
+        if let Some(root) = self.wiki_directory() {
+            crate::wiki_page_files::remove_topic(&slug, root).await?;
+        }
         blocking(self, move |conn| {
-            for statement in [
-                "DELETE FROM ros_wiki_citations WHERE topic_slug = ?1",
-                "DELETE FROM ros_wiki_provenance WHERE topic_slug = ?1",
-                "DELETE FROM ros_wiki_redirects WHERE to_slug = ?1",
-                "DELETE FROM ros_wiki_topics WHERE slug = ?1",
-            ] {
-                conn.execute(statement, params![slug]).map_err(query)?;
-            }
-            Ok(())
+            crate::topic_write::delete_topic(conn, &slug)
         })
         .await
     }
 }
 
-fn read(conn: &Connection, slug: &WikiSlug) -> Result<Option<TopicPage>, WikiStoreError> {
+fn page_bound(conn: &Connection, slug: &WikiSlug) -> Result<bool, WikiStoreError> {
+    let owner: Option<String> = conn
+        .query_row(
+            "SELECT topic_id FROM rh_topic_pages WHERE page_slug = ?1 AND topic_id IS NOT NULL",
+            params![slug.as_ref()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(query)?;
+    Ok(owner.is_some())
+}
+
+pub(crate) fn read(
+    conn: &Connection,
+    slug: &WikiSlug,
+) -> Result<Option<TopicPage>, WikiStoreError> {
     let row = conn
         .query_row(
             "SELECT title, current_state, article, (SELECT sections FROM rh_topic_pages
@@ -247,7 +299,7 @@ fn read(conn: &Connection, slug: &WikiSlug) -> Result<Option<TopicPage>, WikiSto
     }))
 }
 
-fn save(
+pub(crate) fn save(
     conn: &Connection,
     topic: TopicId,
     page: &TopicPage,
@@ -295,7 +347,7 @@ fn save(
     )
     .map_err(query)?;
     conn.execute(
-        "DELETE FROM rh_topic_pages WHERE topic_id = ?1 OR page_slug = ?2",
+        "UPDATE rh_topic_pages SET topic_id = NULL WHERE topic_id = ?1 AND page_slug <> ?2",
         params![topic.to_string(), page.slug.as_ref()],
     )
     .map_err(query)?;
@@ -308,9 +360,26 @@ fn save(
             body: section.body.clone(),
         })
         .collect();
+    save_sections(conn, topic, &page.slug, &sections)
+}
+
+fn save_sections(
+    conn: &Connection,
+    topic: TopicId,
+    slug: &WikiSlug,
+    sections: &[StoredSection],
+) -> Result<(), WikiStoreError> {
+    let encoded = if bound_sections(conn, slug.as_ref())?.as_deref() == Some(sections) {
+        None
+    } else {
+        Some(encode(sections)?)
+    };
     conn.execute(
-        "INSERT INTO rh_topic_pages (topic_id, page_slug, sections) VALUES (?1, ?2, ?3)",
-        params![topic.to_string(), page.slug.as_ref(), encode(&sections)?],
+        "INSERT INTO rh_topic_pages (topic_id, page_slug, sections) VALUES (?1, ?2, coalesce(?3, '[]'))
+         ON CONFLICT (page_slug) DO UPDATE SET topic_id = excluded.topic_id,
+            sections_were_null = rh_topic_pages.sections_were_null AND ?3 IS NULL,
+            sections = coalesce(?3, rh_topic_pages.sections)",
+        params![topic.to_string(), slug.as_ref(), encoded],
     )
     .map_err(query)?;
     Ok(())
@@ -335,6 +404,7 @@ pub(crate) fn carry(
         }
         return Ok(());
     };
+    let before = kept.len();
     for section in child_sections {
         let known = kept.iter().any(|existing| match section.topic {
             Some(topic) => existing.topic == Some(topic),
@@ -344,24 +414,14 @@ pub(crate) fn carry(
             kept.push(section);
         }
     }
-    conn.execute(
-        "UPDATE rh_topic_pages SET sections = ?2 WHERE page_slug = ?1",
-        params![parent, encode(&kept)?],
-    )
-    .map_err(query)?;
+    if kept.len() != before {
+        conn.execute(
+            "UPDATE rh_topic_pages SET sections = ?2, sections_were_null = 0 WHERE page_slug = ?1",
+            params![parent, encode(&kept)?],
+        )
+        .map_err(query)?;
+    }
     Ok(())
-}
-
-pub(crate) fn rendered(sections: Option<&str>) -> Result<String, serde_json::Error> {
-    let sections: Vec<StoredSection> = match sections {
-        Some(text) => serde_json::from_str(text)?,
-        None => Vec::new(),
-    };
-    Ok(sections
-        .iter()
-        .map(|section| format!("\n## {}\n\n{}\n", section.heading, section.body.trim()))
-        .collect::<Vec<_>>()
-        .concat())
 }
 
 fn bound_sections(

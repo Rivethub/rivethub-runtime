@@ -7,7 +7,7 @@ use memory_postgres::CaptureOptions;
 use sqlx::PgPool;
 use wire::session_id::SessionKey;
 
-use crate::visibility::{batch, household, seed, viewer};
+use crate::visibility::{batch, seed, shared_space, viewer};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -28,7 +28,7 @@ async fn a_received_session_is_shared_with_a_space_by_its_import_key(pool: PgPoo
         .execute(&pool)
         .await?;
     let alice = viewer("alice")?;
-    let shared = Visibility::Space(household()?);
+    let shared = Visibility::Space(shared_space()?);
     let marked = Scope::Viewer(alice.clone())
         .run(tenancy.mark_session(&alice, &received, Some(&shared), Timestamp::now()))
         .await?;

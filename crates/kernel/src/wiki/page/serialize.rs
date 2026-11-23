@@ -18,16 +18,6 @@ pub fn serialize_wiki_page(page: &WikiPage) -> Result<String, WikiPageError> {
         ..WrittenFrontmatter::new(&page.meta, &related)
     })?;
     let links: Vec<String> = related.iter().map(|slug| format!("- [[{slug}]]")).collect();
-    let history: Vec<String> = limits::first(&page.history, limits::HISTORY)
-        .iter()
-        .map(|entry| {
-            format!(
-                "{}\n\n{}",
-                history_heading(entry),
-                demote_h2_headings(&entry.body).trim()
-            )
-        })
-        .collect();
     let mut parts = vec![
         format!(
             "## Summary\n\n{}\n",
@@ -35,7 +25,7 @@ pub fn serialize_wiki_page(page: &WikiPage) -> Result<String, WikiPageError> {
         ),
         open_section("Article", demote_h2_headings(&page.article).trim()),
         open_section("See also", &links.join("\n")),
-        format!("## History\n\n{}\n", history.join("\n\n").trim_end()),
+        history_section(&page.history),
     ];
     if !page.citations.is_empty() {
         let rows: Vec<String> = limits::first(&page.citations, limits::CITATIONS)
@@ -59,6 +49,20 @@ pub fn serialize_wiki_page(page: &WikiPage) -> Result<String, WikiPageError> {
         preamble.unwrap_or_default(),
         parts.join("\n")
     ))
+}
+
+pub fn history_section(entries: &[WikiHistoryEntry]) -> String {
+    let history: Vec<String> = limits::first(entries, limits::HISTORY)
+        .iter()
+        .map(|entry| {
+            format!(
+                "{}\n\n{}",
+                history_heading(entry),
+                demote_h2_headings(&entry.body).trim()
+            )
+        })
+        .collect();
+    format!("## History\n\n{}\n", history.join("\n\n").trim_end())
 }
 
 pub(super) fn history_heading(entry: &WikiHistoryEntry) -> String {

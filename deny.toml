@@ -29,9 +29,9 @@ deny = [
   { crate = "tmux_interface" },
 
   { crate = "values", wrappers = ["wire", "kernel"] },
-  { crate = "wire", wrappers = ["config", "testkit", "migrate", "memory-postgres", "memory-sqlite", "providers", "harness-acp", "mcp", "capture", "gateway", "workers", "cli", "rivethub"] },
+  { crate = "wire", wrappers = ["config", "testkit", "migrate", "memory-postgres", "memory-sqlite", "wiki-files", "providers", "harness-acp", "mcp", "capture", "gateway", "workers", "cli", "rivethub"] },
   { crate = "config", wrappers = ["kernel", "testkit", "migrate", "memory-postgres", "memory-sqlite", "providers", "harness-acp", "mcp", "capture", "gateway", "workers", "cli", "rivethub"] },
-  { crate = "kernel", wrappers = ["testkit", "memory-postgres", "memory-sqlite", "providers", "harness-acp", "mcp", "capture", "gateway", "workers", "cli", "rivethub"] },
+  { crate = "kernel", wrappers = ["testkit", "memory-postgres", "memory-sqlite", "wiki-files", "providers", "harness-acp", "mcp", "capture", "gateway", "workers", "cli", "rivethub"] },
   { crate = "testkit", wrappers = ["wire", "config", "kernel", "migrate", "memory-postgres", "memory-sqlite", "providers", "harness-acp", "mcp", "capture", "gateway", "workers", "cli", "rivethub"] },
   { crate = "memory-postgres", wrappers = ["migrate", "cli", "rivethub"] },
   { crate = "memory-sqlite", wrappers = ["migrate", "cli", "rivethub"] },

@@ -7,7 +7,7 @@ use kernel::queue::FixedJob;
 use kernel::queue::Job;
 use kernel::queue::JobKeyMode;
 use kernel::queue::JobName;
-use kernel::queue::JobQueue as _;
+use kernel::queue::admin::QueueAdmin as _;
 use kernel::wiki::consolidate::ConsolidateWiki;
 use kernel::wiki::consolidate::WikiConsolidateStore as _;
 use kernel::wiki::consolidate::consolidation_plan;
@@ -19,6 +19,8 @@ use tokio_util::sync::CancellationToken;
 use super::export::MemoryExporter;
 use super::io;
 use super::parse::MemoryCommand;
+use super::parse::RequeueCommand;
+use super::parse::RetryCommand;
 use super::target::Kind;
 use super::target::Target;
 use super::target::resolve;
@@ -35,26 +37,16 @@ pub(super) async fn run(
     match command {
         MemoryCommand::Settle(args) => super::settle::run(args, env).await,
         MemoryCommand::Resummarize(args) => super::resummarize::run(args, env, shutdown).await,
-        MemoryCommand::QueueStatus { json } => queue_status(json, env).await,
-        MemoryCommand::Retry {
-            tasks,
-            error,
-            limit,
-            dry_run,
-            json,
-        } => retry(tasks, error, limit, dry_run, json, env).await,
-        MemoryCommand::Requeue {
-            task,
-            limit,
-            clamped,
-            dry_run,
-            json,
-        } => requeue(task, limit, clamped, dry_run, json, env).await,
+        MemoryCommand::Pause(args) => super::pause::run(args, env).await,
+        MemoryCommand::QueueStatus { json, sqlite } => queue_status(json, sqlite, env).await,
+        MemoryCommand::Retry(job) => retry(job, env).await,
+        MemoryCommand::Requeue(job) => requeue(job, env).await,
         MemoryCommand::ToolSynth {
             limit,
             dry_run,
             json,
-        } => tool_synth(limit, dry_run, json, env).await,
+            sqlite,
+        } => tool_synth(limit, dry_run, json, sqlite, env).await,
         MemoryCommand::Export { out, since, sqlite } => {
             export(out, since, sqlite, env, shutdown, stdout_is_terminal).await
         }
@@ -93,27 +85,29 @@ pub(super) async fn run(
             json,
             sqlite,
             model: Some(model),
-        } => match resolve(env, sqlite, Kind::Either)? {
-            Target::Postgres(url) => {
-                super::titles::backfill(&url, &model, dry_run, json, shutdown).await
-            }
-            Target::Sqlite(_) => Err(Error::TitlesSqlite),
-        },
+        } => titles_model(model, dry_run, json, sqlite, env, shutdown).await,
         MemoryCommand::Reembed { dry_run, sqlite } => reembed(dry_run, sqlite, env).await,
         MemoryCommand::MergeStore(args) => super::merge::run(args, env, shutdown).await,
         MemoryCommand::ConsolidateWiki {
             limit,
             dry_run,
             json,
-        } => consolidate_wiki(limit, dry_run, json, env).await,
+            sqlite,
+        } => consolidate_wiki(limit, dry_run, json, sqlite, env).await,
         MemoryCommand::Cleanup(args) => super::cleanup::run(args, env, shutdown).await,
         MemoryCommand::RecompileWiki(args) => super::recompile::run(args, env).await,
     }
 }
 
-async fn queue_status(json: bool, env: &Environment) -> Result<Report, Error> {
-    let memory = PostgresMemory::connect(&postgres_url(env)?).await?;
-    let rows = memory.queue_status().await?;
+async fn queue_status(
+    json: bool,
+    sqlite: Option<PathBuf>,
+    env: &Environment,
+) -> Result<Report, Error> {
+    let rows = match resolve(env, sqlite, Kind::Either)? {
+        Target::Postgres(url) => PostgresMemory::connect(&url).await?.queue_status().await?,
+        Target::Sqlite(path) => open_sqlite_read_only(&path).await?.admin_status().await?,
+    };
     if json {
         Ok(Report::success(format!(
             "{}\n",
@@ -124,18 +118,29 @@ async fn queue_status(json: bool, env: &Environment) -> Result<Report, Error> {
     }
 }
 
-async fn retry(
-    tasks: Vec<String>,
-    error: Option<String>,
-    limit: Option<u32>,
-    dry_run: bool,
-    json: bool,
-    env: &Environment,
-) -> Result<Report, Error> {
-    let memory = PostgresMemory::connect(&postgres_url(env)?).await?;
-    let reset = memory
-        .retry_failed(&tasks, error.as_deref(), limit, dry_run)
-        .await?;
+async fn retry(job: RetryCommand, env: &Environment) -> Result<Report, Error> {
+    let RetryCommand {
+        tasks,
+        error,
+        limit,
+        dry_run,
+        json,
+        sqlite,
+    } = job;
+    let reset = match resolve(env, sqlite, Kind::Either)? {
+        Target::Postgres(url) => {
+            PostgresMemory::connect(&url)
+                .await?
+                .retry_failed(&tasks, error.as_deref(), limit, dry_run)
+                .await?
+        }
+        Target::Sqlite(path) => {
+            open_checked(&path, dry_run)
+                .await?
+                .admin_retry(&tasks, error.as_deref(), limit, dry_run)
+                .await?
+        }
+    };
     if json {
         Ok(Report::success(format!(
             "{}\n",
@@ -146,16 +151,29 @@ async fn retry(
     }
 }
 
-async fn requeue(
-    task: kernel::queue::JobName,
-    limit: u32,
-    clamped: bool,
-    dry_run: bool,
-    json: bool,
-    env: &Environment,
-) -> Result<Report, Error> {
-    let memory = PostgresMemory::connect(&postgres_url(env)?).await?;
-    let requeued = memory.requeue_failed(&task, limit, dry_run).await?;
+async fn requeue(job: RequeueCommand, env: &Environment) -> Result<Report, Error> {
+    let RequeueCommand {
+        task,
+        limit,
+        clamped,
+        dry_run,
+        json,
+        sqlite,
+    } = job;
+    let requeued = match resolve(env, sqlite, Kind::Either)? {
+        Target::Postgres(url) => {
+            PostgresMemory::connect(&url)
+                .await?
+                .requeue_failed(&task, limit, dry_run)
+                .await?
+        }
+        Target::Sqlite(path) => {
+            open_checked(&path, dry_run)
+                .await?
+                .admin_requeue(&task, limit, dry_run)
+                .await?
+        }
+    };
     if json {
         Ok(Report::success(format!(
             "{}\n",
@@ -170,14 +188,43 @@ async fn requeue(
     }
 }
 
+async fn titles_model(
+    model: super::titles::TitleModel,
+    dry_run: bool,
+    json: bool,
+    sqlite: Option<PathBuf>,
+    env: &Environment,
+    shutdown: &CancellationToken,
+) -> Result<Report, Error> {
+    match resolve(env, sqlite, Kind::Either)? {
+        Target::Postgres(url) => {
+            super::titles::backfill(&url, &model, dry_run, json, shutdown).await
+        }
+        Target::Sqlite(_) => Err(Error::TitlesSqlite),
+    }
+}
+
 async fn tool_synth(
     limit: Option<u32>,
     dry_run: bool,
     json: bool,
+    sqlite: Option<PathBuf>,
     env: &Environment,
 ) -> Result<Report, Error> {
-    let memory = PostgresMemory::connect(&postgres_url(env)?).await?;
-    let enqueued = memory.backfill_tool_synth(limit, dry_run).await?;
+    let enqueued = match resolve(env, sqlite, Kind::Either)? {
+        Target::Postgres(url) => {
+            PostgresMemory::connect(&url)
+                .await?
+                .backfill_tool_synth(limit, dry_run)
+                .await?
+        }
+        Target::Sqlite(path) => {
+            open_sqlite(&path)
+                .await?
+                .backfill_tool_synth(limit, dry_run)
+                .await?
+        }
+    };
     if json {
         Ok(Report::success(format!(
             "{}\n",
@@ -194,9 +241,9 @@ async fn consolidate_wiki(
     limit: Option<u32>,
     dry_run: bool,
     json: bool,
+    sqlite: Option<PathBuf>,
     env: &Environment,
 ) -> Result<Report, Error> {
-    let memory = PostgresMemory::connect(&postgres_url(env)?).await?;
     let mut options: ConsolidateWiki = serde_json::from_str("{}")?;
     options.dry_run = dry_run;
     if let Some(limit) = limit {
@@ -204,19 +251,7 @@ async fn consolidate_wiki(
     }
     let limit = options.limit_clusters;
     if !dry_run {
-        memory
-            .queue()
-            .await?
-            .enqueue(Job {
-                name: JobName::Fixed(FixedJob::ConsolidateWiki),
-                payload: wire::JsonObject::from_serialize(&options)?,
-                key: Some("wiki-consolidate".to_owned()),
-                key_mode: JobKeyMode::Replace,
-                priority: 5,
-                run_at: None,
-                max_attempts: None,
-            })
-            .await?;
+        queue_fold(sqlite, &options, env).await?;
         return Ok(Report::success(if json {
             format!(
                 "{}\n",
@@ -231,7 +266,21 @@ async fn consolidate_wiki(
             )
         }));
     }
-    let plan = consolidation_plan(&memory.wiki_topic_stats().await?, &options);
+    let stats = match resolve(env, sqlite, Kind::Either)? {
+        Target::Postgres(url) => {
+            PostgresMemory::connect(&url)
+                .await?
+                .wiki_topic_stats()
+                .await?
+        }
+        Target::Sqlite(path) => {
+            open_sqlite_read_only(&path)
+                .await?
+                .wiki_topic_stats()
+                .await?
+        }
+    };
+    let plan = consolidation_plan(&stats, &options);
     if json {
         return Ok(Report::success(format!(
             "{}\n",
@@ -259,6 +308,42 @@ async fn consolidate_wiki(
     ));
     let text = format!("{}\n", lines.join("\n"));
     Ok(Report::success(text))
+}
+
+async fn queue_fold(
+    sqlite: Option<PathBuf>,
+    options: &ConsolidateWiki,
+    env: &Environment,
+) -> Result<(), Error> {
+    match resolve(env, sqlite, Kind::Either)? {
+        Target::Postgres(url) => {
+            let memory = PostgresMemory::connect(&url).await?;
+            let queue = memory.queue().await?;
+            enqueue_fold(&queue, options).await
+        }
+        Target::Sqlite(path) => {
+            let store = open_sqlite(&path).await?;
+            enqueue_fold(&store, options).await
+        }
+    }
+}
+
+async fn enqueue_fold(
+    queue: &impl kernel::queue::JobQueue,
+    options: &ConsolidateWiki,
+) -> Result<(), Error> {
+    queue
+        .enqueue(Job {
+            name: JobName::Fixed(FixedJob::ConsolidateWiki),
+            payload: wire::JsonObject::from_serialize(options)?,
+            key: Some("wiki-consolidate".to_owned()),
+            key_mode: JobKeyMode::Replace,
+            priority: 5,
+            run_at: None,
+            max_attempts: None,
+        })
+        .await?;
+    Ok(())
 }
 
 async fn export(
@@ -294,7 +379,7 @@ async fn import(
         Target::Postgres(url) => {
             import_postgres(&url, &loaded.text, dry_run, header, shutdown).await
         }
-        Target::Sqlite(path) => import_sqlite(path, loaded, dry_run, header, shutdown).await,
+        Target::Sqlite(path) => import_sqlite(path, loaded, dry_run, header, shutdown, env).await,
     }
 }
 
@@ -311,7 +396,12 @@ async fn titles(
                 .backfill_titles(dry_run)
                 .await?
         }
-        Target::Sqlite(path) => open_sqlite(&path).await?.backfill_titles(dry_run).await?,
+        Target::Sqlite(path) => {
+            open_checked(&path, dry_run)
+                .await?
+                .backfill_titles(dry_run)
+                .await?
+        }
     };
     if json {
         return Ok(Report::success(format!(
@@ -376,9 +466,11 @@ async fn import_sqlite(
     dry_run: bool,
     header: io::Header,
     shutdown: &CancellationToken,
+    env: &Environment,
 ) -> Result<Report, Error> {
     let origin = io::finish_origin(header, super::target::sqlite_origin()?);
-    let store = open_sqlite(&database).await?;
+    let directory = configured_wiki(env)?;
+    let store = open_sqlite(&database).await?.with_wiki_directory(directory);
     let dump = loaded.dump_path();
     let report = if dry_run {
         store.preview_pg_dump(dump, shutdown.clone()).await?
@@ -392,6 +484,12 @@ async fn import_sqlite(
         Some(report.summary_records_losing_passage_vectors),
         dry_run,
     )
+}
+
+fn configured_wiki(env: &Environment) -> Result<PathBuf, Error> {
+    Ok(super::target::load_present(env)?
+        .unwrap_or_default()
+        .wiki_directory(env))
 }
 
 async fn publish(out: Option<PathBuf>, bytes: Vec<u8>, tty: bool) -> Result<Report, Error> {
@@ -418,9 +516,22 @@ pub(super) fn postgres_url(env: &Environment) -> Result<String, Error> {
     }
 }
 
+async fn open_checked(path: &Path, dry_run: bool) -> Result<SqliteStore, Error> {
+    if dry_run {
+        open_sqlite_read_only(path).await
+    } else {
+        open_sqlite(path).await
+    }
+}
+
 pub(super) async fn open_sqlite(path: &Path) -> Result<SqliteStore, Error> {
     let path = path.to_path_buf();
     Ok(tokio::task::spawn_blocking(move || SqliteStore::open(path)).await??)
+}
+
+pub(super) async fn open_sqlite_read_only(path: &Path) -> Result<SqliteStore, Error> {
+    let path = path.to_path_buf();
+    Ok(tokio::task::spawn_blocking(move || SqliteStore::open_read_only(path)).await??)
 }
 
 fn human_health(rows: &[QueueHealth]) -> String {

@@ -18,7 +18,7 @@ use memory_postgres::PostgresTenancy;
 use sqlx::PgPool;
 use wire::session_id::{SessionId, SessionKey};
 
-use crate::visibility::{batch, household, person, seed, viewer};
+use crate::visibility::{batch, person, seed, shared_space, viewer};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -93,7 +93,7 @@ async fn a_trashed_session_leaves_every_reader_s_recall_on_a_pinned_login(
         .run(tenancy.mark_session(
             &alice,
             &SessionKey::from(&shared),
-            Some(&Visibility::Space(household()?)),
+            Some(&Visibility::Space(shared_space()?)),
             Timestamp::now(),
         ))
         .await?;
@@ -142,7 +142,7 @@ async fn a_reader_cannot_mark_a_session_and_a_stray_mark_changes_nothing(
         .run(tenancy.mark_session(
             &alice,
             &SessionKey::from(&shared),
-            Some(&Visibility::Space(household()?)),
+            Some(&Visibility::Space(shared_space()?)),
             Timestamp::now(),
         ))
         .await?;
@@ -207,9 +207,9 @@ async fn a_reader_cannot_mark_a_session_and_a_stray_mark_changes_nothing(
     let state = seen.get(&key).ok_or("bob reads the session's state")?;
     assert_eq!(
         state.mark,
-        Some(Visibility::Space(household()?)),
+        Some(Visibility::Space(shared_space()?)),
         "the mark reported is the owner's, never the stray one"
     );
-    assert_eq!(state.effective, Visibility::Space(household()?));
+    assert_eq!(state.effective, Visibility::Space(shared_space()?));
     Ok(())
 }

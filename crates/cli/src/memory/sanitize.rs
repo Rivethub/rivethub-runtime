@@ -149,14 +149,7 @@ pub(super) async fn run(job: Job, env: &Environment) -> Result<Report, Error> {
     {
         return Err(Error::BundleOutDirectory(out.display().to_string()));
     }
-    let decider = if decide {
-        Some(
-            share::decider(&super::target::load(env)?.unwrap_or_default(), block)
-                .map_err(ShareError::from)?,
-        )
-    } else {
-        None
-    };
+    let explicit = matches!(&input, Source::Store(store) if store.explicit_sqlite());
     let share::Chosen { bundle, sessions } = match input {
         Source::File(path) => share::Chosen {
             bundle: capture::bundle::parse(&tokio::fs::read_to_string(path).await?)?,
@@ -164,7 +157,18 @@ pub(super) async fn run(job: Job, env: &Environment) -> Result<Report, Error> {
         },
         Source::Store(store) => super::chosen::load(store, env).await?,
     };
-    let mapping = mapping_file(mapping, env)?;
+    let decider = if decide {
+        Some(
+            share::decider(
+                &super::target::load_for(env, explicit)?.unwrap_or_default(),
+                block,
+            )
+            .map_err(ShareError::from)?,
+        )
+    } else {
+        None
+    };
+    let mapping = mapping_file(mapping, env, explicit)?;
     let paths = BundlePaths::beside(out);
     let outcome = share::sanitize(
         share::Job {
@@ -230,10 +234,14 @@ fn decision_line(decision: &capture::sanitize::Decision, report: &Path) -> Strin
     )
 }
 
-fn mapping_file(mapping: Option<PathBuf>, env: &Environment) -> Result<MappingFile, Error> {
+fn mapping_file(
+    mapping: Option<PathBuf>,
+    env: &Environment,
+    explicit: bool,
+) -> Result<MappingFile, Error> {
     Ok(match mapping {
         Some(path) => MappingFile::Configured(path),
-        None => super::target::load(env)?
+        None => super::target::load_for(env, explicit)?
             .unwrap_or_default()
             .sanitize_mapping(env)?,
     })
@@ -286,7 +294,7 @@ pub(super) async fn resolve(
     let offered = if maps.is_empty() {
         None
     } else {
-        Some(super::desk::offer(&mapping_file(mapping, env)?, &maps, learn).await?)
+        Some(super::desk::offer(&mapping_file(mapping, env, false)?, &maps, learn).await?)
     };
     if resolved.sealed.bundle != bundle {
         let mut sealed = resolved.sealed.text.clone();

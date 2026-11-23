@@ -14,6 +14,7 @@ pub struct Locator {
     home: Option<PathBuf>,
     xdg_config: Option<PathBuf>,
     claude_json_dir: Option<PathBuf>,
+    antigravity_config: Option<PathBuf>,
     roots: StoreRoots,
     path_dirs: Vec<PathBuf>,
     opencode_plugin: Option<PathBuf>,
@@ -34,6 +35,12 @@ impl Locator {
             .or_else(|| home.as_ref().map(|home| home.join(".config")));
         let claude_json_dir =
             claude_config_file(env).and_then(|file| file.parent().map(Path::to_path_buf));
+        let antigravity_config = env
+            .text("ANTIGRAVITY_CONFIG_DIR")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| home.as_ref().map(|home| home.join(".gemini/config")));
         let path_dirs = env
             .get("PATH")
             .map(|paths| std::env::split_paths(paths).collect())
@@ -42,6 +49,7 @@ impl Locator {
             home,
             xdg_config,
             claude_json_dir,
+            antigravity_config,
             roots: store_roots(env),
             path_dirs,
             opencode_plugin: env
@@ -50,6 +58,11 @@ impl Locator {
                 .filter(|value| !value.is_empty())
                 .map(PathBuf::from),
         }
+    }
+
+    #[must_use]
+    pub fn home(&self) -> Option<&Path> {
+        self.home.as_deref()
     }
 
     #[must_use]
@@ -78,6 +91,8 @@ impl Locator {
             Base::Cursor => single(self.roots.cursor.as_ref()),
             Base::Dsh => single(self.roots.dsh.as_ref()),
             Base::Cowork => self.roots.cowork.clone(),
+            Base::AntigravityConfig => single(self.antigravity_config.as_ref()),
+            Base::AntigravityData => self.roots.antigravity.clone(),
         }
     }
 

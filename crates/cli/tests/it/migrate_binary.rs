@@ -35,12 +35,10 @@ fn sqlite_status_reports_the_ladder_position_and_migrate_reaches_the_top() -> Te
     let shown = path.display();
     let file = path.to_string_lossy();
     let required = memory_sqlite::SCHEMA_VERSION;
+    let pending = required - 5;
     assert_eq!(
         run(&["status", "sqlite", "--path", &file])?,
-        format!(
-            "sqlite {shown}: current 5, required {required}, pending {}\n",
-            required - 5
-        )
+        format!("sqlite {shown}: current 5, required {required}, pending {pending}\n")
     );
     assert_eq!(
         run(&["sqlite", "--path", &file])?,

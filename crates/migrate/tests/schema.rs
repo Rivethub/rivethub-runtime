@@ -234,8 +234,10 @@ fn old_tasks_are_archived_and_the_table_is_rebuilt() -> TestResult<()> {
     migrate::sqlite(&path)?;
     {
         let conn = rusqlite::Connection::open(&path)?;
+        conn.execute_batch(include_str!("fixtures/pre_memory_transfer.txt"))?;
         conn.execute_batch(
-            "DROP TABLE rh_tasks;
+            "DROP TABLE rh_tasks_archive;
+             DROP TABLE rh_tasks;
              CREATE TABLE rh_tasks (id TEXT PRIMARY KEY, goal TEXT NOT NULL, executor TEXT NOT NULL,
                  status TEXT NOT NULL, error TEXT, completed_at TEXT);
              INSERT INTO rh_tasks VALUES ('a', 'beat', 'chat-loop', 'queued', NULL, NULL),
@@ -285,6 +287,7 @@ fn a_trigger_for_an_unloaded_module_does_not_block_renames() -> TestResult<()> {
     migrate::sqlite(&path)?;
     {
         let conn = rusqlite::Connection::open(&path)?;
+        conn.execute_batch(include_str!("fixtures/pre_memory_transfer.txt"))?;
         conn.execute_batch(
             "PRAGMA foreign_keys = OFF;
              DROP TABLE rh_topic_pages;
@@ -294,6 +297,7 @@ fn a_trigger_for_an_unloaded_module_does_not_block_renames() -> TestResult<()> {
                  sections TEXT NOT NULL DEFAULT '[]',
                  owner_user_id TEXT
              );
+             DROP TABLE rh_tasks_archive;
              ALTER TABLE rh_tasks ADD COLUMN executor TEXT;
              CREATE TABLE messages (id INTEGER PRIMARY KEY, body TEXT);
              PRAGMA writable_schema = ON;

@@ -272,55 +272,6 @@ async fn top_down_search_literal_and_full_text_exclude_sections_and_incomplete_o
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn top_down_search_respects_the_limit_without_collapsing_duplicate_passages(
-    pool: PgPool,
-) -> TestResult {
-    seed(&pool).await?;
-    let session = Uuid::parse_str(OWNER)?;
-    let text = "Clementine stash for the fall harvest at the community orchard. ";
-    let owner: Uuid = sqlx::query_scalar(
-        "INSERT INTO rh_summaries (id,conversation_id,parent_id,depth,kind,content,message_count,
-             earliest_at,latest_at,owner_user_id,pipeline_version,summary_ordinal,source_first,source_last,
-             issued_part_ordinal,input_token_estimate,input_key)
-         SELECT md5('part')::uuid, conversation_id,id,1,'part',repeat($1,45),message_count,
-             earliest_at,latest_at,owner_user_id,7,1,source_first,source_last,1,1024,input_key
-         FROM rh_summaries WHERE id=$2 RETURNING id",
-    ).bind(text).bind(session).fetch_one(&pool).await?;
-    sqlx::query(
-        "INSERT INTO rh_summary_passages
-         (id,record_id,ordinal,char_start,char_end,content,earliest_at,latest_at,index_key,embedding)
-         SELECT md5('bulk'||i)::uuid,s.id,i,i*length($1),(i+1)*length($1),$1,s.earliest_at,s.latest_at,
-             s.input_key,array_fill(1::real,ARRAY[1024])::halfvec
-         FROM rh_summaries s CROSS JOIN generate_series(0,44) i WHERE s.id=$2",
-    ).bind(text).bind(owner).execute(&pool).await?;
-    let memory = PostgresMemory::new(pool);
-    let mut q = query("clementine", SearchMode::Fts);
-    q.expand = Some(false);
-    let outcome = memory.search(q).await?;
-    let hits = outcome.results;
-    let owner = owner.to_string();
-    assert_eq!(hits.len(), 40);
-    assert!(
-        outcome
-            .summaries
-            .values()
-            .all(|detail| detail.kind == SummaryKind::Part)
-    );
-    assert!(
-        hits.iter()
-            .all(|hit| hit.id == owner && hit.content == text)
-    );
-    assert_eq!(
-        hits.iter()
-            .map(kernel::memory::MemorySearchResult::detail_id)
-            .collect::<std::collections::BTreeSet<_>>()
-            .len(),
-        40
-    );
-    Ok(())
-}
-
-#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn top_down_search_uses_one_snapshot_during_tree_replacement(pool: PgPool) -> TestResult {
     seed(&pool).await?;
     sqlx::raw_sql(

@@ -20,6 +20,23 @@ SELECT e.*, map.new, row_number() OVER (PARTITION BY map.new ORDER BY
 FROM ros_wiki_extractions e
 JOIN summary_reference_map map ON map.old = e.summary_id AND map.new IS NOT NULL;
 
+CREATE TEMP TABLE summary_entity_extractions AS
+SELECT e.*, map.new FROM rh_entity_extractions e JOIN summary_reference_map map ON map.old = e.summary_id;
+
+CREATE TEMP TABLE summary_entity_history AS
+SELECT h.*, map.new, coalesce(s.latest_at, s.created_at) AS source_at
+FROM rh_entity_history h JOIN summary_reference_map map ON map.old = h.summary_id
+JOIN ros_summaries s ON s.id = map.old;
+
+CREATE TEMP TABLE summary_entity_types AS
+SELECT t.*, map.new FROM rh_entity_type_seen t JOIN summary_reference_map map ON map.old = t.summary_id;
+
+UPDATE rh_entity_candidates AS c SET summary_id = map.new
+FROM summary_replacements map WHERE c.summary_id = map.old AND map.new IS NOT NULL;
+
+UPDATE rh_entity_decisions AS d SET summary_id = map.new
+FROM summary_replacements map WHERE d.summary_id = map.old AND map.new IS NOT NULL;
+
 DELETE FROM ros_summaries WHERE id IN (SELECT old FROM summary_replacements);
 ";
 
@@ -60,29 +77,44 @@ pub(super) const DELIVERIES: &str = r"WITH legacy_leaves AS (
     UNION ALL
     SELECT summary_id, message_id FROM window_members WHERE window_count = message_count
 ), accepted AS (
-    SELECT l.message_id, max(coalesce(e.pipeline_version, 4)) AS version
+    SELECT l.message_id, 'wiki' AS consumer, max(coalesce(e.pipeline_version, 4)) AS version
     FROM legacy_leaves s JOIN legacy_members l ON l.summary_id = s.id
     LEFT JOIN ros_wiki_extractions e ON e.summary_id = s.id
     LEFT JOIN rh_wiki_deferred d ON d.summary_id = s.id
     WHERE s.conversation_id = ?1 AND s.kind = 'leaf'
       AND (d.summary_id IS NOT NULL OR e.status IN ('done', 'skipped'))
     GROUP BY l.message_id
+    UNION ALL
+    SELECT l.message_id, 'entity', max(e.pipeline_version)
+    FROM legacy_members l JOIN rh_entity_extractions e ON e.summary_id = l.summary_id
+    WHERE e.status = 'done' GROUP BY l.message_id
 ), recovery AS (
-    SELECT DISTINCT l.message_id
+    SELECT DISTINCT l.message_id, 'wiki' AS consumer
     FROM legacy_members l
     JOIN ros_wiki_extractions e ON e.summary_id = l.summary_id WHERE e.status = 'failed'
     UNION
-    SELECT DISTINCT l.message_id
+    SELECT DISTINCT l.message_id, 'wiki'
     FROM legacy_members l
     JOIN ros_jobs j ON j.job_key = 'wiki-ext-' || l.summary_id AND j.state <> 'dead'
+    UNION
+    SELECT DISTINCT l.message_id, 'entity'
+    FROM legacy_members l JOIN rh_entity_extractions e ON e.summary_id = l.summary_id
+    WHERE e.status = 'failed' AND NOT EXISTS (
+        SELECT 1 FROM ros_jobs j WHERE j.job_key = 'entity-ext-' || l.summary_id AND j.state = 'dead'
+    ) AND NOT EXISTS (
+        SELECT 1 FROM rh_flagged_jobs f WHERE f.job_key = 'entity-ext-' || l.summary_id
+    )
+    UNION
+    SELECT DISTINCT l.message_id, 'entity'
+    FROM legacy_members l JOIN ros_jobs j ON j.job_key = 'entity-ext-' || l.summary_id AND j.state <> 'dead'
 ), delivery AS (
     SELECT m.id AS message_id, c.consumer, done.version,
            CASE WHEN done.version IS NULL AND (NOT ?2 OR recovery.message_id IS NOT NULL)
                 THEN a.anchor END AS anchor_id
     FROM ros_messages m CROSS JOIN (SELECT 'wiki' AS consumer UNION ALL SELECT 'entity') c
     LEFT JOIN summary_anchors a ON a.message = m.id
-    LEFT JOIN accepted done ON done.message_id = m.id AND c.consumer = 'wiki'
-    LEFT JOIN recovery ON recovery.message_id = m.id AND c.consumer = 'wiki'
+    LEFT JOIN accepted done ON done.message_id = m.id AND c.consumer = done.consumer
+    LEFT JOIN recovery ON recovery.message_id = m.id AND c.consumer = recovery.consumer
     WHERE m.conversation_id = ?1 AND (?2 OR a.anchor IS NOT NULL)
 )
 INSERT INTO ros_summary_deliveries (conversation_id, consumer, message_id, completed_version, anchor_id, historical_backlog)
@@ -224,9 +256,70 @@ DROP TABLE summary_replacements;
 DROP TABLE summary_retained;
 ";
 
-pub(super) const REUSE_VECTORS: &str = r"CREATE TEMP TABLE summary_old_vectors AS
-SELECT s.id, s.conversation_id, s.content, s.index_key, s.embedding
-FROM ros_summaries s JOIN summary_replacements r ON r.old = s.id
-WHERE s.kind IN ('session', 'part') AND NOT s.index_needs_repair
-  AND length(s.embedding) = 4096 AND s.index_key IS NOT NULL;
+pub(super) const ENTITY_REFERENCES: &str = r"WITH ranked AS (
+    SELECT e.*, row_number() OVER (
+        PARTITION BY new ORDER BY (status = 'done') DESC, (status = 'skipped') DESC,
+        pipeline_version DESC, rh_instant(extracted_at) DESC, summary_id DESC
+    ) AS rank
+    FROM summary_entity_extractions e
+)
+INSERT INTO rh_entity_extractions
+    (summary_id, status, pipeline_version, entities_touched, git_sha, error, extracted_at, owner_user_id)
+SELECT e.new, e.status, e.pipeline_version, (SELECT json_group_array(slug) FROM (
+    SELECT DISTINCT item.value AS slug FROM summary_entity_extractions r, json_each(r.entities_touched) item
+    WHERE r.new = e.new ORDER BY slug
+)), e.git_sha, e.error, e.extracted_at, e.owner_user_id
+FROM ranked e WHERE e.rank = 1
+ON CONFLICT (summary_id) DO UPDATE
+SET status = excluded.status, pipeline_version = excluded.pipeline_version,
+    entities_touched = excluded.entities_touched, git_sha = excluded.git_sha,
+    error = excluded.error, extracted_at = excluded.extracted_at;
+
+WITH ranked AS (
+    SELECT h.*, row_number() OVER (
+        PARTITION BY entity_id, new ORDER BY rh_instant(source_at) DESC, summary_id DESC
+    ) AS rank
+    FROM summary_entity_history h
+)
+INSERT INTO rh_entity_history (entity_id, summary_id, conversation_id, session_on, sentence, owner_user_id)
+SELECT entity_id, new, conversation_id, session_on, sentence, owner_user_id FROM ranked WHERE rank = 1
+ON CONFLICT (entity_id, summary_id) DO UPDATE SET conversation_id = excluded.conversation_id,
+    session_on = excluded.session_on, sentence = excluded.sentence;
+
+WITH ranked AS (
+    SELECT t.*, row_number() OVER (
+        PARTITION BY entity_id, new, type_name ORDER BY rh_instant(observed_at) DESC, summary_id DESC
+    ) AS rank
+    FROM summary_entity_types t
+)
+INSERT INTO rh_entity_type_seen (entity_id, summary_id, type_name, observed_at, owner_user_id)
+SELECT entity_id, new, type_name, observed_at, owner_user_id FROM ranked WHERE rank = 1
+ON CONFLICT (entity_id, summary_id, type_name) DO UPDATE SET observed_at = excluded.observed_at;
+
+UPDATE rh_entity_applied AS current SET summary_id = map.new
+FROM summary_replacements map WHERE current.summary_id = map.old AND map.new IS NOT NULL;
+
+CREATE TEMP TABLE summary_entity_removed_marks AS
+SELECT c.entity_id, c.owner_user_id FROM rh_entity_applied c
+JOIN summary_replacements map ON c.summary_id = map.old WHERE map.new IS NULL;
+
+DELETE FROM rh_entity_applied WHERE entity_id IN (SELECT entity_id FROM summary_entity_removed_marks);
+
+WITH ranked AS (
+    SELECT h.entity_id, h.summary_id, h.owner_user_id, coalesce(s.latest_at, s.created_at) AS applied_at,
+           row_number() OVER (
+               PARTITION BY h.entity_id
+               ORDER BY rh_instant(coalesce(s.latest_at, s.created_at)) DESC, h.summary_id DESC
+           ) AS rank
+    FROM summary_entity_removed_marks old
+    JOIN rh_entity_history h ON h.entity_id = old.entity_id AND h.owner_user_id = old.owner_user_id
+    JOIN ros_summaries s ON s.id = h.summary_id
+)
+INSERT INTO rh_entity_applied (entity_id, summary_id, applied_through, owner_user_id)
+SELECT entity_id, summary_id, applied_at, owner_user_id FROM ranked WHERE rank = 1 ON CONFLICT DO NOTHING;
+
+DROP TABLE summary_entity_removed_marks;
+DROP TABLE summary_entity_types;
+DROP TABLE summary_entity_history;
+DROP TABLE summary_entity_extractions;
 ";

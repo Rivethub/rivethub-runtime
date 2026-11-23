@@ -50,3 +50,74 @@ pub fn article_with_facts(article: &str, facts: &[LiveFact]) -> String {
         format!("{article}\n\n{section}")
     }
 }
+
+use super::{EntityProse, EntityStoreError, EntityView, render_history};
+use crate::wiki::page::LastVerified;
+use crate::wiki::page::PageCitation;
+use crate::wiki::page::PageSource;
+use crate::wiki::page::WikiPage;
+use crate::wiki::page::WikiSourceKind;
+
+pub fn entity_page(view: &EntityView, prose: &EntityProse) -> Result<WikiPage, EntityStoreError> {
+    let slug = crate::wiki::page::WikiSlug::try_from(view.slug.clone())
+        .map_err(|_| EntityStoreError::SlugTaken(view.slug.clone()))?;
+    let mut page = WikiPage::empty(slug, view.name.clone());
+    prose.summary.trim().clone_into(&mut page.current_state);
+    page.article = article_with_facts(&prose.article, &view.facts);
+    page.meta.aliases.clone_from(&view.aliases);
+    page.meta.tags = page_tags(view);
+    page.history = render_history(&view.history);
+    page.meta.last_verified = view
+        .facts
+        .iter()
+        .map(|fact| fact.as_of)
+        .max()
+        .map(LastVerified::from);
+    page.meta.sources = page_sources(view);
+    page.citations = view
+        .history
+        .iter()
+        .map(|line| PageCitation {
+            summary_id: line.summary_id.to_string(),
+            date: Some(line.date),
+            kind: None,
+            note: None,
+        })
+        .collect();
+    drop(crate::wiki::page::bound::bound_page(None, &mut page));
+    Ok(page)
+}
+
+fn page_tags(view: &EntityView) -> Vec<String> {
+    let mut tags = Vec::new();
+    if !view.type_slug.is_empty() {
+        tags.push(view.type_slug.clone());
+    }
+    if !view.type_name.is_empty() && !tags.iter().any(|tag| tag == &view.type_name) {
+        tags.push(view.type_name.clone());
+    }
+    tags
+}
+
+fn page_sources(view: &EntityView) -> Vec<PageSource> {
+    let mut ids: Vec<String> = view
+        .history
+        .iter()
+        .map(|line| line.summary_id.to_string())
+        .collect();
+    ids.sort();
+    ids.dedup();
+    if ids.is_empty() {
+        return Vec::new();
+    }
+    vec![PageSource {
+        kind: WikiSourceKind::Summary,
+        ids,
+        conversation_id: view
+            .history
+            .iter()
+            .find_map(|line| line.conversation_id)
+            .map(|id| id.to_string()),
+        extra: values::Extra::default(),
+    }]
+}

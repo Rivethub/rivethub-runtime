@@ -3,6 +3,7 @@ use serde::Serialize;
 use wire::capture::CaptureBatchRequest;
 use wire::harness::HarnessId;
 
+use crate::hook::antigravity::backfill_batch as antigravity_batch;
 use crate::hook::file::FileCapture;
 use crate::hook::file::batch as file_batch;
 use crate::hook::store::StoreCapture;
@@ -10,18 +11,20 @@ use crate::hook::store::StoreHarness;
 use crate::listing::StoreRoots;
 use crate::listing::StoreSessionLister;
 use crate::listing::store_files;
+use crate::readers::antigravity::sessions as antigravity_sessions;
 use crate::readers::blocking;
 use crate::writer::CaptureTransport;
 use crate::writer::CaptureWriter;
 use crate::writer::PostError;
 use crate::writer::WriteError;
 
-pub const HARNESSES: [HarnessId; 5] = [
+pub const HARNESSES: [HarnessId; 6] = [
     HarnessId::ClaudeCode,
     HarnessId::GrokBuild,
     HarnessId::Opencode,
     HarnessId::Codex,
     HarnessId::Dsh,
+    HarnessId::Antigravity,
 ];
 
 const EVENT: &str = "Backfill";
@@ -87,6 +90,7 @@ impl<T: CaptureTransport> Backfill<T> {
             let mut totals = HarnessTotals::new(harness);
             let reachable = match harness {
                 HarnessId::ClaudeCode => self.claude(&mut totals, dry_run, now).await,
+                HarnessId::Antigravity => self.antigravity(&mut totals, dry_run, now).await,
                 HarnessId::GrokBuild | HarnessId::Opencode | HarnessId::Codex | HarnessId::Dsh => {
                     self.store(&mut totals, dry_run, now).await
                 }
@@ -128,6 +132,27 @@ impl<T: CaptureTransport> Backfill<T> {
                 .await
                 .map_err(|error| error.to_string());
             if !self.deliver(totals, &file.id, built, dry_run, now).await {
+                return false;
+            }
+        }
+        true
+    }
+
+    async fn antigravity(&self, totals: &mut HarnessTotals, dry_run: bool, now: Timestamp) -> bool {
+        let roots = self.roots.antigravity.clone();
+        if roots.is_empty() {
+            return true;
+        }
+        let files = match blocking(move || antigravity_sessions(&roots)).await {
+            Ok(files) => files,
+            Err(error) => {
+                totals.fail("store", &error);
+                return true;
+            }
+        };
+        for (id, app_dir, path) in &files {
+            let built = antigravity_batch(app_dir, id, path, EVENT, now).await;
+            if !self.deliver(totals, id, built, dry_run, now).await {
                 return false;
             }
         }
@@ -207,7 +232,8 @@ fn store_harness(harness: HarnessId) -> Option<StoreHarness> {
         | HarnessId::Hermes
         | HarnessId::Omp
         | HarnessId::Cursor
-        | HarnessId::Cowork => None,
+        | HarnessId::Cowork
+        | HarnessId::Antigravity => None,
     }
 }
 

@@ -142,6 +142,44 @@ async fn lookup(store: &SqliteStore, slug: &str) -> TestResult<WikiLookup> {
 }
 
 #[tokio::test]
+async fn a_stem_cluster_folds_into_the_parent() -> TestResult {
+    let fixture = fixture()?;
+    clear_topics(&fixture.path)?;
+    seed_stem(&fixture.path)?;
+    testkit::maintenance::a_stem_cluster_folds_into_the_parent(&fixture.store).await
+}
+
+fn clear_topics(path: &Path) -> TestResult {
+    let conn = rusqlite::Connection::open(path)?;
+    conn.execute_batch(
+        "DELETE FROM ros_wiki_citations;
+         DELETE FROM ros_wiki_provenance;
+         DELETE FROM ros_wiki_redirects;
+         DELETE FROM ros_wiki_topics;",
+    )?;
+    Ok(())
+}
+
+fn seed_stem(path: &Path) -> TestResult {
+    let conn = rusqlite::Connection::open(path)?;
+    for (slug, title, state) in [
+        ("acme-kit", "Acme Kit", "Acme Kit ships the runtime."),
+        (
+            "acme-kit-notes",
+            "Rollout diary",
+            "The Friday notes stayed in the diary.",
+        ),
+    ] {
+        conn.execute(
+            "INSERT INTO ros_wiki_topics (slug, title, current_state, article, search_text, created_at, updated_at)
+             VALUES (?1, ?2, ?3, '', ?3, ?4, ?4)",
+            rusqlite::params![slug, title, state, STAMP],
+        )?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn folding_moves_the_child_into_the_parent() -> TestResult {
     let fixture = fixture()?;
     let folded = fixture.store.fold_wiki(&fold(), Timestamp::now()).await?;

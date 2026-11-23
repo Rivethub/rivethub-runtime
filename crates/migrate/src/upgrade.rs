@@ -20,6 +20,10 @@ pub(crate) fn ladder(
     Ok(())
 }
 
+fn apply_sql(conn: &mut Connection, to: SchemaVersion, sql: &str) -> Result<(), Error> {
+    in_transaction(conn, to, |tx| tx.execute_batch(sql))
+}
+
 fn step(conn: &mut Connection, to: SchemaVersion, now: Timestamp) -> Result<(), Error> {
     match to {
         SchemaVersion::V1 | SchemaVersion::V2 | SchemaVersion::V4 | SchemaVersion::V5 => Ok(()),
@@ -29,14 +33,10 @@ fn step(conn: &mut Connection, to: SchemaVersion, now: Timestamp) -> Result<(), 
         }),
         SchemaVersion::V6 => in_transaction(conn, to, add_owner_columns),
         SchemaVersion::V7 => in_transaction(conn, to, add_tag_removal_columns),
-        SchemaVersion::V8 => in_transaction(conn, to, |tx| {
-            tx.execute_batch(include_str!("schema/search_v8.sql"))
-        }),
+        SchemaVersion::V8 => apply_sql(conn, to, include_str!("schema/search_v8.sql")),
         SchemaVersion::V9 => rewrite_legacy_summary_kinds(conn),
         SchemaVersion::V10 => in_transaction(conn, to, crate::ids::canonicalize),
-        SchemaVersion::V11 => in_transaction(conn, to, |tx| {
-            tx.execute_batch(include_str!("schema/topics_v11.sql"))
-        }),
+        SchemaVersion::V11 => apply_sql(conn, to, include_str!("schema/topics_v11.sql")),
         SchemaVersion::V12 => in_transaction(conn, to, |tx| {
             tx.execute_batch(include_str!("schema/topic_suggestions_v12.sql"))
         }),
@@ -54,6 +54,38 @@ fn step(conn: &mut Connection, to: SchemaVersion, now: Timestamp) -> Result<(), 
         SchemaVersion::V18 => in_transaction(conn, to, unbind_topic_pages_on_delete),
         SchemaVersion::V19 => in_transaction(conn, to, add_done_state),
         SchemaVersion::V20 => in_transaction(conn, to, add_topic_kinds),
+        SchemaVersion::V21
+        | SchemaVersion::V22
+        | SchemaVersion::V23
+        | SchemaVersion::V24
+        | SchemaVersion::V25
+        | SchemaVersion::V26
+        | SchemaVersion::V27
+        | SchemaVersion::V28
+        | SchemaVersion::V29
+        | SchemaVersion::V30
+        | SchemaVersion::V31
+        | SchemaVersion::V32
+        | SchemaVersion::V33
+        | SchemaVersion::V34
+        | SchemaVersion::V35
+        | SchemaVersion::V36
+        | SchemaVersion::V37
+        | SchemaVersion::V38
+        | SchemaVersion::V39
+        | SchemaVersion::V40
+        | SchemaVersion::V41
+        | SchemaVersion::V42
+        | SchemaVersion::V43
+        | SchemaVersion::V45
+        | SchemaVersion::V46
+        | SchemaVersion::V47 => late_step(conn, to),
+        SchemaVersion::V44 => in_transaction(conn, to, add_memory_transfer),
+    }
+}
+
+fn late_step(conn: &mut Connection, to: SchemaVersion) -> Result<(), Error> {
+    match to {
         SchemaVersion::V21 => in_transaction(conn, to, add_conversation_filing),
         SchemaVersion::V22 => in_transaction(conn, to, |tx| {
             tx.execute_batch(include_str!("schema/tidy_v22.sql"))
@@ -93,11 +125,54 @@ fn step(conn: &mut Connection, to: SchemaVersion, now: Timestamp) -> Result<(), 
         SchemaVersion::V39 => in_transaction(conn, to, add_transcript_time),
         SchemaVersion::V40 => in_transaction(conn, to, add_conversion_second_pass),
         SchemaVersion::V41 => in_transaction(conn, to, add_opening_checked_user_count),
+        SchemaVersion::V42 => in_transaction(conn, to, add_entity_builder),
+        SchemaVersion::V43 => in_transaction(conn, to, add_summary_passages),
+        SchemaVersion::V45 => in_transaction(conn, to, add_message_chunks),
+        SchemaVersion::V46 => in_transaction(conn, to, add_flagged_jobs),
+        SchemaVersion::V47 => in_transaction(conn, to, add_wiki_maintenance),
         SchemaVersion::V37 => in_transaction(conn, to, add_opening_work),
         SchemaVersion::V35 => in_transaction(conn, to, |tx| {
             tx.execute_batch(include_str!("schema/model_calls_v35.sql"))
         }),
+        SchemaVersion::V44
+        | SchemaVersion::V1
+        | SchemaVersion::V2
+        | SchemaVersion::V3
+        | SchemaVersion::V4
+        | SchemaVersion::V5
+        | SchemaVersion::V6
+        | SchemaVersion::V7
+        | SchemaVersion::V8
+        | SchemaVersion::V9
+        | SchemaVersion::V10
+        | SchemaVersion::V11
+        | SchemaVersion::V12
+        | SchemaVersion::V13
+        | SchemaVersion::V14
+        | SchemaVersion::V15
+        | SchemaVersion::V16
+        | SchemaVersion::V17
+        | SchemaVersion::V18
+        | SchemaVersion::V19
+        | SchemaVersion::V20 => {
+            unreachable!("early schema versions are handled by step")
+        }
     }
+}
+
+pub(crate) fn add_summary_passages(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(include_str!("schema/summary_passages_v43.sql"))
+}
+
+pub(crate) fn add_entity_builder(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(include_str!("schema/entity_builder_v42.sql"))?;
+    if !column_present(tx, "rh_entity_fact_claims", "settled")? {
+        tx.execute_batch(
+            "ALTER TABLE rh_entity_fact_claims ADD COLUMN settled INTEGER NOT NULL DEFAULT 0
+                 CHECK (settled IN (0, 1) AND (actor = 'wiki-writer' OR settled = 0))",
+        )?;
+    }
+    Ok(())
 }
 
 pub(crate) fn add_conversion_second_pass(tx: &Transaction<'_>) -> rusqlite::Result<()> {
@@ -105,6 +180,28 @@ pub(crate) fn add_conversion_second_pass(tx: &Transaction<'_>) -> rusqlite::Resu
         tx.execute_batch("ALTER TABLE rh_summary_conversion_items ADD COLUMN second_pass_at TEXT")?;
     }
     Ok(())
+}
+
+pub(crate) fn add_message_chunks(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(include_str!("schema/message_chunks_v45.sql"))
+}
+
+pub(crate) fn add_flagged_jobs(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(include_str!("schema/flagged_jobs_v46.sql"))
+}
+
+pub(crate) fn add_wiki_maintenance(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    if !column_present(tx, "ros_wiki_topics", "history")? {
+        tx.execute_batch(
+            "ALTER TABLE ros_wiki_topics ADD COLUMN history TEXT NOT NULL DEFAULT '[]'",
+        )?;
+    }
+    if column_present(tx, "rh_tasks_archive", "id")?
+        && !column_present(tx, "rh_tasks_archive", "origin")?
+    {
+        tx.execute_batch("ALTER TABLE rh_tasks_archive ADD COLUMN origin TEXT")?;
+    }
+    tx.execute_batch(include_str!("schema/maintenance_v47.sql"))
 }
 
 pub(crate) fn add_opening_checked_user_count(tx: &Transaction<'_>) -> rusqlite::Result<()> {
@@ -228,6 +325,7 @@ fn rewrite_legacy_summary_kinds(conn: &mut Connection) -> Result<(), Error> {
     if left > 0 {
         return Err(Error::UnmappedSummaryKind);
     }
+    settle(&tx, SchemaVersion::V9).map_err(failed)?;
     tx.commit().map_err(failed)?;
     Ok(())
 }
@@ -243,7 +341,15 @@ fn in_transaction(
     };
     let tx = conn.transaction().map_err(failed)?;
     run(&tx).map_err(failed)?;
+    settle(&tx, to).map_err(failed)?;
     tx.commit().map_err(failed)
+}
+
+fn settle(tx: &Transaction<'_>, to: SchemaVersion) -> rusqlite::Result<()> {
+    if to.next().is_none() {
+        tx.execute_batch(crate::schema::TAIL_INDEXES_SQL)?;
+    }
+    tx.pragma_update(None, "user_version", to.number())
 }
 
 fn add_message_embedding_columns(tx: &Transaction<'_>) -> rusqlite::Result<()> {
@@ -384,4 +490,48 @@ fn column_present(conn: &Connection, table: &str, column: &str) -> rusqlite::Res
 #[must_use]
 fn timestamp(now: Timestamp) -> String {
     format!("{now:.3}")
+}
+
+pub(crate) fn add_memory_transfer(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(include_str!("schema/memory_transfer_v44.sql"))?;
+    for (table, column, definition) in [
+        (
+            "ros_wiki_topics",
+            "visibility",
+            "TEXT NOT NULL DEFAULT 'private'",
+        ),
+        (
+            "ros_wiki_topics",
+            "scope",
+            "TEXT REFERENCES rh_wiki_scopes (scope)",
+        ),
+        ("ros_wiki_topics", "local_slug", "TEXT"),
+        (
+            "rh_topic_pages",
+            "sections_were_null",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (sections_were_null IN (0, 1))",
+        ),
+        ("ros_wiki_redirects", "owner_user_id", "TEXT"),
+        ("ros_tag_taxonomy", "owner_user_id", "TEXT"),
+        (
+            "ros_tag_taxonomy",
+            "globally_shared",
+            "INTEGER CHECK (globally_shared = 1)",
+        ),
+        ("rh_topic_tombstones", "owner_user_id", "TEXT"),
+        (
+            "rh_topic_tombstones",
+            "locally_deleted",
+            "INTEGER NOT NULL DEFAULT 0 CHECK (locally_deleted IN (0, 1))",
+        ),
+    ] {
+        if !column_present(tx, table, column)? {
+            tx.execute_batch(&format!(
+                "ALTER TABLE {table} ADD COLUMN {column} {definition}"
+            ))?;
+        }
+    }
+    tx.execute_batch(
+        "CREATE UNIQUE INDEX IF NOT EXISTS rh_wiki_topics_scope_local ON ros_wiki_topics (scope, local_slug)",
+    )
 }

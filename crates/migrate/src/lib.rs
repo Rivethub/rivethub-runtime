@@ -3,6 +3,7 @@ mod foreign;
 mod ids;
 mod postgres;
 mod schema;
+mod still;
 mod upgrade;
 mod version;
 

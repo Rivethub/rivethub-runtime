@@ -1,3 +1,4 @@
+mod antigravity_capture;
 mod argument_order;
 mod batch_validation;
 mod bundle;

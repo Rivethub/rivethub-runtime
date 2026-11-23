@@ -3029,7 +3029,8 @@
         "omp",
         "dsh",
         "cursor",
-        "cowork"
+        "cowork",
+        "antigravity"
       ],
       "type": "string"
     },
@@ -5904,7 +5905,8 @@
         "healthy",
         "slow",
         "failing",
-        "unconfigured"
+        "unconfigured",
+        "not-running"
       ],
       "type": "string"
     },
@@ -5925,6 +5927,12 @@
             "null"
           ]
         },
+        "outage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "provider": {
           "type": [
             "string",
@@ -5935,6 +5943,12 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "reportedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "role": {
           "$ref": "#/$defs/ModelRole"
@@ -5955,6 +5969,7 @@
         "summarizer",
         "categorizer",
         "wiki-writer",
+        "entity-builder",
         "embedder"
       ],
       "type": "string"
@@ -6220,6 +6235,14 @@
         "rangeVerified"
       ],
       "type": "object"
+    },
+    "PausableRole": {
+      "enum": [
+        "categorizer",
+        "wiki-builder",
+        "entity-builder"
+      ],
+      "type": "string"
     },
     "PendingTagAction": {
       "enum": [
@@ -9616,6 +9639,7 @@
     "SpaceKind": {
       "enum": [
         "household",
+        "device",
         "team",
         "compartment"
       ],
@@ -14047,6 +14071,66 @@
       },
       "required": [
         "failing"
+      ],
+      "type": "object"
+    },
+    "WorkerPause": {
+      "properties": {
+        "paused": {
+          "type": "boolean"
+        },
+        "pausedAt": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "pausedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "queued": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "role": {
+          "$ref": "#/$defs/PausableRole"
+        }
+      },
+      "required": [
+        "role",
+        "paused",
+        "queued"
+      ],
+      "type": "object"
+    },
+    "WorkerPauseUpdate": {
+      "additionalProperties": false,
+      "properties": {
+        "paused": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "paused"
+      ],
+      "type": "object"
+    },
+    "WorkerPauses": {
+      "properties": {
+        "roles": {
+          "items": {
+            "$ref": "#/$defs/WorkerPause"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "roles"
       ],
       "type": "object"
     },

@@ -16,7 +16,7 @@ use wire::gateway::memory_models::{ModelHealth, ModelJob, ModelRole};
 
 use super::{TestResult, settings};
 
-const OWNER_DEVICE: &str = "desk";
+pub(super) const OWNER_DEVICE: &str = "desk";
 const OTHER_DEVICE: &str = "win-other";
 
 #[derive(Debug, thiserror::Error)]
@@ -37,7 +37,7 @@ fn assignment(
     }
 }
 
-fn roles() -> Vec<ModelAssignment> {
+pub(super) fn roles() -> Vec<ModelAssignment> {
     vec![
         assignment(ModelRole::Default, "big", "big-model", false),
         assignment(ModelRole::Summarizer, "small", "small-model", false),
@@ -68,7 +68,7 @@ fn degraded(
     )
 }
 
-struct Node {
+pub(super) struct Node {
     router: axum::Router,
     store: Arc<SqliteStore>,
     _root: tempfile::TempDir,
@@ -81,6 +81,14 @@ fn node(providers: Vec<ProviderHealth>) -> TestResult<Node> {
 fn node_with(
     providers: Vec<ProviderHealth>,
     assignments: Vec<ModelAssignment>,
+) -> TestResult<Node> {
+    node_built(providers, assignments, None)
+}
+
+pub(super) fn node_built(
+    providers: Vec<ProviderHealth>,
+    assignments: Vec<ModelAssignment>,
+    reporting: Option<gateway::WorkerReporting>,
 ) -> TestResult<Node> {
     let root = tempfile::tempdir()?;
     let path = root.path().join("memory.sqlite");
@@ -96,6 +104,10 @@ fn node_with(
         .with_tidy(store.clone(), store.clone())
         .with_provider_health(providers)
         .with_model_assignments(assignments);
+    let gateway = match reporting {
+        Some(reporting) => gateway.with_worker_reports(reporting),
+        None => gateway,
+    };
     Ok(Node {
         router: Arc::new(gateway).router(true),
         store,
@@ -103,7 +115,7 @@ fn node_with(
     })
 }
 
-async fn models(node: &Node, device: &str) -> TestResult<(StatusCode, Vec<u8>)> {
+pub(super) async fn models(node: &Node, device: &str) -> TestResult<(StatusCode, Vec<u8>)> {
     let mut request = Request::builder()
         .method("GET")
         .uri("/api/memory/models")
@@ -122,7 +134,7 @@ async fn models(node: &Node, device: &str) -> TestResult<(StatusCode, Vec<u8>)> 
     Ok((status, bytes.to_vec()))
 }
 
-async fn queue(node: &Node, job: FixedJob, key: &str) -> TestResult {
+pub(super) async fn queue(node: &Node, job: FixedJob, key: &str) -> TestResult {
     node.store
         .enqueue(Job {
             name: JobName::Fixed(job),
@@ -137,7 +149,7 @@ async fn queue(node: &Node, job: FixedJob, key: &str) -> TestResult {
     Ok(())
 }
 
-fn jobs(bytes: &[u8]) -> TestResult<Vec<ModelJob>> {
+pub(super) fn jobs(bytes: &[u8]) -> TestResult<Vec<ModelJob>> {
     Ok(serde_json::from_slice(bytes)?)
 }
 
@@ -254,7 +266,7 @@ async fn a_node_without_a_model_reports_every_role_as_unconfigured() -> TestResu
     let (status, bytes) = models(&node, OWNER_DEVICE).await?;
     assert_eq!(status, StatusCode::OK);
     let jobs: Vec<wire::gateway::memory_models::ModelJob> = serde_json::from_slice(&bytes)?;
-    assert_eq!(jobs.len(), 5);
+    assert_eq!(jobs.len(), 6);
     assert!(jobs.iter().all(|job| job.health
         == wire::gateway::memory_models::ModelHealth::Unconfigured
         && job.provider.is_none()));

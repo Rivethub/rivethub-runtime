@@ -10,6 +10,8 @@ const GATE_FRACTION: f64 = 0.5;
 const HYBRID_POOL_MIN: i64 = 50;
 const HYBRID_POOL_MAX: i64 = 100;
 pub const HYBRID_MIN_CONTENT_LEN: i64 = 40;
+const CHUNK_POOL_MULTIPLIER: i64 = 4;
+const CHUNK_POOL_MAX: i64 = 400;
 
 pub trait FusionItem {
     fn fusion_id(&self) -> &str;
@@ -27,6 +29,11 @@ pub struct Fused<'a, T> {
 #[must_use]
 pub fn hybrid_pool(limit: u32) -> i64 {
     (i64::from(limit) * 3).clamp(HYBRID_POOL_MIN, HYBRID_POOL_MAX)
+}
+
+#[must_use]
+pub fn chunk_pool(limit: u32) -> i64 {
+    (hybrid_pool(limit) * CHUNK_POOL_MULTIPLIER).min(CHUNK_POOL_MAX)
 }
 
 #[expect(clippy::expect_used)]
@@ -93,6 +100,7 @@ pub fn passes_fusion_gate(arm_count: u32, score: f64, top: f64) -> bool {
 mod tests {
     use super::FusionItem;
     use super::HYBRID_RRF_K;
+    use super::chunk_pool;
     use super::fusion_score;
     use super::hybrid_pool;
     use super::literal_scan;
@@ -243,6 +251,15 @@ mod tests {
         assert!(passes_fusion_gate(1, 0.5, 1.0));
         assert!(!passes_fusion_gate(1, 0.499, 1.0));
         assert!(!passes_fusion_gate(0, 0.1, 1.0));
+    }
+
+    #[test]
+    fn the_chunk_pool_is_four_times_the_hybrid_pool_capped_at_four_hundred() {
+        assert_eq!(chunk_pool(2), 200);
+        assert_eq!(chunk_pool(16), 200);
+        assert_eq!(chunk_pool(17), 204);
+        assert_eq!(chunk_pool(34), 400);
+        assert_eq!(chunk_pool(u32::MAX), 400);
     }
 
     #[test]

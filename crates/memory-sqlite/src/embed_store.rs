@@ -19,7 +19,7 @@ use crate::meta;
 use crate::meta::MetaKey;
 use kernel::memory::summary_reference::SummaryReferenceError;
 
-const CHUNKS: &str = "ros_message_chunks";
+use crate::chunk_rows;
 
 #[async_trait]
 impl EmbeddingStore for SqliteStore {
@@ -34,13 +34,19 @@ impl EmbeddingStore for SqliteStore {
     }
 
     async fn write(&self, stored: StoredEmbedding) -> Result<(), EmbeddingStoreError> {
+        if stored.target.table != EmbedTable::Messages && !stored.chunks.is_empty() {
+            return Err(EmbeddingStoreError::Chunks {
+                table: stored.target.table,
+            });
+        }
         let model = self.embed_model.clone();
+        let now = self.now();
         self.with_conn(move |conn| {
             let tx = conn
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(SqliteError::query("write embedding"))?;
             guard_summary(&tx, &stored.target, Some(&stored.content_hash))?;
-            write_target(&tx, &stored, model.as_deref())?;
+            write_target(&tx, &stored, model.as_deref(), now)?;
             tx.commit().map_err(SqliteError::query("write embedding"))
         })
         .await
@@ -96,14 +102,11 @@ fn load_target(
     conn: &rusqlite::Connection,
     target: &EmbedTarget,
 ) -> Result<Option<LoadedTarget>, SqliteError> {
-    if target.table == EmbedTable::MessageChunks {
-        return Err(SqliteError::MissingTable { table: CHUNKS });
-    }
     match target.table {
         EmbedTable::Messages => load_message(conn, &target.id),
         EmbedTable::Summaries => load_text(conn, "ros_summaries", &target.id, true),
         EmbedTable::WikiTopics => load_text(conn, "ros_wiki_topics", &target.id, false),
-        EmbedTable::MessageChunks => Err(SqliteError::MissingTable { table: CHUNKS }),
+        EmbedTable::MessageChunks => load_chunk(conn, &target.id),
     }
 }
 
@@ -125,11 +128,11 @@ fn write_target(
     conn: &rusqlite::Connection,
     stored: &StoredEmbedding,
     model: Option<&str>,
+    now: jiff::Timestamp,
 ) -> Result<(), SqliteError> {
-    if stored.target.table == EmbedTable::MessageChunks || !stored.chunks.is_empty() {
-        return Err(SqliteError::MissingTable { table: CHUNKS });
+    if stored.target.table != EmbedTable::MessageChunks {
+        require_width(conn, stored.vector.len())?;
     }
-    require_width(conn, stored.vector.len())?;
     if let Some(model) = model {
         require_model(conn, model, stored.vector.len())?;
     }
@@ -152,9 +155,15 @@ fn write_target(
             &stored.target.id,
             Some(bytes),
         )?,
-        EmbedTable::MessageChunks => return Err(SqliteError::MissingTable { table: CHUNKS }),
+        EmbedTable::MessageChunks => {
+            chunk_rows::write_embedding(conn, &uuid_text(&stored.target.id)?, &bytes)?
+        }
     };
-    one_row(updated, &stored.target.id)
+    one_row(updated, &stored.target.id)?;
+    if stored.target.table == EmbedTable::Messages {
+        chunk_rows::replace(conn, &uuid_text(&stored.target.id)?, &stored.chunks, now)?;
+    }
+    Ok(())
 }
 
 fn mark_target(
@@ -163,30 +172,35 @@ fn mark_target(
     status: &str,
     error: &str,
 ) -> Result<(), SqliteError> {
-    if target.table == EmbedTable::MessageChunks {
-        return Err(SqliteError::MissingTable { table: CHUNKS });
-    }
-    let sql = match target.table {
-        EmbedTable::Messages | EmbedTable::Summaries => format!(
-            "UPDATE {} SET embed_status = ?2, embed_error = ?3, embedding = NULL WHERE id = ?1",
-            table_name(target.table)
-        ),
-        EmbedTable::WikiTopics => String::from(
-            "UPDATE ros_wiki_topics SET embed_status = ?2, embed_error = ?3, embedding = NULL \
-             WHERE slug = ?1",
-        ),
-        EmbedTable::MessageChunks => return Err(SqliteError::MissingTable { table: CHUNKS }),
+    let updated = match target.table {
+        EmbedTable::Messages | EmbedTable::Summaries => conn
+            .execute(
+                &format!(
+                    "UPDATE {} SET embed_status = ?2, embed_error = ?3, embedding = NULL WHERE id = ?1",
+                    table_name(target.table)
+                ),
+                params_from_iter([
+                    Value::Text(identity(target)?),
+                    Value::Text(status.to_owned()),
+                    Value::Text(error.to_owned()),
+                ]),
+            )
+            .map_err(SqliteError::query("mark embedding"))?,
+        EmbedTable::WikiTopics => conn
+            .execute(
+                "UPDATE ros_wiki_topics SET embed_status = ?2, embed_error = ?3, embedding = NULL \
+                 WHERE slug = ?1",
+                params_from_iter([
+                    Value::Text(identity(target)?),
+                    Value::Text(status.to_owned()),
+                    Value::Text(error.to_owned()),
+                ]),
+            )
+            .map_err(SqliteError::query("mark embedding"))?,
+        EmbedTable::MessageChunks => {
+            chunk_rows::mark(conn, &uuid_text(&target.id)?, status, error)?
+        }
     };
-    let updated = conn
-        .execute(
-            &sql,
-            params_from_iter([
-                Value::Text(identity(target)?),
-                Value::Text(status.to_owned()),
-                Value::Text(error.to_owned()),
-            ]),
-        )
-        .map_err(SqliteError::query("mark embedding"))?;
     one_row(updated, &target.id)
 }
 
@@ -195,38 +209,59 @@ fn bump_failure(
     target: &EmbedTarget,
     error: &str,
 ) -> Result<u32, SqliteError> {
-    if target.table == EmbedTable::MessageChunks {
-        return Err(SqliteError::MissingTable { table: CHUNKS });
-    }
-    let sql = match target.table {
-        EmbedTable::Messages | EmbedTable::Summaries => format!(
-            "UPDATE {} SET embed_failures = embed_failures + 1, embed_error = ?2 \
-              WHERE id = ?1 RETURNING embed_failures",
-            table_name(target.table)
-        ),
-        EmbedTable::WikiTopics => String::from(
+    let count = match target.table {
+        EmbedTable::MessageChunks => chunk_rows::bump(conn, &uuid_text(&target.id)?, error)?,
+        EmbedTable::Messages | EmbedTable::Summaries => failure_row(
+            conn,
+            &format!(
+                "UPDATE {} SET embed_failures = embed_failures + 1, embed_error = ?2 \
+                  WHERE id = ?1 RETURNING embed_failures",
+                table_name(target.table)
+            ),
+            target,
+            error,
+        )?,
+        EmbedTable::WikiTopics => failure_row(
+            conn,
             "UPDATE ros_wiki_topics SET embed_failures = embed_failures + 1, embed_error = ?2 \
               WHERE slug = ?1 RETURNING embed_failures",
-        ),
-        EmbedTable::MessageChunks => return Err(SqliteError::MissingTable { table: CHUNKS }),
+            target,
+            error,
+        )?,
     };
-    let count: Option<i64> = conn
-        .query_row(
-            &sql,
-            params_from_iter([
-                Value::Text(identity(target)?),
-                Value::Text(error.to_owned()),
-            ]),
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(SqliteError::query("record null embedding"))?;
     match count {
         Some(count) => u32::try_from(count).map_err(SqliteError::Count),
         None => Err(SqliteError::MissingHit {
             id: target.id.clone(),
         }),
     }
+}
+
+fn failure_row(
+    conn: &rusqlite::Connection,
+    sql: &str,
+    target: &EmbedTarget,
+    error: &str,
+) -> Result<Option<i64>, SqliteError> {
+    conn.query_row(
+        sql,
+        params_from_iter([
+            Value::Text(identity(target)?),
+            Value::Text(error.to_owned()),
+        ]),
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(SqliteError::query("record null embedding"))
+}
+
+fn load_chunk(conn: &rusqlite::Connection, id: &str) -> Result<Option<LoadedTarget>, SqliteError> {
+    Ok(
+        chunk_rows::load(conn, &uuid_text(id)?)?.map(|content| LoadedTarget {
+            content,
+            tool_result: None,
+        }),
+    )
 }
 
 fn load_message(
@@ -286,12 +321,71 @@ fn require_model(
     }
 }
 
-fn require_width(conn: &rusqlite::Connection, got: usize) -> Result<(), SqliteError> {
+pub(crate) fn require_width(conn: &rusqlite::Connection, got: usize) -> Result<(), SqliteError> {
+    adopt_width(conn, got)
+}
+
+pub(crate) fn require_chunk_width(
+    conn: &rusqlite::Connection,
+    got: usize,
+) -> Result<(), SqliteError> {
+    adopt_width(conn, got)
+}
+
+fn adopt_width(conn: &rusqlite::Connection, got: usize) -> Result<(), SqliteError> {
+    if let Some(expected) = store_width(conn)? {
+        same_width(got, expected)?;
+    }
+    meta::record_absent(conn, MetaKey::EmbedDims, &got.to_string())
+}
+
+fn store_width(conn: &rusqlite::Connection) -> Result<Option<usize>, SqliteError> {
+    if let Some(width) = recorded_width(conn)? {
+        return Ok(Some(width));
+    }
+    stored_sample(conn)
+}
+
+fn stored_sample(conn: &rusqlite::Connection) -> Result<Option<usize>, SqliteError> {
+    if let Some(width) = sample_width(
+        conn,
+        "SELECT length(embedding) FROM ros_messages WHERE embedding IS NOT NULL LIMIT 1",
+    )? {
+        return Ok(Some(width));
+    }
+    if let Some(width) = sample_width(
+        conn,
+        "SELECT length(embedding) FROM ros_summaries WHERE embedding IS NOT NULL LIMIT 1",
+    )? {
+        return Ok(Some(width));
+    }
+    if let Some(width) = sample_width(
+        conn,
+        "SELECT length(embedding) FROM rh_message_chunks WHERE embedding IS NOT NULL LIMIT 1",
+    )? {
+        return Ok(Some(width));
+    }
+    sample_width(
+        conn,
+        "SELECT length(embedding) FROM ros_wiki_topics WHERE embedding IS NOT NULL LIMIT 1",
+    )
+}
+
+fn sample_width(conn: &rusqlite::Connection, sql: &str) -> Result<Option<usize>, SqliteError> {
+    let length: Option<i64> = conn
+        .query_row(sql, [], |row| row.get(0))
+        .optional()
+        .map_err(SqliteError::query("embed width"))?;
+    width_of(length)
+}
+
+fn recorded_width(conn: &rusqlite::Connection) -> Result<Option<usize>, SqliteError> {
     let Some(expected) = meta::read(conn, MetaKey::EmbedDims)? else {
-        return Ok(());
+        return Ok(None);
     };
-    let expected = expected
+    expected
         .parse::<usize>()
+        .map(Some)
         .map_err(|source| SqliteError::Query {
             operation: "embed width",
             source: rusqlite::Error::FromSqlConversionFailure(
@@ -299,7 +393,26 @@ fn require_width(conn: &rusqlite::Connection, got: usize) -> Result<(), SqliteEr
                 rusqlite::types::Type::Text,
                 Box::new(source),
             ),
-        })?;
+        })
+}
+
+fn width_of(length: Option<i64>) -> Result<Option<usize>, SqliteError> {
+    let Some(length) = length else {
+        return Ok(None);
+    };
+    let Ok(length) = usize::try_from(length) else {
+        return Err(SqliteError::StoredEmbedding);
+    };
+    if length == 0 {
+        return Ok(None);
+    }
+    if length % 4 != 0 {
+        return Err(SqliteError::StoredEmbedding);
+    }
+    Ok(Some(length / 4))
+}
+
+fn same_width(got: usize, expected: usize) -> Result<(), SqliteError> {
     if got == expected {
         Ok(())
     } else {
@@ -335,9 +448,10 @@ fn exec_slug(
 
 fn identity(target: &EmbedTarget) -> Result<String, SqliteError> {
     match target.table {
-        EmbedTable::Messages | EmbedTable::Summaries => uuid_text(&target.id),
+        EmbedTable::Messages | EmbedTable::Summaries | EmbedTable::MessageChunks => {
+            uuid_text(&target.id)
+        }
         EmbedTable::WikiTopics => Ok(target.id.clone()),
-        EmbedTable::MessageChunks => Err(SqliteError::MissingTable { table: CHUNKS }),
     }
 }
 

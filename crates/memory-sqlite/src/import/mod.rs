@@ -2,13 +2,14 @@ mod catalog;
 mod columns;
 mod copy;
 mod error;
+mod shas;
 mod sql;
 mod values;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
@@ -119,6 +120,7 @@ impl SqliteStore {
         apply: bool,
     ) -> Result<ImportReport, ImportError> {
         let index_key = self.summary_index_key;
+        let wiki = self.wiki_directory().map(Path::to_path_buf);
         let conn = self.conn.clone();
         self.pending
             .spawn_blocking(move || {
@@ -130,6 +132,7 @@ impl SqliteStore {
                     &cancellation,
                     apply,
                     index_key.as_ref(),
+                    wiki.as_deref(),
                 )
             })
             .await?
@@ -161,10 +164,40 @@ fn import(
     cancellation: &CancellationToken,
     apply: bool,
     index_key: Option<&[u8; 32]>,
+    wiki: Option<&Path>,
 ) -> Result<ImportReport, ImportError> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     tx.execute_batch("PRAGMA defer_foreign_keys = ON")?;
-    let mut report = empty_report(&tx)?;
+    let mut loaded = read_copy(&tx, reader, cancellation)?;
+    finish(
+        &tx,
+        loaded.width,
+        &mut loaded.report,
+        index_key,
+        &loaded.passages.embedded_records,
+        wiki,
+    )?;
+    check_cancelled(cancellation)?;
+    if apply {
+        tx.commit()?;
+    } else {
+        tx.rollback()?;
+    }
+    Ok(loaded.report)
+}
+
+struct LoadedDump {
+    report: ImportReport,
+    width: Option<usize>,
+    passages: PassageImport,
+}
+
+fn read_copy(
+    tx: &rusqlite::Transaction<'_>,
+    reader: impl BufRead,
+    cancellation: &CancellationToken,
+) -> Result<LoadedDump, ImportError> {
+    let mut report = empty_report(tx)?;
     let mut block: Option<columns::Block> = None;
     let mut seen = BTreeSet::new();
     let mut complete = false;
@@ -182,7 +215,7 @@ fn import(
                 block = None;
                 continue;
             }
-            active.insert(&tx, &line, number, &mut width)?;
+            active.insert(tx, &line, number, &mut width)?;
             let count = report
                 .rows
                 .get_mut(&active.table)
@@ -203,7 +236,7 @@ fn import(
                 passages.begin(fields, number)?;
                 continue;
             }
-            let active = columns::Block::parse(&tx, name, fields, number)?;
+            let active = columns::Block::parse(tx, name, fields, number)?;
             if !seen.insert(active.table) {
                 return Err(ImportError::DuplicateTable {
                     table: active.table,
@@ -219,20 +252,11 @@ fn import(
     if block.is_some() || passages.columns.is_some() || !complete || seen.is_empty() {
         return Err(ImportError::Truncated);
     }
-    finish(
-        &tx,
+    Ok(LoadedDump {
+        report,
         width,
-        &mut report,
-        index_key,
-        &passages.embedded_records,
-    )?;
-    check_cancelled(cancellation)?;
-    if apply {
-        tx.commit()?;
-    } else {
-        tx.rollback()?;
-    }
-    Ok(report)
+        passages,
+    })
 }
 
 #[derive(Default)]
@@ -314,6 +338,7 @@ fn finish(
     report: &mut ImportReport,
     index_key: Option<&[u8; 32]>,
     embedded_records: &BTreeSet<String>,
+    wiki: Option<&Path>,
 ) -> Result<(), ImportError> {
     let invalid: bool = tx.query_row(sql::SUMMARY_GRAPH, [], |row| row.get(0))?;
     if invalid {
@@ -349,6 +374,7 @@ fn finish(
             }
         }
     }
+    shas::clear_absent(tx, wiki)?;
     tx.execute(
         "INSERT INTO ros_meta(key, value) VALUES (?1, ?2)",
         [RECEIPT_KEY, &serde_json::to_string(report)?],
@@ -364,8 +390,7 @@ fn mark_index_repairs(
 ) -> Result<(), ImportError> {
     tx.execute(
         "UPDATE ros_summaries SET embedding = NULL, index_key = ?1, index_needs_repair = 1
-         WHERE kind IN ('session', 'part')
-           AND (embedding IS NULL OR index_key IS NULL OR index_key IS NOT ?1)",
+         WHERE kind IN ('session', 'part')",
         [index_key.map(<[_; 32]>::as_slice)],
     )?;
     let mut records = tx.prepare(

@@ -189,6 +189,7 @@ async fn run(
         runner.runner = runner
             .runner
             .with_memory_jobs(memory.clone())
+            .with_pauses(memory.clone())
             .with_unembedded(memory.clone())
             .with_session_deletion(memory.clone())
             .with_job_settings(settings)
@@ -198,12 +199,11 @@ async fn run(
             runner.runner = runner.runner.with_concurrency(concurrency);
         }
         tracing::info!("worker running {role}");
-        drive(runner, shutdown.clone()).await
+        drive_reported(runner, &memory, role, &config, env, shutdown.clone()).await
     }
     .await;
     shutdown.cancel();
-    let closed = memory.close().await.map_err(StartupError::from);
-    closed?;
+    memory.close().await.map_err(StartupError::from)?;
     result?;
     tracing::info!("worker stopped");
     Ok(())
@@ -331,6 +331,8 @@ pub fn with_models<Q: JobQueue + 'static>(
             model: entity_model,
             settings: workers::entity_builder::MatcherSettings::from_config(config)
                 .map_err(RootError::Invalid)?,
+            rewrite: workers::entity_builder::RewriteLimit::from_config(config)
+                .map_err(RootError::Invalid)?,
         })
     } else {
         runner
@@ -385,6 +387,34 @@ async fn drive<Q: JobQueue + 'static>(
     };
     joined??;
     Ok(())
+}
+
+async fn drive_reported<Q: JobQueue + 'static>(
+    runner: ComposedRunner<Q>,
+    memory: &Arc<memory_postgres::PostgresMemory>,
+    role: ProcessRole,
+    config: &Config,
+    env: &Environment,
+    shutdown: CancellationToken,
+) -> Result<(), RootError> {
+    let reporter = workers::Reporter {
+        store: memory.clone(),
+        node: crate::identity::resolve(config, env)
+            .map_err(StartupError::from)?
+            .name,
+        roles: crate::worker_report::roles(config, env, &role.selected())
+            .map_err(|error| RootError::Invalid(error.to_string()))?,
+        index_key: crate::models::summary_index_key(config, env).map(hex::encode),
+        outage: runner.runner.outage(),
+    };
+    let reporting = shutdown.child_token();
+    let driven = async {
+        let driven = drive(runner, shutdown.clone()).await;
+        reporting.cancel();
+        driven
+    };
+    let (driven, ()) = tokio::join!(driven, reporter.run(reporting.clone()));
+    driven
 }
 
 #[expect(missing_debug_implementations)]

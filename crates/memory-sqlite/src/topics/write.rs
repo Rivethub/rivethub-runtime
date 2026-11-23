@@ -198,10 +198,15 @@ pub(super) fn fold_into(
 
 pub(super) fn remove(conn: &Connection, topic: &Topic) -> Result<(), TopicError> {
     conn.execute(
-        "INSERT INTO rh_topic_tombstones (kind, slug, deleted_at)
-         VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-         ON CONFLICT (kind, slug) DO UPDATE SET deleted_at = excluded.deleted_at",
-        params![topic.kind.to_string(), topic.slug.as_str()],
+        "INSERT INTO rh_topic_tombstones (kind, slug, deleted_at, owner_user_id, locally_deleted)
+         VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?3, ?1 <> 'type' AND ?3 IS NULL)
+         ON CONFLICT (kind, slug) DO UPDATE SET deleted_at = excluded.deleted_at,
+             owner_user_id = excluded.owner_user_id, locally_deleted = excluded.locally_deleted",
+        params![
+            topic.kind.to_string(),
+            topic.slug.as_str(),
+            topic.owner.as_ref().map(Owner::as_str)
+        ],
     )
     .map_err(failed("topic tombstone"))?;
     let id = topic.id.to_string();

@@ -1,3 +1,4 @@
+mod report;
 mod samples;
 mod upkeep;
 

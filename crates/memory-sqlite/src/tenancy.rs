@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 use kernel::owner::Owner;
+use kernel::tenancy::DEFAULT_SPACE;
 use kernel::tenancy::SessionVisibility;
 use kernel::tenancy::Space;
 use kernel::tenancy::SpaceId;
@@ -151,6 +152,17 @@ fn session_state(
     Ok((owner, mark, effective))
 }
 
+impl SqliteStore {
+    pub fn stored_session_visibility(
+        conn: &Connection,
+        session: &str,
+        owner: &str,
+    ) -> Result<String, SqliteError> {
+        session_state(conn, session, owner, Timestamp::UNIX_EPOCH)
+            .map(|(_, _, effective)| effective)
+    }
+}
+
 fn refresh_topics(conn: &Connection) -> Result<(), SqliteError> {
     let topics = conn
         .prepare(
@@ -203,7 +215,17 @@ impl TenancyStore for SqliteStore {
     async fn sync_spaces(&self, _node: &str, spaces: &[Space]) -> Result<(), TenancyStoreError> {
         let spaces = spaces.to_vec();
         self.with_conn(move |conn| {
-            let tx = conn.transaction().map_err(query("space sync"))?;
+            let tx = conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .map_err(query("space sync"))?;
+            let stored_default_name: Option<String> = tx
+                .query_row(
+                    "SELECT name FROM rh_spaces WHERE id = ?1",
+                    [DEFAULT_SPACE],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(query("space sync"))?;
             tx.execute("DELETE FROM rh_space_members", [])
                 .map_err(query("space sync"))?;
             tx.execute("DELETE FROM rh_spaces", [])
@@ -211,7 +233,11 @@ impl TenancyStore for SqliteStore {
             for space in &spaces {
                 tx.execute(
                     "INSERT INTO rh_spaces (id, kind, name) VALUES (?1, ?2, ?3)",
-                    params![space.id.as_str(), space.kind.as_str(), space.name],
+                    params![
+                        space.id.as_str(),
+                        space.kind.as_str(),
+                        space.synced_name(stored_default_name.as_deref()),
+                    ],
                 )
                 .map_err(query("space sync"))?;
                 for member in &space.members {

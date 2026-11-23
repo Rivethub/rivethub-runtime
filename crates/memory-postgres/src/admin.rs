@@ -2,6 +2,9 @@ use kernel::queue::FixedJob;
 use kernel::queue::Job;
 use kernel::queue::JobKeyMode;
 use kernel::queue::JobName;
+use kernel::queue::JobQueueError;
+use kernel::queue::admin::MAINTENANCE_TASKS;
+use kernel::queue::admin::QueueAdmin;
 use uuid::Uuid;
 use wire::JsonObject;
 
@@ -9,14 +12,6 @@ use crate::PostgresMemory;
 use crate::error::Error;
 use crate::graphile::GraphileQueue;
 use crate::queue::QueueHealth;
-
-const QUEUE_TASKS: [FixedJob; 5] = [
-    FixedJob::ExtractWiki,
-    FixedJob::SummarizeConversation,
-    FixedJob::EmbedTarget,
-    FixedJob::SynthesizeToolCall,
-    FixedJob::FileConversation,
-];
 
 impl PostgresMemory {
     pub async fn retry_failed(
@@ -81,8 +76,8 @@ impl PostgresMemory {
 
     pub async fn queue_status(&self) -> Result<Vec<QueueHealth>, Error> {
         let queue = self.queue().await?;
-        let mut rows = Vec::with_capacity(QUEUE_TASKS.len());
-        for task in QUEUE_TASKS {
+        let mut rows = Vec::with_capacity(MAINTENANCE_TASKS.len());
+        for task in MAINTENANCE_TASKS {
             let name = JobName::Fixed(task);
             let health = queue.queue_health(&name).await?;
             rows.push(match health {
@@ -103,15 +98,36 @@ impl PostgresMemory {
 }
 
 fn empty_health(task: JobName) -> QueueHealth {
-    QueueHealth {
-        task,
-        pending: 0,
-        running: 0,
-        scheduled: 0,
-        dead: 0,
-        recent_dead: 0,
-        oldest_pending_minutes: None,
-        last_error: None,
+    kernel::queue::admin::empty_health(task)
+}
+
+#[async_trait::async_trait]
+impl QueueAdmin for PostgresMemory {
+    async fn admin_status(&self) -> Result<Vec<QueueHealth>, JobQueueError> {
+        self.queue_status().await.map_err(JobQueueError::from)
+    }
+
+    async fn admin_retry(
+        &self,
+        tasks: &[String],
+        error: Option<&str>,
+        limit: Option<u32>,
+        dry_run: bool,
+    ) -> Result<u64, JobQueueError> {
+        self.retry_failed(tasks, error, limit, dry_run)
+            .await
+            .map_err(JobQueueError::from)
+    }
+
+    async fn admin_requeue(
+        &self,
+        task: &JobName,
+        limit: u32,
+        dry_run: bool,
+    ) -> Result<u64, JobQueueError> {
+        self.requeue_failed(task, limit, dry_run)
+            .await
+            .map_err(JobQueueError::from)
     }
 }
 

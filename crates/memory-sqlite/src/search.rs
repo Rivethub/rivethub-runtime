@@ -1,9 +1,8 @@
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::str::FromStr as _;
 
+use kernel::memory::MemoryChunkMatch;
 use kernel::memory::MemoryDegraded;
 use kernel::memory::MemoryHitSource;
 use kernel::memory::MemoryScope;
@@ -11,7 +10,7 @@ use kernel::memory::MemorySearchResult;
 use kernel::memory::SearchMode;
 use kernel::memory::SearchOutcome;
 use kernel::memory::SearchQuery;
-use kernel::memory::TagEntityType;
+use kernel::memory::SummaryPassage;
 use kernel::memory::TagLiteral;
 use kernel::memory_core::hybrid_pool;
 use rusqlite::Connection;
@@ -22,11 +21,16 @@ use crate::SqliteStore;
 use crate::error::SqliteError;
 use crate::time;
 
+mod chunks;
 pub(crate) mod embed;
 mod fts;
 pub(crate) mod functions;
+mod passage_details;
+mod passages;
 mod ranked;
+mod tag_index;
 pub(crate) use fts::fts_or;
+use tag_index::TagIndex;
 
 const EMBED_MISSING: &str = "embedding endpoint not configured";
 
@@ -52,16 +56,15 @@ const MESSAGE_SQL: &str = "SELECT m.id, m.content, m.role, m.agent, m.created_at
      ORDER BY ros_messages_fts.rank ASC \
      LIMIT ?5";
 
-const SUMMARY_SQL: &str = "SELECT s.id, s.content, CASE WHEN s.kind IN ('session', 'part') THEN s.latest_at ELSE s.created_at END AS search_time, s.conversation_id, \
+const SUMMARY_SQL: &str = "SELECT s.id, s.content, s.created_at AS search_time, \
      ros_summaries_fts.rank, \
      (SELECT c.session_key FROM ros_conversations c WHERE c.id = s.conversation_id), \
      (SELECT c.channel FROM ros_conversations c WHERE c.id = s.conversation_id) \
      FROM ros_summaries_fts \
      JOIN ros_summaries s ON s.id = ros_summaries_fts.id \
-     WHERE ros_summaries_fts MATCH ?1 AND s.kind <> 'section' \
-       AND (s.kind IN ('session', 'part') OR NOT EXISTS ( \
-             SELECT 1 FROM ros_summaries session \
-              WHERE session.conversation_id = s.conversation_id AND session.kind = 'session')) \
+     WHERE ros_summaries_fts MATCH ?1 AND s.kind IN ('leaf', 'branch', 'root') \
+       AND NOT EXISTS (SELECT 1 FROM ros_summaries session \
+              WHERE session.conversation_id = s.conversation_id AND session.kind = 'session') \
        AND (?2 IS NULL OR EXISTS ( \
              SELECT 1 FROM ros_conversations c \
               WHERE c.id = s.conversation_id AND c.agent = ?2)) \
@@ -72,11 +75,6 @@ const SUMMARY_SQL: &str = "SELECT s.id, s.content, CASE WHEN s.kind IN ('session
             WHERE tc.id = s.conversation_id) \
      ORDER BY ros_summaries_fts.rank ASC \
      LIMIT ?5";
-
-const TAGS_SQL: &str =
-    "SELECT entity_type, entity_id, key, value FROM ros_tags WHERE state = 'accepted'";
-
-const SUMMARY_LINKS_SQL: &str = "SELECT id, conversation_id FROM ros_summaries";
 
 const MESSAGE_BUMP: &str = "UPDATE ros_messages \
      SET access_count = access_count + 1, last_accessed_at = ?1 \
@@ -91,6 +89,7 @@ struct Plan {
     pattern: Option<String>,
     summary_index_key: Option<[u8; 32]>,
     text: String,
+    expand: bool,
     mode: SearchMode,
     scope: MemoryScope,
     agent: Option<String>,
@@ -114,25 +113,19 @@ enum Kind {
         session_id: Option<String>,
     },
     Summary {
-        conversation_id: Option<String>,
         session_id: Option<String>,
     },
 }
 
 #[derive(Debug, Clone)]
 struct Candidate {
+    passage: Option<SummaryPassage>,
     id: String,
     content: String,
     created_at: Timestamp,
     rank: f64,
     kind: Kind,
-}
-
-#[derive(Debug, Default)]
-struct TagIndex {
-    conversation: BTreeMap<String, BTreeSet<(String, String)>>,
-    summary: BTreeMap<String, BTreeSet<(String, String)>>,
-    summaries_of: BTreeMap<String, Vec<String>>,
+    chunk: Option<MemoryChunkMatch>,
 }
 
 impl SqliteStore {
@@ -220,6 +213,7 @@ impl Plan {
             summary_index_key: None,
             pattern,
             text: query.text,
+            expand: query.expand != Some(false),
             mode: query.mode,
             scope: query.scope,
             agent: query.agent,
@@ -245,11 +239,12 @@ fn search_snapshot(
     let snapshot = conn
         .transaction()
         .map_err(SqliteError::query("search snapshot"))?;
-    let read = if keyword {
+    let mut read = if keyword {
         execute(&snapshot, plan)?
     } else {
         ranked::execute(&snapshot, plan, vector)?
     };
+    passage_details::hydrate(&snapshot, plan, &mut read.outcome)?;
     snapshot
         .commit()
         .map_err(SqliteError::query("search snapshot commit"))?;
@@ -264,10 +259,15 @@ struct SearchRead {
 
 fn execute(conn: &Connection, plan: &Plan) -> Result<SearchRead, SqliteError> {
     let mut pool = fetch(conn, plan)?;
+    pool.extend(
+        passages::lexical(conn, plan, passages::Match::Fts { hybrid: false })?
+            .into_iter()
+            .map(|row| row.candidate),
+    );
     pool.sort_by(|left, right| {
         left.rank
             .total_cmp(&right.rank)
-            .then(left.id.cmp(&right.id))
+            .then_with(|| left.detail_id().cmp(right.detail_id()))
     });
     let index = if plan.tag.is_some() {
         TagIndex::load(conn)?
@@ -383,7 +383,6 @@ struct SummaryRow {
     id: String,
     content: String,
     created_at: String,
-    conversation_id: Option<String>,
     rank: f64,
     session_id: Option<String>,
 }
@@ -405,15 +404,14 @@ fn read_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<MessageRow> {
 }
 
 fn read_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<SummaryRow> {
-    let channel: Option<String> = row.get(6)?;
+    let channel: Option<String> = row.get(5)?;
     Ok(SummaryRow {
         id: row.get(0)?,
         content: row.get(1)?,
         created_at: row.get(2)?,
-        conversation_id: row.get(3)?,
-        rank: row.get(4)?,
+        rank: row.get(3)?,
         session_id: row
-            .get::<_, Option<String>>(5)?
+            .get::<_, Option<String>>(4)?
             .map(|key| kernel::filing::session_key(channel.as_deref(), &key)),
     })
 }
@@ -421,6 +419,7 @@ fn read_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<SummaryRow> {
 impl Candidate {
     fn from_message(row: MessageRow) -> Result<Self, SqliteError> {
         Ok(Self {
+            passage: None,
             id: row.id,
             content: row.content,
             created_at: time::stored(&row.created_at, "created_at")?,
@@ -431,19 +430,21 @@ impl Candidate {
                 conversation_id: row.conversation_id,
                 session_id: row.session_id,
             },
+            chunk: None,
         })
     }
 
     fn from_summary(row: SummaryRow) -> Result<Self, SqliteError> {
         Ok(Self {
+            passage: None,
             id: row.id,
             content: row.content,
             created_at: time::stored(&row.created_at, "created_at")?,
             rank: row.rank,
             kind: Kind::Summary {
-                conversation_id: row.conversation_id,
                 session_id: row.session_id,
             },
+            chunk: None,
         })
     }
 
@@ -452,9 +453,7 @@ impl Candidate {
             Kind::Message {
                 conversation_id, ..
             } => index.message_has(conversation_id, tag),
-            Kind::Summary {
-                conversation_id, ..
-            } => index.summary_has(&self.id, conversation_id.as_deref(), tag),
+            Kind::Summary { .. } => index.summary_has(&self.id, tag),
         }
     }
 
@@ -467,7 +466,7 @@ impl Candidate {
                 session_id,
                 ..
             } => MemorySearchResult {
-                chunk: None,
+                chunk: self.chunk,
                 passage: None,
                 id: self.id,
                 source: MemoryHitSource::Message,
@@ -481,18 +480,24 @@ impl Candidate {
             },
             Kind::Summary { session_id, .. } => MemorySearchResult {
                 chunk: None,
-                passage: None,
+                agent: self.passage.is_none().then(|| SUMMARY_AGENT.to_owned()),
+                passage: self.passage,
                 id: self.id,
                 source: MemoryHitSource::Summary,
                 content: self.content,
                 role: None,
-                agent: Some(SUMMARY_AGENT.to_owned()),
                 relevance_score,
                 created_at: self.created_at,
                 session_id,
                 title: None,
             },
         }
+    }
+
+    fn detail_id(&self) -> &str {
+        self.passage
+            .as_ref()
+            .map_or(&self.id, |passage| &passage.id)
     }
 
     fn source(&self) -> MemoryHitSource {
@@ -507,115 +512,17 @@ fn relevance(rank: f64) -> f64 {
     rank.abs().mul_add(1.0, 1.0).recip()
 }
 
-impl TagIndex {
-    fn load(conn: &Connection) -> Result<Self, SqliteError> {
-        let mut index = Self::default();
-        index.read_tags(conn)?;
-        index.read_links(conn)?;
-        Ok(index)
-    }
-
-    fn read_tags(&mut self, conn: &Connection) -> Result<(), SqliteError> {
-        let rows = collect_tags(conn)?;
-        for (entity_type, entity_id, key, value) in rows {
-            self.insert_tag(entity_type, entity_id, key, value)?;
-        }
-        Ok(())
-    }
-
-    fn insert_tag(
-        &mut self,
-        entity_type: String,
-        entity_id: String,
-        key: String,
-        value: String,
-    ) -> Result<(), SqliteError> {
-        let kind = TagEntityType::from_str(&entity_type)
-            .map_err(|_| SqliteError::StoredTagType { value: entity_type })?;
-        let pairs = match kind {
-            TagEntityType::Conversation => &mut self.conversation,
-            TagEntityType::Summary => &mut self.summary,
-        };
-        pairs.entry(entity_id).or_default().insert((key, value));
-        Ok(())
-    }
-
-    fn read_links(&mut self, conn: &Connection) -> Result<(), SqliteError> {
-        for (summary_id, conversation_id) in collect_links(conn)? {
-            if let Some(conversation_id) = conversation_id {
-                self.summaries_of
-                    .entry(conversation_id)
-                    .or_default()
-                    .push(summary_id);
-            }
-        }
-        Ok(())
-    }
-
-    fn message_has(&self, conversation_id: &str, tag: &TagLiteral) -> bool {
-        pair_has(&self.conversation, conversation_id, tag)
-            || self
-                .summaries_of
-                .get(conversation_id)
-                .is_some_and(|ids| ids.iter().any(|id| pair_has(&self.summary, id, tag)))
-    }
-
-    fn summary_has(&self, id: &str, conversation_id: Option<&str>, tag: &TagLiteral) -> bool {
-        pair_has(&self.summary, id, tag)
-            || conversation_id
-                .is_some_and(|conversation| pair_has(&self.conversation, conversation, tag))
-    }
-}
-
-fn pair_has(
-    map: &BTreeMap<String, BTreeSet<(String, String)>>,
-    id: &str,
-    tag: &TagLiteral,
-) -> bool {
-    map.get(id).is_some_and(|pairs| {
-        pairs
-            .iter()
-            .any(|(key, value)| key == &tag.key && value == &tag.value)
-    })
-}
-
-fn collect_tags(conn: &Connection) -> Result<Vec<(String, String, String, String)>, SqliteError> {
-    let mut statement = conn
-        .prepare(TAGS_SQL)
-        .map_err(SqliteError::query("search tags"))?;
-    statement
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-            ))
-        })
-        .map_err(SqliteError::query("search tags"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(SqliteError::query("search tags"))
-}
-
-fn collect_links(conn: &Connection) -> Result<Vec<(String, Option<String>)>, SqliteError> {
-    let mut statement = conn
-        .prepare(SUMMARY_LINKS_SQL)
-        .map_err(SqliteError::query("search summary links"))?;
-    statement
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-        .map_err(SqliteError::query("search summary links"))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(SqliteError::query("search summary links"))
-}
-
 fn bump(conn: &mut Connection, rows: &[Candidate], at: &str) -> Result<(), SqliteError> {
     if rows.is_empty() {
         return Ok(());
     }
     let tx =
         crate::summary_replace::immediate(conn).map_err(SqliteError::query("search access"))?;
+    let mut bumped = BTreeSet::new();
     for row in rows {
-        bump_one(&tx, row, at)?;
+        if bumped.insert((row.source() == MemoryHitSource::Summary, &row.id)) {
+            bump_one(&tx, row, at)?;
+        }
     }
     tx.commit()
         .map_err(SqliteError::query("search access commit"))?;

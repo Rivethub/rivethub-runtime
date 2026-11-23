@@ -59,7 +59,7 @@ jobs:
         run: cargo xtask check --locked --no-nextest-list
 
   commits:
-    name: Commits (house identity, no attribution, Conventional Commits)
+    name: Commits (no AI attribution, Conventional Commits)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -67,7 +67,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
-      - name: House identity and attribution
+      - name: No AI attribution
         run: cargo xtask commits "origin/${{ github.base_ref }}..HEAD"
       - name: Conventional Commits
         uses: crate-ci/committed@02af07ed1d11ad69a96ab75f08c9831a4e2c00da # v1.1.12

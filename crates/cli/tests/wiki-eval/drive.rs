@@ -128,6 +128,7 @@ pub(crate) async fn open(run: &Run<'_>) -> Result<Engine, Failure> {
             cancel: CancellationToken::new(),
             secrets: run.secrets.to_vec(),
             matcher: run.matcher.clone(),
+            rewrite: workers::entity_builder::RewriteLimit::default(),
         }),
         workers: run.worker,
     })

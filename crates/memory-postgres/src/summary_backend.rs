@@ -1,7 +1,7 @@
 use kernel::memory::summary_backend::SummaryArtifact;
 use kernel::memory::{
     SummaryKind, SummaryStoreError,
-    summary_backend::{SummaryInput, SummaryRun},
+    summary_backend::{SummaryInput, SummaryPermit, SummaryRun},
     summary_reference::{PreparedSummaryRecord, SummaryManifestEntry},
 };
 use sqlx::types::Json;
@@ -21,6 +21,27 @@ pub(crate) const ELIGIBLE: &str = "s.input_revision = $2 AND s.settled_at IS NOT
     AND s.summarized_through IS DISTINCT FROM $2 AND s.failed_revision IS DISTINCT FROM $2";
 
 impl PostgresMemory {
+    pub(crate) async fn model_slot(
+        &self,
+        slots: impl Iterator<Item = i32> + Send,
+    ) -> Result<Option<Box<dyn SummaryPermit>>, SummaryStoreError> {
+        use sqlx::Connection as _;
+        let mut conn = PgConnection::connect_with(&self.pool.connect_options())
+            .await
+            .map_err(error)?;
+        for slot in slots {
+            let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(1937075568, $1)")
+                .bind(slot)
+                .fetch_one(&mut conn)
+                .await
+                .map_err(error)?;
+            if locked {
+                return Ok(Some(Box::new(conn)));
+            }
+        }
+        Ok(None)
+    }
+
     pub(crate) async fn live_source(
         &self,
         id: Uuid,

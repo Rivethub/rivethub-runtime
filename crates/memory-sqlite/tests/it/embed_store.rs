@@ -7,6 +7,7 @@ use kernel::memory::EmbedTable;
 use kernel::memory::EmbedTarget;
 use kernel::memory::EmbeddingStore;
 use kernel::memory::EmbeddingStoreError;
+use kernel::memory::LoadedTarget;
 use kernel::memory::MemoryStore;
 use kernel::memory::StoredChunk;
 use kernel::memory::StoredEmbedding;
@@ -111,7 +112,7 @@ async fn keep_written_bytes(store: &memory_sqlite::SqliteStore, vector: &[f32]) 
 }
 
 #[tokio::test]
-async fn width_and_missing_chunk_storage_are_refused() -> TestResult {
+async fn width_mismatch_is_refused_and_chunks_are_stored() -> TestResult {
     let fresh = fresh_store()?;
     seed(&fresh.store).await?;
     fresh
@@ -140,26 +141,46 @@ async fn width_and_missing_chunk_storage_are_refused() -> TestResult {
         }) => {}
         other => return Err(format!("width mismatch returned {other:?}").into()),
     }
-    let chunks = fresh
+    fresh
         .store
-        .write(stored(
-            DONE,
-            sample(),
-            vec![StoredChunk {
-                index: 0,
-                char_start: 0,
-                char_end: 4,
-                content: "note".to_owned(),
-                vector: Some(sample()),
-            }],
-        ))
-        .await;
-    expect_missing_chunks(chunks)?;
-    let table = fresh
+        .write(stored(DONE, sample(), vec![sample_chunk()]))
+        .await?;
+    let chunk_id = fresh
         .store
-        .load(&target(EmbedTable::MessageChunks, DONE))
+        .with_conn(|conn| {
+            conn.query_row(
+                "SELECT id FROM rh_message_chunks WHERE content = 'note'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(common::seed)
+        })
+        .await?;
+    assert_eq!(
+        fresh
+            .store
+            .load(&target(EmbedTable::MessageChunks, &chunk_id))
+            .await?,
+        Some(LoadedTarget {
+            content: "note".to_owned(),
+            tool_result: None,
+        })
+    );
+    let nested = fresh
+        .store
+        .write(StoredEmbedding {
+            target: target(EmbedTable::MessageChunks, &chunk_id),
+            vector: sample(),
+            content_hash: "ignored".to_owned(),
+            chunks: vec![sample_chunk()],
+        })
         .await;
-    expect_missing_chunks(table)?;
+    match nested {
+        Err(EmbeddingStoreError::Chunks {
+            table: EmbedTable::MessageChunks,
+        }) => {}
+        other => return Err(format!("nested chunks returned {other:?}").into()),
+    }
     assert_schema(&fresh.store).await
 }
 
@@ -309,7 +330,7 @@ async fn assert_schema(store: &memory_sqlite::SqliteStore) -> TestResult {
                 .map_err(common::seed)?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(common::seed)?;
-            let chunks: Option<String> = conn
+            let legacy: Option<String> = conn
                 .query_row(
                     "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ros_message_chunks'",
                     [],
@@ -317,25 +338,26 @@ async fn assert_schema(store: &memory_sqlite::SqliteStore) -> TestResult {
                 )
                 .optional()
                 .map_err(common::seed)?;
-            Ok((names, chunks))
+            let chunks: Option<String> = conn
+                .query_row(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'rh_message_chunks'",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(common::seed)?;
+            Ok((names, legacy, chunks))
         })
         .await?;
-    assert!(found.0.iter().all(|name| name != "content_hash"));
-    assert!(found.1.is_none());
+    let hash: Vec<&String> = found
+        .0
+        .iter()
+        .filter(|name| name.as_str() == "content_hash")
+        .collect();
+    assert_eq!(hash, Vec::<&String>::new());
+    assert_eq!(found.1, None);
+    assert_eq!(found.2.as_deref(), Some("rh_message_chunks"));
     Ok(())
-}
-
-fn expect_missing_chunks<T: std::fmt::Debug>(
-    outcome: Result<T, EmbeddingStoreError>,
-) -> TestResult {
-    match outcome {
-        Err(EmbeddingStoreError::Query { message, .. })
-            if message.contains("ros_message_chunks") =>
-        {
-            Ok(())
-        }
-        other => Err(format!("chunk storage returned {other:?}").into()),
-    }
 }
 
 fn stored(id: &str, vector: Vec<f32>, chunks: Vec<StoredChunk>) -> StoredEmbedding {
@@ -356,6 +378,16 @@ fn target(table: EmbedTable, id: &str) -> EmbedTarget {
 
 fn sample() -> Vec<f32> {
     vec![0.25, 0.5, 0.75, 1.0, -0.25, -0.5, -0.75, -1.0]
+}
+
+fn sample_chunk() -> StoredChunk {
+    StoredChunk {
+        index: 0,
+        char_start: 0,
+        char_end: 4,
+        content: "note".to_owned(),
+        vector: Some(sample()),
+    }
 }
 
 fn pack(values: &[f32]) -> Vec<u8> {

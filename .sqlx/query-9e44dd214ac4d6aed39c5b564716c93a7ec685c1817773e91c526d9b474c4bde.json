@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT rh_refresh_owner($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "rh_refresh_owner",
+        "type_info": "Void",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "9e44dd214ac4d6aed39c5b564716c93a7ec685c1817773e91c526d9b474c4bde"
+}

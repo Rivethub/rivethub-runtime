@@ -36,6 +36,8 @@ mod search_literal;
 mod search_recent;
 mod search_sql;
 mod search_vector;
+#[doc(hidden)]
+pub use search_vector::explain_chunk_arm_without_full_sorts;
 mod session_activity;
 mod session_catalog;
 mod session_marks;
@@ -66,7 +68,8 @@ mod wiki;
 mod wiki_builder;
 mod wiki_citations;
 mod wiki_scope;
-pub mod wiki_writer;
+pub use wiki_files::wiki_writer;
+mod worker_pauses;
 
 #[cfg(test)]
 mod resilience;
@@ -93,7 +96,7 @@ pub use queue::PostgresQueue;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
-pub const SCHEMA_VERSION: i64 = 80;
+pub const SCHEMA_VERSION: i64 = 84;
 pub(crate) const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug)]

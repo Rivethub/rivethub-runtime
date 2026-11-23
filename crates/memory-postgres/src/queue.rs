@@ -9,8 +9,6 @@ use kernel::queue::JobName;
 use kernel::queue::JobQueue;
 use kernel::queue::JobQueueError;
 use kernel::queue::WorkerRole;
-use serde::Deserialize;
-use serde::Serialize;
 use sqlx::PgPool;
 
 #[derive(Debug)]
@@ -20,17 +18,7 @@ pub struct PostgresQueue {
 
 pub use kernel::memory::schedule::CronEntry;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QueueHealth {
-    pub task: JobName,
-    pub pending: u64,
-    pub running: u64,
-    pub scheduled: u64,
-    pub dead: u64,
-    pub recent_dead: u64,
-    pub oldest_pending_minutes: Option<u64>,
-    pub last_error: Option<String>,
-}
+pub use kernel::queue::admin::QueueHealth;
 
 impl PostgresQueue {
     pub async fn connect(pool: PgPool) -> Result<Self, Error> {

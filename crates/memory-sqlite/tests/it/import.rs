@@ -95,16 +95,7 @@ async fn replay(dump: &str, expectation: &str, summaries: i64) -> Result {
                 .iter()
                 .filter(|(column, _)| !expected.contains_key(*column));
             for (column, value) in defaults {
-                match (table, column.as_str()) {
-                    (ImportTable::Summaries, "quality_flags" | "index_needs_repair")
-                    | (ImportTable::Conversations, "title_from_capture") => {
-                        assert_eq!(value, &Json::from(0), "{table}.{column}");
-                    }
-                    (ImportTable::Summaries, _) | (ImportTable::SummarySources, "render_key") => {
-                        assert!(value.is_null(), "{table}.{column}");
-                    }
-                    _ => return Err(format!("unrecorded {table}.{column}").into()),
-                }
+                assert_import_default(table, column, value)?;
             }
             for (column, expected) in expected {
                 let actual = actual.get(&column).ok_or("missing column")?;
@@ -136,6 +127,30 @@ async fn replay(dump: &str, expectation: &str, summaries: i64) -> Result {
             })
             .await??;
         assert_eq!(found, count, "{table}");
+    }
+    Ok(())
+}
+
+fn assert_import_default(table: ImportTable, column: &str, value: &Json) -> Result {
+    match (table, column) {
+        (ImportTable::Summaries, "quality_flags" | "index_needs_repair")
+        | (ImportTable::Conversations, "title_from_capture") => {
+            assert_eq!(value, &Json::from(0), "{table}.{column}");
+        }
+        (ImportTable::WikiTopics, "history") => {
+            assert_eq!(value, &Json::from("[]"), "{table}.{column}");
+        }
+        (ImportTable::WikiTopics, "visibility") => {
+            assert_eq!(value.as_str(), Some("private"), "{table}.{column}");
+        }
+        (ImportTable::Summaries, _)
+        | (ImportTable::SummarySources, "render_key")
+        | (ImportTable::WikiTopics, "scope" | "local_slug")
+        | (ImportTable::TagTaxonomy, "owner_user_id" | "globally_shared")
+        | (ImportTable::WikiRedirects, "owner_user_id") => {
+            assert!(value.is_null(), "{table}.{column}");
+        }
+        _ => return Err(format!("unrecorded {table}.{column}").into()),
     }
     Ok(())
 }
@@ -244,6 +259,191 @@ async fn postgres_16_envelope_and_copy_byte_escapes_are_accepted() -> Result {
         .await??;
     assert_eq!(content, "Café 🚀\nline\ttab\\slash");
     Ok(())
+}
+
+#[tokio::test]
+async fn an_imported_page_sha_stays_only_when_the_object_exists() -> Result {
+    let directory = tempfile::tempdir()?;
+    let database = directory.path().join("memory.sqlite");
+    migrate::sqlite(&database)?;
+    let wiki = directory.path().join("wiki");
+    std::fs::create_dir(&wiki)?;
+    git(&wiki, &["init"])?;
+    git(&wiki, &["config", "user.email", "page@example.com"])?;
+    git(&wiki, &["config", "user.name", "page"])?;
+    git(&wiki, &["commit", "--allow-empty", "-m", "seed"])?;
+    let present = git(&wiki, &["rev-parse", "HEAD"])?;
+    let missing = "0123456789abcdef0123456789abcdef01234567";
+    let dump = format!(
+        "COPY public.ros_summaries (id, content, created_at) FROM stdin;
+kept\tkept summary\t2026-10-10 12:00:00+00
+\\.
+COPY public.ros_wiki_topics (slug, title, git_sha, created_at, updated_at) FROM stdin;
+kept\tKept\t{present}\t2026-10-10 12:00:00+00\t2026-10-10 12:00:00+00
+\\.
+COPY public.ros_wiki_provenance (topic_slug, source_kind, source_id, git_sha, created_at) FROM stdin;
+kept\tsummary\tkept\t{present}\t2026-10-10 12:00:00+00
+\\.
+COPY public.ros_wiki_extractions (summary_id, status, pipeline_version, git_sha, extracted_at) FROM stdin;
+kept\tdone\t7\t{missing}\t2026-10-10 12:00:00+00
+\\.
+-- PostgreSQL database dump complete
+"
+    );
+    let path = directory.path().join("dump.sql");
+    std::fs::write(&path, dump)?;
+    let store = SqliteStore::open(&database)?.with_wiki_directory(wiki);
+    store.import_pg_dump(path, CancellationToken::new()).await?;
+    let (topic, provenance, extraction) = store
+        .with_conn(|conn| {
+            let topic = sha(
+                conn,
+                "SELECT git_sha FROM ros_wiki_topics WHERE slug = 'kept'",
+            )?;
+            let provenance = sha(
+                conn,
+                "SELECT git_sha FROM ros_wiki_provenance WHERE topic_slug = 'kept'",
+            )?;
+            let extraction = sha(
+                conn,
+                "SELECT git_sha FROM ros_wiki_extractions WHERE summary_id = 'kept'",
+            )?;
+            Ok((topic, provenance, extraction))
+        })
+        .await?;
+    assert_eq!(topic.as_deref(), Some(present.as_str()));
+    assert_eq!(provenance.as_deref(), Some(present.as_str()));
+    assert_eq!(extraction, None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_imported_blob_sha_is_cleared() -> Result {
+    let directory = tempfile::tempdir()?;
+    let database = directory.path().join("memory.sqlite");
+    migrate::sqlite(&database)?;
+    let wiki = directory.path().join("wiki");
+    let present = seed_repo(&wiki)?;
+    std::fs::write(wiki.join("note.txt"), "not a commit")?;
+    let blob = git(&wiki, &["hash-object", "-w", "note.txt"])?;
+    import_topics(
+        &database,
+        &wiki,
+        &directory.path().join("dump.sql"),
+        &format!(
+            "kept\tKept\t{present}\t2026-10-10 12:00:00+00\t2026-10-10 12:00:00+00\nblobbed\tBlobbed\t{blob}\t2026-10-10 12:00:00+00\t2026-10-10 12:00:00+00\n"
+        ),
+    )
+    .await?;
+    let (kept, blobbed) = SqliteStore::open(&database)?
+        .with_conn(|conn| {
+            Ok((
+                sha(
+                    conn,
+                    "SELECT git_sha FROM ros_wiki_topics WHERE slug = 'kept'",
+                )?,
+                sha(
+                    conn,
+                    "SELECT git_sha FROM ros_wiki_topics WHERE slug = 'blobbed'",
+                )?,
+            ))
+        })
+        .await?;
+    assert_eq!(kept.as_deref(), Some(present.as_str()));
+    assert_eq!(blobbed, None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_imported_commit_from_a_parent_repository_is_cleared() -> Result {
+    let directory = tempfile::tempdir()?;
+    let database = directory.path().join("memory.sqlite");
+    migrate::sqlite(&database)?;
+    let parent = directory.path().join("parent");
+    let inherited = seed_repo(&parent)?;
+    let nested = parent.join("nested");
+    std::fs::create_dir(&nested)?;
+    import_topics(
+        &database,
+        &nested,
+        &directory.path().join("dump.sql"),
+        &format!(
+            "inherited\tInherited\t{inherited}\t2026-10-10 12:00:00+00\t2026-10-10 12:00:00+00\n"
+        ),
+    )
+    .await?;
+    let stored = SqliteStore::open(&database)?
+        .with_conn(|conn| {
+            sha(
+                conn,
+                "SELECT git_sha FROM ros_wiki_topics WHERE slug = 'inherited'",
+            )
+        })
+        .await?;
+    assert_eq!(stored, None);
+    Ok(())
+}
+
+fn seed_repo(root: &std::path::Path) -> Result<String> {
+    std::fs::create_dir_all(root)?;
+    git(root, &["init"])?;
+    git(root, &["config", "user.email", "page@example.com"])?;
+    git(root, &["config", "user.name", "page"])?;
+    git(root, &["commit", "--allow-empty", "-m", "seed"])?;
+    git(root, &["rev-parse", "HEAD"])
+}
+
+async fn import_topics(
+    database: &std::path::Path,
+    wiki: &std::path::Path,
+    dump: &std::path::Path,
+    rows: &str,
+) -> Result {
+    std::fs::write(
+        dump,
+        format!(
+            "COPY public.ros_summaries (id, content, created_at) FROM stdin;
+kept\tkept summary\t2026-10-10 12:00:00+00
+\\.
+COPY public.ros_wiki_topics (slug, title, git_sha, created_at, updated_at) FROM stdin;
+{rows}\\.
+-- PostgreSQL database dump complete
+"
+        ),
+    )?;
+    SqliteStore::open(database)?
+        .with_wiki_directory(wiki.to_path_buf())
+        .import_pg_dump(dump.to_path_buf(), CancellationToken::new())
+        .await?;
+    Ok(())
+}
+
+fn sha(
+    conn: &rusqlite::Connection,
+    query: &str,
+) -> std::result::Result<Option<String>, memory_sqlite::SqliteError> {
+    conn.query_row(query, [], |row| row.get(0))
+        .map_err(|source| memory_sqlite::SqliteError::Query {
+            operation: "imported page sha",
+            source,
+        })
+}
+
+fn git(root: &std::path::Path, args: &[&str]) -> Result<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    Ok(String::from_utf8(output.stdout)?.trim().to_owned())
 }
 
 #[tokio::test]

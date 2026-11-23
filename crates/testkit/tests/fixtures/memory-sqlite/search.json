@@ -1168,6 +1168,15 @@
             "relevanceScore": 0.05912983095980643,
             "createdAt": "2026-10-10T12:01:00.000Z",
             "content": "config lives at /home/user/work/acme-app/config.yaml and listens on api.example.com:8443"
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000014",
+            "layer": "message",
+            "role": "user",
+            "agent": "helper",
+            "relevanceScore": 0.057082754669814495,
+            "createdAt": "2026-10-10T12:01:00.000Z",
+            "content": "ok"
           }
         ]
       },
@@ -1398,13 +1407,13 @@
             "content": "run the deploy script from the release branch, then watch the health check"
           },
           {
-            "id": "00000000-0000-4000-8000-000000000016",
+            "id": "00000000-0000-4000-8000-000000000014",
             "layer": "message",
             "role": "user",
-            "agent": "rivet",
-            "relevanceScore": 0.04120966489642305,
-            "createdAt": "2026-09-01T00:00:00.000Z",
-            "content": "rollback rollback rollback procedure notes"
+            "agent": "helper",
+            "relevanceScore": 0.04576619910654344,
+            "createdAt": "2026-10-10T12:01:00.000Z",
+            "content": "ok"
           }
         ]
       },
@@ -1553,13 +1562,13 @@
             "content": "run the deploy script from the release branch, then watch the health check"
           },
           {
-            "id": "00000000-0000-4000-8000-000000000016",
+            "id": "00000000-0000-4000-8000-000000000014",
             "layer": "message",
             "role": "user",
-            "agent": "rivet",
-            "relevanceScore": 0.041264008016322615,
-            "createdAt": "2026-09-01T00:00:00.000Z",
-            "content": "rollback rollback rollback procedure notes"
+            "agent": "helper",
+            "relevanceScore": 0.04586619447723529,
+            "createdAt": "2026-10-10T12:01:00.000Z",
+            "content": "ok"
           }
         ]
       }
@@ -1817,6 +1826,20 @@
               "createdAt": "2026-10-10T12:01:00.000Z",
               "score": 0.059781974681709794,
               "role": "assistant",
+              "agent": "helper",
+              "conversationId": "00000000-0000-4000-8000-000000000010",
+              "sessionId": "cli:sess-2",
+              "tags": [
+                "project:infra"
+              ]
+            },
+            {
+              "id": "00000000-0000-4000-8000-000000000014",
+              "source": "message",
+              "content": "ok",
+              "createdAt": "2026-10-10T12:01:00.000Z",
+              "score": 0.05745773730990893,
+              "role": "user",
               "agent": "helper",
               "conversationId": "00000000-0000-4000-8000-000000000010",
               "sessionId": "cli:sess-2",
@@ -2192,8 +2215,8 @@
       },
       {
         "id": "00000000-0000-4000-8000-000000000014",
-        "access_count": 0,
-        "last_accessed_at": null
+        "access_count": 4,
+        "last_accessed_at": "2026-10-10T12:03:00.000Z"
       },
       {
         "id": "00000000-0000-4000-8000-000000000015",
@@ -2202,7 +2225,7 @@
       },
       {
         "id": "00000000-0000-4000-8000-000000000016",
-        "access_count": 5,
+        "access_count": 3,
         "last_accessed_at": "2026-10-10T12:03:00.000Z"
       },
       {

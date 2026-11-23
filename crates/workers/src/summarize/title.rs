@@ -35,7 +35,7 @@ impl TitleCall<'_> {
         let request = ModelRequest {
             options: ModelOptions {
                 temperature: Some(0.0),
-                enable_thinking: None,
+                enable_thinking: Some(false),
                 json_schema: Some(title_schema()),
                 disable_any_whitespace: false,
             },

@@ -1,5 +1,4 @@
 use jiff::Timestamp;
-use kernel::cleanup::CleanupSource as _;
 use kernel::filing::FilingStore as _;
 use kernel::memory::SummaryStore as _;
 use kernel::owner::Owner;
@@ -14,7 +13,7 @@ use wire::{
 
 use crate::{
     common::probe,
-    visibility::{batch, household, seed, viewer},
+    visibility::{batch, seed, shared_space, viewer},
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -79,7 +78,7 @@ async fn the_opening_uses_transcript_order_and_a_shared_reader_cannot_access_it(
         .run(tenancy.mark_session(
             &alice,
             &SessionKey::from(&session),
-            Some(&Visibility::Space(household()?)),
+            Some(&Visibility::Space(shared_space()?)),
             Timestamp::now(),
         ))
         .await?;
@@ -119,15 +118,7 @@ async fn cleanup_reads_the_same_opening_while_the_conversation_has_no_leaf(
                 .options([("default_transaction_read_only", "on")]),
         )
         .await?;
-    let snapshot = PostgresMemory::new(readonly).snapshot().await?;
-    let row = snapshot
-        .conversations
-        .iter()
-        .find(|row| row.head.id == id)
-        .expect("projected row");
-    assert_eq!(row.opening.as_deref(), Some(FIRST));
-    assert_eq!(row.summary.as_deref(), Some(FIRST));
-    Ok(())
+    testkit::maintenance::cleanup_reads_the_opening(&PostgresMemory::new(readonly), id, FIRST).await
 }
 
 fn positioned(

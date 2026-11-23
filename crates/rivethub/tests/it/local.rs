@@ -6,6 +6,8 @@ mod capture;
 mod consolidate;
 #[path = "local/embed.rs"]
 mod embed;
+#[path = "local/entities.rs"]
+mod entities;
 #[path = "local/import.rs"]
 mod import;
 #[path = "local/memory_http.rs"]
@@ -13,6 +15,8 @@ mod memory_http;
 #[path = "local/summarize.rs"]
 mod summarize;
 mod summary_conversion;
+#[path = "local/summary_index.rs"]
+mod summary_index;
 
 use jiff::Timestamp;
 use std::path::Path;
@@ -40,6 +44,7 @@ async fn start(home: &Path, args: &[&str], needles: &'static [&str]) -> TestResu
         .args(args)
         .env_clear()
         .env("HOME", home)
+        .env("PATH", "/usr/bin:/bin")
         .env("TOKIO_WORKER_THREADS", "2")
         .current_dir(home);
     crate::process::start(command, needles).await
@@ -159,7 +164,7 @@ async fn local_serves_health_and_sqlite_memory_then_stops_on_sigterm() -> TestRe
 }
 
 #[tokio::test]
-async fn sqlite_builds_a_wiki_topic_from_a_seeded_summary() -> TestResult {
+async fn sqlite_builds_wiki_and_entity_pages_from_a_seeded_summary() -> TestResult {
     let home = tempfile::tempdir()?;
     let port = testkit::ports::claim()?;
     let stub = model_stub().await?;
@@ -179,26 +184,30 @@ async fn sqlite_builds_a_wiki_topic_from_a_seeded_summary() -> TestResult {
         ),
     )?;
     seed_summary(&database)?;
-    let built = wiki_topic(home.path(), &database).await;
+    let built = wiki_topic(home.path(), &database, port.number()).await;
     let closed = stub.close().await;
     built?;
     closed?;
     Ok(())
 }
 
-async fn wiki_topic(home: &Path, database: &Path) -> TestResult {
+async fn wiki_topic(home: &Path, database: &Path, port: u16) -> TestResult {
     let started = start(
         home,
         &["local", "--no-lan"],
         &[
             "worker running wiki-builder",
+            "worker running entity-builder",
             "wiki topic stored acmekit-deploys",
         ],
     )
     .await?;
+    let result = entities::assert_built(home, database, port).await;
     let title = topic_title(database);
-    stop(started).await?;
+    let logs = stop(started).await?;
+    result.map_err(|error| format!("{error}\n{logs}"))?;
     assert_eq!(title?, "AcmeKit deploys");
+    assert!(!logs.contains("memory job dependencies"), "{logs}");
     Ok(())
 }
 
@@ -402,13 +411,14 @@ fn seed_summary(path: &Path) -> TestResult {
     let session = format!("claude-code:{conversation}");
     let topic = "00000000-0000-4000-8000-0000000000e7";
     conn.execute(
-        "INSERT INTO ros_conversations (id, session_key, agent, created_at, updated_at)
-         VALUES (?1, ?2, 'rivet', ?3, ?3)",
+        "INSERT INTO ros_conversations (id, session_key, agent, created_at, updated_at, owner_user_id)
+         VALUES (?1, ?2, 'rivet', ?3, ?3, 'owner')",
         (conversation, &session, &now),
     )?;
     conn.execute(
-        "INSERT INTO ros_summaries (id, conversation_id, content, created_at) VALUES (?1, ?2, ?3, ?4)",
-        (SUMMARY_ID, conversation, "AcmeKit deploys on Fridays.", &now),
+        "INSERT INTO ros_summaries (id, conversation_id, content, created_at, earliest_at, latest_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+        (SUMMARY_ID, conversation, "AcmeKit deploys on Fridays.", &now, entities::STAMP),
     )?;
     conn.execute(
         "INSERT INTO rh_topics (id, kind, slug, name, created_at, updated_at)
@@ -420,6 +430,7 @@ fn seed_summary(path: &Path) -> TestResult {
          VALUES (?1, ?2, 'you', ?3, 'owner')",
         (&session, topic, &now),
     )?;
+    entities::seed_message(&conn, conversation, SUMMARY_ID)?;
     Ok(())
 }
 
@@ -449,10 +460,16 @@ async fn complete(
 {
     let text = std::str::from_utf8(&body)
         .map_err(|error| (axum::http::StatusCode::BAD_REQUEST, error.to_string()))?;
+    let entity_reply = entities::response(text).map_err(|error| {
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            error.to_string(),
+        )
+    })?;
     let content = if text.contains("Extract durable") {
         WIKI_PATCH
     } else {
-        REPLY
+        entity_reply.as_deref().unwrap_or(REPLY)
     };
     let payload = crate::process::provider::event_stream(content, None).map_err(|error| {
         (

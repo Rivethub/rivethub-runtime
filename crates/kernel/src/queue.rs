@@ -8,6 +8,9 @@ use std::str::FromStr;
 use thiserror::Error;
 use values::JsonObject;
 
+pub mod admin;
+pub mod pause;
+
 #[derive(Debug, Error)]
 pub enum JobQueueError {
     #[error("job queue is unavailable")]
@@ -26,6 +29,8 @@ pub enum JobQueueError {
         #[source]
         source: BoxError,
     },
+    #[error("the store is busy; run this command again")]
+    Busy(#[source] BoxError),
     #[error("job {id} is missing")]
     Missing { id: JobId },
     #[error("job payload is not a task job")]
@@ -153,7 +158,7 @@ pub enum JobKeyMode {
     Arm,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString, strum::EnumIter)]
 #[strum(serialize_all = "kebab-case")]
 pub enum WorkerRole {
     Embedder,

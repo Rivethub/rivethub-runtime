@@ -9,6 +9,12 @@ pub enum Error {
         "usage: rh memory resummarize <start|pause|resume|status|retry|release|arm-opening|rehearse>"
     )]
     ResummarizeUsage,
+    #[error(
+        "usage: rh memory pause [<role>] [--json] | rh memory resume <role> [--json]; roles: categorizer, wiki-builder, entity-builder"
+    )]
+    PauseUsage,
+    #[error(transparent)]
+    Unpausable(#[from] kernel::queue::pause::Unpausable),
     #[error(transparent)]
     ConversionStore(#[from] kernel::memory::SummaryStoreError),
     #[error("no unique owned conversation matches {0}")]
@@ -138,6 +144,8 @@ pub enum Error {
     HostName,
     #[error("This command needs a datahub (Postgres).")]
     PostgresUrlRequired,
+    #[error("this command needs Postgres and cannot use --sqlite")]
+    SqliteNotAccepted,
     #[error("Unknown option: {0}")]
     UnknownOption(String),
     #[error("--task requires a task identifier (e.g. extract-wiki)")]
@@ -178,6 +186,8 @@ pub enum Error {
     ImportOne,
     #[error("merge-store: {0}")]
     MergeStore(String),
+    #[error("merge-store database: {0}")]
+    TransferDatabase(#[from] sqlx::Error),
     #[error("reembed runs on a SQLite memory file; pass --sqlite <file>")]
     ReembedSqlite,
     #[error("--sqlite requires a file path")]
@@ -227,11 +237,23 @@ pub enum Error {
     #[error("rh memory cleanup runs as --dry-run or --propose")]
     CleanupMode,
     #[error(
-        "rh memory cleanup --propose needs --database <url> naming the database to write the proposals to"
+        "rh memory cleanup --propose needs --database <url> or --sqlite <file> naming the database to write the proposals to"
     )]
     CleanupDatabase,
     #[error("refusing to write cleanup proposals to the node's live memory database")]
     CleanupLive,
+    #[error(
+        "rh memory cleanup --propose cannot tell this file from the node's live memory file because no sqlite path is configured"
+    )]
+    CleanupLiveUnknown,
+    #[error("refusing to write cleanup proposals: the live sqlite file cannot be identified")]
+    CleanupLiveMissing,
+    #[error("the sqlite target disappeared before its identity could be recorded")]
+    CleanupTargetMissing,
+    #[error("this --out has no record of which database it was written for; start a new --out")]
+    CleanupOutUnstamped,
+    #[error("this --out was written for a different database; start a new --out")]
+    CleanupOutMismatch,
 
     #[error(transparent)]
     Lineage(#[from] kernel::transcript::TranscriptReaderError),

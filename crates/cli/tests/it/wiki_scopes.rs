@@ -81,7 +81,7 @@ async fn viewer_pool(pool: &PgPool) -> Result<PgPool, Box<dyn std::error::Error>
 async fn pages(pool: &PgPool, who: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let viewer = Viewer::new(
         Owner::new(who.to_owned())?,
-        vec![SpaceId::new("household".to_owned())?],
+        vec![SpaceId::new("shared".to_owned())?],
     );
     Ok(Scope::Viewer(viewer)
         .run(async {
@@ -100,11 +100,7 @@ async fn private_and_shared_notes_land_on_separate_pages(pool: PgPool) -> TestRe
     let store = PostgresMemory::new(pool.clone())
         .with_wiki_directory(wiki.path().to_path_buf())
         .with_wiki_owner(Owner::new("dana".to_owned())?);
-    for (owner, visibility) in [
-        ("dana", "private"),
-        ("cleo", "private"),
-        ("cleo", "household"),
-    ] {
+    for (owner, visibility) in [("dana", "private"), ("cleo", "private"), ("cleo", "shared")] {
         let job = summary(&pool, owner, visibility).await?;
         store
             .apply_wiki(&job, vec![patch()], &WikiRouting::default(), now())
@@ -130,14 +126,14 @@ async fn private_and_shared_notes_land_on_separate_pages(pool: PgPool) -> TestRe
             owned("acmekit-deploys", "dana", "private", ""),
             owned("cleo-acmekit-deploys", "cleo", "private", "users/cleo"),
             owned(
-                "household-acmekit-deploys",
-                "household",
-                "household",
-                "spaces/household"
+                "shared-acmekit-deploys",
+                "shared",
+                "shared",
+                "spaces/shared"
             ),
         ]
     );
-    for directory in ["", "users/cleo", "spaces/household"] {
+    for directory in ["", "users/cleo", "spaces/shared"] {
         let file = wiki
             .path()
             .join(directory)
@@ -150,27 +146,25 @@ async fn private_and_shared_notes_land_on_separate_pages(pool: PgPool) -> TestRe
         pages(&probe, "dana").await?,
         vec![
             "acmekit-deploys dana private".to_owned(),
-            "household-acmekit-deploys household household".to_owned(),
+            "shared-acmekit-deploys shared shared".to_owned(),
         ]
     );
     assert_eq!(
         pages(&probe, "cleo").await?,
         vec![
             "cleo-acmekit-deploys cleo private".to_owned(),
-            "household-acmekit-deploys household household".to_owned(),
+            "shared-acmekit-deploys shared shared".to_owned(),
         ]
     );
     Ok(())
 }
 
-async fn household(pool: &PgPool) -> Result<(), sqlx::Error> {
+async fn seed_shared_space(pool: &PgPool) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO rh_spaces (id, kind, name) VALUES ('shared', 'household', 'Shared')")
+        .execute(pool)
+        .await?;
     sqlx::query(
-        "INSERT INTO rh_spaces (id, kind, name) VALUES ('household', 'household', 'Household')",
-    )
-    .execute(pool)
-    .await?;
-    sqlx::query(
-        "INSERT INTO rh_space_members (space_id, user_id, role) VALUES ('household', 'dana', 'member'), ('household', 'cleo', 'member')",
+        "INSERT INTO rh_space_members (space_id, user_id, role) VALUES ('shared', 'dana', 'member'), ('shared', 'cleo', 'member')",
     )
     .execute(pool)
     .await?;
@@ -181,7 +175,7 @@ async fn shared_topic(pool: &PgPool) -> Result<kernel::topics::TopicId, sqlx::Er
     let id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO rh_topics (id, slug, name, created_at, updated_at, owner_user_id, visibility_mark)
-         VALUES ($1, 'kitchen-shelves', 'Kitchen shelves', now(), now(), 'dana', 'household')",
+         VALUES ($1, 'kitchen-shelves', 'Kitchen shelves', now(), now(), 'dana', 'shared')",
     )
     .bind(id)
     .execute(pool)
@@ -220,7 +214,7 @@ async fn private_notes_on_a_shared_topic_stay_on_the_owners_own_page(pool: PgPoo
     let store = PostgresMemory::new(pool.clone())
         .with_wiki_directory(wiki.path().to_path_buf())
         .with_wiki_owner(Owner::new("dana".to_owned())?);
-    household(&pool).await?;
+    seed_shared_space(&pool).await?;
     let topic = shared_topic(&pool).await?;
     let slug = kernel::wiki::page::WikiSlug::try_from("kitchen-shelves".to_owned())?;
     store
@@ -233,7 +227,7 @@ async fn private_notes_on_a_shared_topic_stay_on_the_owners_own_page(pool: PgPoo
     note(
         &store,
         topic,
-        &summary(&pool, "dana", "household").await?,
+        &summary(&pool, "dana", "shared").await?,
         "Brackets every 40 cm.",
     )
     .await?;
@@ -265,9 +259,9 @@ async fn private_notes_on_a_shared_topic_stay_on_the_owners_own_page(pool: PgPoo
         vec![
             row(
                 "kitchen-shelves",
-                "household",
-                "household",
-                "spaces/household",
+                "shared",
+                "shared",
+                "spaces/shared",
                 "Brackets every 40 cm."
             ),
             row(
@@ -279,18 +273,16 @@ async fn private_notes_on_a_shared_topic_stay_on_the_owners_own_page(pool: PgPoo
             ),
         ]
     );
-    let shared = std::fs::read_to_string(
-        wiki.path()
-            .join("spaces/household/topics/kitchen-shelves.md"),
-    )?;
+    let shared =
+        std::fs::read_to_string(wiki.path().join("spaces/shared/topics/kitchen-shelves.md"))?;
     let own = std::fs::read_to_string(wiki.path().join("topics/kitchen-shelves.md"))?;
     assert!(shared.contains("Brackets every 40 cm.") && !shared.contains("90 euro"));
     assert!(own.contains("90 euro"));
     let probe = viewer_pool(&pool).await?;
     assert_eq!(
         pages(&probe, "cleo").await?,
-        vec!["kitchen-shelves household household".to_owned()],
-        "the private note never reaches the household"
+        vec!["kitchen-shelves shared shared".to_owned()],
+        "the private note never reaches the shared space"
     );
     Ok(())
 }

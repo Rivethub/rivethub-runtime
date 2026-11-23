@@ -1,12 +1,13 @@
 use jiff::Timestamp;
 use std::path::Path;
 
-use kernel::queue::{FixedJob, Job, JobKeyMode, JobName, JobQueue as _};
+use kernel::queue::{FixedJob, Job, JobKeyMode, JobName, JobQueue};
 use kernel::wiki::page::WikiSlug;
 use kernel::wiki::recompile::RecompileWiki;
 use memory_postgres::PostgresMemory;
 
-use super::run::postgres_url;
+use super::run::open_sqlite;
+use super::target::{Kind, Target, load_for, resolve};
 use crate::Error;
 use crate::Report;
 use crate::argv::{Scan, Taken};
@@ -21,6 +22,7 @@ pub(super) struct RecompileArgs {
     slugs: Vec<WikiSlug>,
     dry_run: bool,
     json: bool,
+    sqlite: Option<std::path::PathBuf>,
 }
 
 #[derive(serde::Serialize)]
@@ -45,6 +47,7 @@ pub(super) fn parse(args: &[String]) -> Result<RecompileArgs, Error> {
         slugs: Vec::new(),
         dry_run: false,
         json: false,
+        sqlite: None,
     };
     let mut since = None;
     while scan.current().is_some() {
@@ -79,6 +82,14 @@ pub(super) fn parse(args: &[String]) -> Result<RecompileArgs, Error> {
             Taken::Missing => return Err(Error::RecompileSlug(String::new())),
             Taken::Absent => {}
         }
+        match scan.option("--sqlite", None) {
+            Taken::Value(value) => {
+                parsed.sqlite = Some(std::path::PathBuf::from(value));
+                continue;
+            }
+            Taken::Missing => return Err(Error::UnknownOption("--sqlite".to_owned())),
+            Taken::Absent => {}
+        }
         if scan.flag("--dry-run") {
             parsed.dry_run = true;
             continue;
@@ -98,28 +109,21 @@ pub(super) fn parse(args: &[String]) -> Result<RecompileArgs, Error> {
 }
 
 pub(super) async fn run(args: RecompileArgs, env: &Environment) -> Result<Report, Error> {
-    let directory = config::Config::default().wiki_directory(env);
+    let named = args.sqlite.is_some();
+    let target = resolve(env, args.sqlite.clone(), Kind::Either);
+    let config = load_for(env, named)?;
+    let directory = config
+        .filter(|_| matches!(&target, Ok(Target::Sqlite(_))))
+        .unwrap_or_default()
+        .wiki_directory(env);
     let pages = planned(&directory.join("topics"), &args).await?;
     if !args.dry_run {
-        let memory = PostgresMemory::connect(&postgres_url(env)?).await?;
-        let queue = memory.queue().await?;
-        for page in &pages {
-            let slug = WikiSlug::try_from(page.slug.clone())
-                .map_err(|_| Error::RecompileSlug(page.slug.clone()))?;
-            queue
-                .enqueue(Job {
-                    name: JobName::Fixed(FixedJob::RecompileWiki),
-                    payload: wire::JsonObject::from_serialize(&RecompileWiki {
-                        slug,
-                        since: args.since,
-                    })?,
-                    key: Some(format!("wiki-recompile-{}", page.slug)),
-                    key_mode: JobKeyMode::Replace,
-                    priority: PRIORITY,
-                    run_at: None,
-                    max_attempts: None,
-                })
-                .await?;
+        match target? {
+            Target::Postgres(url) => {
+                let memory = PostgresMemory::connect(&url).await?;
+                enqueue(&memory.queue().await?, &pages, args.since).await?;
+            }
+            Target::Sqlite(path) => enqueue(&open_sqlite(&path).await?, &pages, args.since).await?,
         }
     }
     let body = Planned {
@@ -147,6 +151,29 @@ pub(super) async fn run(args: RecompileArgs, env: &Environment) -> Result<Report
     });
     let text = lines.join("\n") + "\n";
     Ok(Report::success(text))
+}
+
+async fn enqueue(
+    queue: &impl JobQueue,
+    pages: &[PlannedPage],
+    since: Timestamp,
+) -> Result<(), Error> {
+    for page in pages {
+        let slug = WikiSlug::try_from(page.slug.clone())
+            .map_err(|_| Error::RecompileSlug(page.slug.clone()))?;
+        queue
+            .enqueue(Job {
+                name: JobName::Fixed(FixedJob::RecompileWiki),
+                payload: wire::JsonObject::from_serialize(&RecompileWiki { slug, since })?,
+                key: Some(format!("wiki-recompile-{}", page.slug)),
+                key_mode: JobKeyMode::Replace,
+                priority: PRIORITY,
+                run_at: None,
+                max_attempts: None,
+            })
+            .await?;
+    }
+    Ok(())
 }
 
 async fn planned(topics: &Path, args: &RecompileArgs) -> Result<Vec<PlannedPage>, Error> {

@@ -127,6 +127,44 @@ fn summary_caps_and_embed_timeout_follow_the_environment() -> Result<(), WorkerE
 }
 
 #[test]
+fn conversion_parallelism_leaves_live_at_least_one_model_slot() -> Result<(), WorkerError> {
+    let standard = workers::SummarySettings::standard("m")?;
+    let tune = |vars: &[(&str, &str)]| {
+        workers::tuned_summary(
+            standard.clone(),
+            &Environment::from_vars(vars.iter().copied()),
+        )
+    };
+    assert_eq!(tune(&[])?.conversion_parallelism, 1);
+    assert_eq!(
+        tune(&[("RIVETHUB_SUMMARY_MODEL_CONCURRENCY", "1")])?.conversion_parallelism,
+        1
+    );
+    for (concurrency, parts) in [("3", "2"), ("16", "15")] {
+        let tuned = tune(&[
+            ("RIVETHUB_SUMMARY_MODEL_CONCURRENCY", concurrency),
+            ("RIVETHUB_SUMMARY_CONVERSION_PARALLELISM", parts),
+        ])?;
+        assert_eq!(tuned.conversion_parallelism.to_string(), parts);
+    }
+    for (concurrency, parts) in [("3", "3"), ("2", "2"), ("3", "4")] {
+        let refused = tune(&[
+            ("RIVETHUB_SUMMARY_MODEL_CONCURRENCY", concurrency),
+            ("RIVETHUB_SUMMARY_CONVERSION_PARALLELISM", parts),
+        ]);
+        assert!(
+            matches!(refused, Err(WorkerError::SummarySettings { .. })),
+            "{concurrency}/{parts}: {refused:?}"
+        );
+    }
+    assert!(matches!(
+        tune(&[("RIVETHUB_SUMMARY_CONVERSION_PARALLELISM", "0")]),
+        Err(WorkerError::JobSetting { ref name }) if name == "RIVETHUB_SUMMARY_CONVERSION_PARALLELISM"
+    ));
+    Ok(())
+}
+
+#[test]
 fn the_backfill_grows_only_into_free_model_slots() {
     use kernel::model::ModelLoad;
     use workers::wiki_builder::backfill_budget;

@@ -31,6 +31,14 @@ struct Existing {
     related: String,
 }
 
+pub(crate) fn canonical(
+    conn: &Connection,
+    patch: &WikiPatch,
+    page: Option<&WikiSlug>,
+) -> Result<String, WikiStoreError> {
+    resolve(conn, patch, page)
+}
+
 pub(crate) fn apply(
     conn: &Connection,
     summary: &WikiSummary,
@@ -38,8 +46,8 @@ pub(crate) fn apply(
     page: Option<&WikiSlug>,
     now: Timestamp,
 ) -> Result<Option<String>, WikiStoreError> {
-    let slug = canonical(conn, patch, page)?;
-    let aliases = alias_list(patch, &slug);
+    let slug = resolve(conn, patch, page)?;
+    let aliases = claimable_aliases(conn, &slug, alias_list(patch, &slug))?;
     let at = time::stamp(now);
     let existing = load(conn, &slug)?;
     if let Some(row) = existing.as_ref().filter(|_| slug != patch.slug.as_ref()) {
@@ -51,9 +59,10 @@ pub(crate) fn apply(
     let aliases_json = json(&aliases)?;
     let tags_json = json(&patch.tags)?;
     let entities_json = json(&patch.entities)?;
+    let state = stabilized(existing.as_ref(), &patch.summary);
     let search = search_text(
         &patch.title,
-        &patch.summary,
+        &state,
         [aliases.as_slice(), &patch.tags, &patch.entities],
         patch
             .article
@@ -68,6 +77,7 @@ pub(crate) fn apply(
             aliases: aliases_json,
             tags: tags_json,
             entities: entities_json,
+            summary: state,
             article,
             related,
             search,
@@ -103,11 +113,21 @@ struct TopicWrite {
     aliases: String,
     tags: String,
     entities: String,
+    summary: String,
     article: String,
     related: String,
     search: String,
     history: i64,
     at: String,
+}
+
+fn stabilized(existing: Option<&Existing>, proposed: &str) -> String {
+    match existing {
+        Some(row) if !row.current_state.trim().is_empty() => {
+            stable_summary(&row.current_state, proposed)
+        }
+        Some(_) | None => proposed.to_owned(),
+    }
 }
 
 fn write_topic(
@@ -120,10 +140,19 @@ fn write_topic(
     if exists && unchanged(conn, slug, patch, write)? {
         return Ok(false);
     }
-    let rows = if exists {
-        update_topic(conn, slug, patch, write)?
+    let prior = if exists {
+        crate::wiki_history::load(conn, slug)?
     } else {
-        insert_topic(conn, slug, patch, write)?
+        Vec::new()
+    };
+    let history = crate::wiki_history::encode(&crate::wiki_history::with_entry(
+        prior,
+        patch.history_entry.as_ref(),
+    ))?;
+    let rows = if exists {
+        update_topic(conn, slug, patch, write, &history)?
+    } else {
+        insert_topic(conn, slug, patch, write, &history)?
     };
     if rows == 1 {
         Ok(true)
@@ -143,7 +172,12 @@ fn unchanged(
     let Some(row) = load(conn, slug)? else {
         return Ok(false);
     };
-    let state_matches = row.current_state == patch.summary;
+    if let Some(entry) = &patch.history_entry
+        && !crate::wiki_history::load(conn, slug)?.contains(entry)
+    {
+        return Ok(false);
+    }
+    let state_matches = row.current_state == write.summary;
     Ok(row.title == patch.title
         && row.aliases == write.aliases
         && row.tags == write.tags
@@ -158,12 +192,13 @@ fn insert_topic(
     slug: &str,
     patch: &WikiPatch,
     write: &TopicWrite,
+    history: &str,
 ) -> Result<usize, WikiStoreError> {
     conn.execute(
         "INSERT INTO ros_wiki_topics (
-            slug, title, aliases, tags, entities, related, current_state, article, search_text,
-            history_count, last_verified_at, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?11)",
+            slug, title, aliases, tags, entities, related, current_state, article, history,
+            search_text, history_count, last_verified_at, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12, ?12)",
         params![
             slug,
             patch.title,
@@ -171,8 +206,9 @@ fn insert_topic(
             write.tags,
             write.entities,
             write.related,
-            patch.summary,
+            write.summary,
             write.article,
+            history,
             write.search,
             write.history,
             write.at
@@ -186,11 +222,12 @@ fn update_topic(
     slug: &str,
     patch: &WikiPatch,
     write: &TopicWrite,
+    history: &str,
 ) -> Result<usize, WikiStoreError> {
     conn.execute(
         "UPDATE ros_wiki_topics SET title = ?2, aliases = ?3, tags = ?4, entities = ?5,
-            related = ?6, current_state = ?7, article = ?8, search_text = ?9,
-            history_count = history_count + ?10, last_verified_at = ?11, updated_at = ?11,
+            related = ?6, current_state = ?7, article = ?8, history = ?9, search_text = ?10,
+            history_count = history_count + ?11, last_verified_at = ?12, updated_at = ?12,
             embedding = NULL, embed_status = NULL, embed_failures = 0, embed_error = NULL
          WHERE slug = ?1",
         params![
@@ -200,8 +237,9 @@ fn update_topic(
             write.tags,
             write.entities,
             write.related,
-            patch.summary,
+            write.summary,
             write.article,
+            history,
             write.search,
             write.history,
             write.at
@@ -247,7 +285,7 @@ fn load(conn: &Connection, slug: &str) -> Result<Option<Existing>, WikiStoreErro
     .map_err(query)
 }
 
-fn canonical(
+fn resolve(
     conn: &Connection,
     patch: &WikiPatch,
     page: Option<&WikiSlug>,
@@ -261,12 +299,20 @@ fn canonical(
     let mut found = BTreeSet::new();
     let mut blocked = false;
     for (index, candidate) in candidates.iter().enumerate() {
-        for (slug, explicit) in matches(conn, candidate)? {
+        let hits = matches(conn, candidate)?;
+        let settled = index == 0 && hits.iter().any(|(_, explicit)| *explicit);
+        for (slug, explicit) in hits {
+            if settled && !explicit {
+                continue;
+            }
             if (index == 0 && explicit) || open(conn, &slug, page)? {
                 found.insert(slug);
             } else {
                 blocked = true;
             }
+        }
+        if settled {
+            break;
         }
     }
     if found.is_empty()
@@ -342,40 +388,54 @@ fn matches(conn: &Connection, candidate: &str) -> Result<Vec<(String, bool)>, Wi
     Ok(slugs)
 }
 
-fn redirects(
+pub(crate) fn redirects(
     conn: &Connection,
     slug: &str,
     aliases: &[String],
     at: &str,
 ) -> Result<(), WikiStoreError> {
     for alias in aliases {
-        let occupied: i64 = conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM ros_wiki_topics WHERE slug = ?1)",
-                params![alias],
-                |row| row.get(0),
-            )
-            .map_err(query)?;
-        if occupied != 0 {
-            return Err(WikiStoreError::SlugConflict(alias.clone()));
+        if !claimable(conn, slug, alias)? {
+            continue;
         }
-        let written = conn
-            .execute(
-                "INSERT INTO ros_wiki_redirects (from_slug, to_slug, created_at)
-                 VALUES (?1, ?2, ?3)
-                 ON CONFLICT(from_slug) DO UPDATE SET to_slug = excluded.to_slug
-                 WHERE ros_wiki_redirects.to_slug = excluded.to_slug",
-                params![alias, slug, at],
-            )
-            .map_err(query)?;
-        if written != 1 {
-            return Err(WikiStoreError::SlugConflict(alias.clone()));
-        }
+        conn.execute(
+            "INSERT INTO ros_wiki_redirects (from_slug, to_slug, created_at)
+             VALUES (?1, ?2, ?3) ON CONFLICT(from_slug) DO NOTHING",
+            params![alias, slug, at],
+        )
+        .map_err(query)?;
     }
     Ok(())
 }
 
-fn provenance(
+pub(crate) fn claimable_aliases(
+    conn: &Connection,
+    holder: &str,
+    aliases: Vec<String>,
+) -> Result<Vec<String>, WikiStoreError> {
+    let mut kept = Vec::with_capacity(aliases.len());
+    for alias in aliases {
+        if claimable(conn, holder, &alias)? {
+            kept.push(alias);
+        }
+    }
+    Ok(kept)
+}
+
+fn claimable(conn: &Connection, holder: &str, alias: &str) -> Result<bool, WikiStoreError> {
+    let taken: i64 = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM ros_wiki_topics WHERE slug = ?1 AND slug <> ?2)
+                 OR EXISTS(SELECT 1 FROM ros_wiki_redirects
+                            WHERE from_slug = ?1 AND to_slug <> ?2)",
+            params![alias, holder],
+            |row| row.get(0),
+        )
+        .map_err(query)?;
+    Ok(taken == 0)
+}
+
+pub(crate) fn provenance(
     conn: &Connection,
     slug: &str,
     summary: &WikiSummary,
@@ -460,7 +520,7 @@ fn note(
 ) -> Result<(), WikiStoreError> {
     let proposed = patch.slug.as_ref().to_owned();
     let mut aliases = list(&row.aliases)?;
-    if !aliases.contains(&proposed) {
+    if !aliases.contains(&proposed) && claimable(conn, slug, &proposed)? {
         aliases.push(proposed.clone());
     }
     let search = search_text(
@@ -470,12 +530,16 @@ fn note(
         Some(&row.article),
     );
     let at = time::stamp(now);
+    let history = crate::wiki_history::encode(&crate::wiki_history::with_entry(
+        crate::wiki_history::load(conn, slug)?,
+        Some(&patch.note(now.utc_date())),
+    ))?;
     conn.execute(
-        "UPDATE ros_wiki_topics SET aliases = ?2, search_text = ?3, history_count = history_count + 1,
-            last_verified_at = ?4, updated_at = ?4,
+        "UPDATE ros_wiki_topics SET aliases = ?2, search_text = ?3, history = ?4,
+            history_count = history_count + 1, last_verified_at = ?5, updated_at = ?5,
             embedding = NULL, embed_status = NULL, embed_failures = 0, embed_error = NULL
          WHERE slug = ?1",
-        params![slug, json(&aliases)?, search, at],
+        params![slug, json(&aliases)?, search, history, at],
     )
     .map_err(query)?;
     redirects(conn, slug, std::slice::from_ref(&proposed), &at)?;

@@ -1,0 +1,29 @@
+[package]
+name = "wiki-files"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+version.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+git-fault = []
+
+[dependencies]
+jiff = { workspace = true }
+kernel = { workspace = true }
+parking_lot = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time", "process", "fs", "io-util"] }
+tracing = { workspace = true }
+uuid = { workspace = true }
+wire = { workspace = true }
+
+[dev-dependencies]
+jiff = { workspace = true }
+kernel = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+
+[lints]
+workspace = true

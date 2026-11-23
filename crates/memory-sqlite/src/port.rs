@@ -34,7 +34,9 @@ impl JobQueue for SqliteStore {
     }
 
     async fn subscribe(&self) -> Result<Box<dyn kernel::queue::JobNotifications>, JobQueueError> {
-        Ok(Box::new(self.notifications.subscribe()))
+        Ok(Box::new(
+            crate::job_notify::StoreNotifications::open(self).await?,
+        ))
     }
 
     async fn enqueue(&self, job: Job) -> Result<JobId, JobQueueError> {
@@ -111,8 +113,8 @@ impl JobQueue for SqliteStore {
     }
 
     async fn flag_stuck(&self) -> Result<u64, JobQueueError> {
-        let now = crate::time::stamp(Timestamp::now());
-        self.with_conn(move |conn| crate::flagged::flag_stuck(conn, &now))
+        let now = Timestamp::now();
+        self.with_conn(move |conn| crate::flagged::flag_stuck(conn, now))
             .await
             .map_err(unavailable)
     }
@@ -212,11 +214,14 @@ struct StoredRow {
     max_attempts: i64,
     attempts: i64,
     last_error: Option<String>,
+    priority: i64,
 }
 
 fn read_stored(conn: &rusqlite::Connection, id: &str) -> Result<Option<StoredRow>, SqliteError> {
     conn.query_row(
-        "SELECT task, job_key, payload, max_attempts, attempts, last_error FROM ros_jobs WHERE id = ?1",
+        "SELECT task, job_key, payload, max_attempts, attempts, last_error,
+                COALESCE((SELECT priority FROM rh_job_priorities WHERE job_id = ros_jobs.id), 0)
+           FROM ros_jobs WHERE id = ?1",
         [id],
         |row| {
             Ok(StoredRow {
@@ -226,6 +231,7 @@ fn read_stored(conn: &rusqlite::Connection, id: &str) -> Result<Option<StoredRow
                 max_attempts: row.get(3)?,
                 attempts: row.get(4)?,
                 last_error: row.get(5)?,
+                priority: row.get(6)?,
             })
         },
     )
@@ -258,7 +264,10 @@ fn stored_job(id: JobId, row: StoredRow) -> Result<StoredJob, JobQueueError> {
         name,
         payload: object,
         key: row.key,
-        priority: None,
+        priority: Some(
+            i16::try_from(row.priority)
+                .map_err(|_| JobQueueError::Stored("priority".to_owned()))?,
+        ),
         max_attempts: i32::try_from(row.max_attempts)
             .map_err(|_| JobQueueError::Stored("max_attempts".to_owned()))?,
         attempts: u32::try_from(row.attempts)
@@ -305,6 +314,7 @@ fn claim_message(error: &SqliteError) -> Option<String> {
         | SqliteError::Invalid { .. }
         | SqliteError::Width { .. }
         | SqliteError::EmbedModel { .. }
+        | SqliteError::WikiIo(_)
         | SqliteError::SummaryReference(_) => None,
     }
 }
@@ -344,6 +354,7 @@ fn tasks_for(role: WorkerRole) -> Vec<JobName> {
         WorkerRole::Embedder => vec![
             fixed(FixedJob::EmbedTarget),
             fixed(FixedJob::EnqueueUnembedded),
+            fixed(FixedJob::EnqueueUnchunked),
         ],
         WorkerRole::Summarizer => vec![
             fixed(FixedJob::SummarizeConversation),
@@ -366,6 +377,7 @@ fn tasks_for(role: WorkerRole) -> Vec<JobName> {
             fixed(FixedJob::EnqueueWikiBackfill),
             fixed(FixedJob::ConsolidateWiki),
             fixed(FixedJob::EnqueueStaleWiki),
+            fixed(FixedJob::RecompileWiki),
         ],
         WorkerRole::EntityBuilder => vec![
             fixed(FixedJob::ExtractEntities),

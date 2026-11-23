@@ -94,11 +94,21 @@ struct Backing {
     export: Option<Arc<dyn MemoryExport>>,
     ports: Option<StorePorts>,
     sessions: Option<SessionStore>,
+    reports: Option<gateway::WorkerReporting>,
+    pauses: Option<Arc<dyn kernel::queue::pause::WorkerPauses>>,
 }
 
 fn with_backing(gateway: Gateway, backing: &Backing) -> Gateway {
     let gateway = match backing.export.clone() {
         Some(export) => gateway.with_memory_export(export),
+        None => gateway,
+    };
+    let gateway = match backing.reports.clone() {
+        Some(reports) => gateway.with_worker_reports(reports),
+        None => gateway,
+    };
+    let gateway = match backing.pauses.clone() {
+        Some(pauses) => gateway.with_worker_pauses(pauses),
         None => gateway,
     };
     match backing.ports.clone() {
@@ -212,6 +222,11 @@ impl Composition {
             export: Some(Arc::new(MemoryExporter::postgres(Arc::clone(memory), url))),
             ports: Some(StorePorts::of(memory, tenancy)),
             sessions: Some(SessionStore::Postgres(Arc::clone(memory))),
+            reports: Some(gateway::WorkerReporting {
+                store: memory.clone(),
+                hub: crate::worker_report::hub_embedder(config, env),
+            }),
+            pauses: Some(memory.clone()),
         };
         let factory =
             crate::models::ModelFactory::without_harnesses(env).with_activities(activities.clone());
@@ -222,6 +237,13 @@ impl Composition {
         composition
             .tasks
             .spawn(async move { summaries.await.map_err(ComposeError::Task) });
+        composition
+            .background
+            .spawn(crate::worker_report::warn_on_embedder_mismatch(
+                memory.clone(),
+                crate::worker_report::hub_embedder(config, env),
+                shutdown.child_token(),
+            ));
         Ok(composition)
     }
 
@@ -235,7 +257,9 @@ impl Composition {
         let backing = Backing {
             export: Some(Arc::new(MemoryExporter::sqlite(Arc::clone(store)))),
             ports: Some(StorePorts::of(store, store.clone())),
-            sessions: Some(SessionStore::Sqlite(SqliteStore::clone(store))),
+            sessions: Some(SessionStore::Sqlite(Box::new(SqliteStore::clone(store)))),
+            reports: None,
+            pauses: Some(store.clone() as Arc<dyn kernel::queue::pause::WorkerPauses>),
         };
         let factory =
             crate::models::ModelFactory::without_harnesses(env).with_activities(activities.clone());

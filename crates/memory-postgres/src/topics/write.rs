@@ -297,10 +297,12 @@ pub(super) async fn fold_into(
 
 pub(super) async fn remove(conn: &mut PgConnection, topic: &Topic) -> Result<(), TopicError> {
     sqlx::query!(
-        "INSERT INTO rh_topic_tombstones (kind, slug, deleted_at) VALUES ($1, $2, now())
-         ON CONFLICT (kind, slug) DO UPDATE SET deleted_at = EXCLUDED.deleted_at",
+        "INSERT INTO rh_topic_tombstones (kind, slug, deleted_at, owner_user_id) VALUES ($1, $2, now(), $3)
+         ON CONFLICT (kind, slug) DO UPDATE SET deleted_at = EXCLUDED.deleted_at,
+             owner_user_id = coalesce(EXCLUDED.owner_user_id, rh_topic_tombstones.owner_user_id)",
         topic.kind.to_string(),
-        topic.slug.as_str()
+        topic.slug.as_str(),
+        topic.owner.as_ref().map(kernel::owner::Owner::as_str)
     )
     .execute(&mut *conn)
     .await
@@ -460,3 +462,7 @@ pub(super) async fn enqueue_syncs(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "tombstone_tests.rs"]
+mod tombstone_tests;

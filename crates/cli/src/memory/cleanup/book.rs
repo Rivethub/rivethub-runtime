@@ -23,6 +23,10 @@ impl Book {
         self.dir.join(name)
     }
 
+    pub(super) fn directory(&self) -> &std::path::Path {
+        &self.dir
+    }
+
     pub(super) async fn read<T: DeserializeOwned>(&self, name: &str) -> Result<Option<T>, Error> {
         match tokio::fs::read(self.path(name)).await {
             Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),

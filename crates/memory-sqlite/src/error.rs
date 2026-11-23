@@ -108,6 +108,8 @@ pub enum SqliteError {
     Invalid { message: String },
     #[error("embedding width is {got}, the column is {expected}")]
     Width { got: usize, expected: usize },
+    #[error("a wiki page file could not be read")]
+    WikiIo(#[source] std::io::Error),
     #[error(
         "stored vectors were written by embedding model {stored}, the configured model is {configured}; run rh memory reembed"
     )]
@@ -164,7 +166,8 @@ impl From<SqliteError> for MemoryStoreError {
             | SqliteError::SchemaBehind { .. }
             | SqliteError::Pragma(_)
             | SqliteError::UnsupportedSchema { .. }
-            | SqliteError::Join(_) => Self::Unavailable(Box::new(error)),
+            | SqliteError::Join(_)
+            | SqliteError::WikiIo(_) => Self::Unavailable(Box::new(error)),
         }
     }
 }

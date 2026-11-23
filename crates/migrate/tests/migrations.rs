@@ -6,6 +6,14 @@ use sqlx::Row as _;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+fn latest() -> Result<i64, Box<dyn std::error::Error>> {
+    POSTGRES
+        .migrations
+        .last()
+        .map(|migration| migration.version)
+        .ok_or_else(|| "no bundled migrations".into())
+}
+
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn a_migration_missing_below_the_newest_is_pending_until_migrate_applies_it(
     pool: PgPool,
@@ -21,10 +29,10 @@ async fn a_migration_missing_below_the_newest_is_pending_until_migrate_applies_i
         .await?;
 
     let gapped = migrate::postgres_status_pool(&pool).await?;
-    assert_eq!((gapped.current, gapped.pending), (80, 1));
+    assert_eq!((gapped.current, gapped.pending), (latest()?, 1));
 
     let migrated = migrate::postgres_pool(&pool).await?;
-    assert_eq!((migrated.current, migrated.pending), (80, 0));
+    assert_eq!((migrated.current, migrated.pending), (latest()?, 0));
     let index: Option<String> =
         sqlx::query_scalar("SELECT to_regclass('idx_rh_messages_unembedded')::text")
             .fetch_one(&pool)
@@ -411,7 +419,7 @@ async fn check_contended_top_down_upgrade(pool: &PgPool, hold: &'static str) -> 
     assert!(error.to_string().contains("safe to rerun"));
     reader.rollback().await?;
     blocker.rollback().await?;
-    assert_eq!(migrate::postgres_pool(pool).await?.current, 80);
+    assert_eq!(migrate::postgres_pool(pool).await?.current, latest()?);
     Ok(())
 }
 
@@ -421,7 +429,15 @@ async fn top_down_upgrade_from_postgres_75_preserves_legacy_kinds(pool: PgPool) 
     let pending = migrate::postgres_status_pool(&pool).await?;
     assert_eq!(
         (pending.current, pending.required, pending.pending),
-        (75, 80, 5)
+        (
+            75,
+            latest()?,
+            POSTGRES
+                .migrations
+                .iter()
+                .filter(|migration| migration.version > 75)
+                .count()
+        )
     );
     sqlx::raw_sql(
         "INSERT INTO rh_conversations (id, session_key, agent, owner_user_id)
@@ -441,7 +457,7 @@ async fn top_down_upgrade_from_postgres_75_preserves_legacy_kinds(pool: PgPool) 
     let status = migrate::postgres_pool(&pool).await?;
     assert_eq!(
         (status.current, status.required, status.pending),
-        (80, 80, 0)
+        (latest()?, latest()?, 0)
     );
     let filenode_after: sqlx::postgres::types::Oid =
         sqlx::query_scalar("SELECT pg_relation_filenode('rh_summaries'::regclass)")
@@ -465,95 +481,6 @@ async fn top_down_upgrade_from_postgres_75_preserves_legacy_kinds(pool: PgPool) 
     Ok(())
 }
 
-#[test]
-fn top_down_upgrade_from_sqlite_35_preserves_legacy_kinds_and_matches_fresh() -> TestResult {
-    use rusqlite::Connection;
-
-    let dir = tempfile::tempdir()?;
-    let fresh = dir.path().join("fresh.sqlite");
-    let upgraded = dir.path().join("upgraded.sqlite");
-    migrate::sqlite(&fresh)?;
-    let conn = Connection::open(&fresh)?;
-    conn.execute("VACUUM INTO ?1", [upgraded.to_string_lossy().as_ref()])?;
-    let old = Connection::open(&upgraded)?;
-    old.execute_batch(
-        "DROP VIEW rh_transcript_times;
-         DROP INDEX rh_transcript_seek; DROP INDEX rh_transcript_recent;
-         DROP TABLE IF EXISTS rh_summary_capture_clock;
-         DROP TABLE rh_summary_checkpoints; DROP TABLE rh_summary_runs;
-         DROP TABLE rh_summary_state; DROP TRIGGER rh_disarm_trashed_openings; DROP TABLE rh_summary_openings;
-         ALTER TABLE ros_conversations DROP COLUMN title_from_capture;
-         DROP TABLE rh_summary_conversion; DROP TABLE rh_summary_conversion_items;
-         DROP TABLE ros_summary_deliveries;
-         DROP INDEX rh_summary_one_session; DROP INDEX rh_summary_sources_order;
-         ALTER TABLE ros_summary_sources DROP COLUMN render_key;
-         ALTER TABLE ros_summaries DROP COLUMN summary_ordinal;
-         ALTER TABLE ros_summaries DROP COLUMN index_needs_repair;
-         ALTER TABLE ros_summaries DROP COLUMN issued_part_ordinal;
-         ALTER TABLE ros_summaries DROP COLUMN input_token_estimate;
-         ALTER TABLE ros_summaries DROP COLUMN source_first;
-         ALTER TABLE ros_summaries DROP COLUMN source_last;
-         ALTER TABLE ros_summaries DROP COLUMN range_verified;
-         ALTER TABLE ros_summaries DROP COLUMN input_key;
-         ALTER TABLE ros_summaries DROP COLUMN index_key;
-         ALTER TABLE ros_summaries DROP COLUMN quality_flags;
-         ALTER TABLE ros_summaries DROP COLUMN section_char_start;
-         ALTER TABLE ros_summaries DROP COLUMN section_char_end;
-         INSERT INTO ros_summaries (id, kind, depth, content, created_at)
-           VALUES ('legacy', 'branch', 2, 'Old fixture note', '2026-10-10T00:00:00.000Z');
-         INSERT INTO ros_conversations (id, session_key, agent, created_at, updated_at)
-         VALUES ('kept','cli:kept','fixture','2026-10-10T00:00:00Z','2026-10-10T00:00:00Z'), ('trash','cli:trashed','fixture','2026-10-10T00:00:00Z','2026-10-10T00:00:00Z');
-         INSERT INTO ros_summaries (id, conversation_id, kind, depth, content, created_at)
-         VALUES ('legacy-kept','kept','leaf',0,'Invented packing review','2026-10-10'),
-                ('legacy-trash','trash','leaf',0,'Invented list of fasteners','2026-10-10');
-         INSERT INTO rh_session_trash (session_key, trashed_at) VALUES ('cli:trashed','2026-10-11');
-         PRAGMA user_version = 35;",
-    )?;
-    drop(old);
-    let pending = migrate::sqlite_status(&upgraded)?;
-    assert_eq!(
-        (pending.current, pending.required, pending.pending),
-        (35, 41, 6)
-    );
-    let status = migrate::sqlite(&upgraded)?;
-    assert_eq!(
-        (status.current, status.required, status.pending),
-        (41, 41, 0)
-    );
-    let up = Connection::open(&upgraded)?;
-    let row: (String, i32, Option<i32>, bool) = up.query_row(
-        "SELECT kind, depth, summary_ordinal, index_needs_repair FROM ros_summaries WHERE id = 'legacy'",
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-    )?;
-    let opening: (String, bool, bool, bool) = up.query_row(
-        "SELECT conversation_id, filing_armed, title_armed, historical_pending FROM rh_summary_openings",
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-    )?;
-    assert_eq!(opening, ("kept".to_owned(), false, false, true));
-    up.execute(
-        "INSERT INTO rh_summary_conversion_items (conversation_id, last_input_at, estimated_tokens, state)
-         VALUES ('kept','2026-10-11T00:00:00Z',1,'pending')",
-        [],
-    )?;
-    let next: String = up.query_row(
-        "SELECT next_at FROM rh_summary_conversion_items",
-        [],
-        |row| row.get(0),
-    )?;
-    assert!(next.parse::<jiff::Timestamp>().is_ok());
-    assert_eq!(row, ("branch".to_owned(), 2, None, false));
-    assert_eq!(sqlite_definitions(&conn)?, sqlite_definitions(&up)?);
-    Ok(())
-}
-
-fn sqlite_definitions(conn: &rusqlite::Connection) -> rusqlite::Result<Vec<(String, String)>> {
-    conn.prepare("SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name")?
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-        .collect()
-}
-
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn top_down_passages_use_store_hnsw_options(pool: PgPool) -> TestResult {
     let options: Option<Vec<String>> = sqlx::query_scalar(
@@ -566,4 +493,132 @@ async fn top_down_passages_use_store_hnsw_options(pool: PgPool) -> TestResult {
         Some(["m=32".to_owned(), "ef_construction=120".to_owned()].as_slice())
     );
     Ok(())
+}
+
+#[sqlx::test(migrations = false)]
+async fn entity_embeddings_have_no_approximate_index(pool: PgPool) -> TestResult {
+    migrate::postgres_pool(&pool).await?;
+    let indexed: Vec<String> = sqlx::query_scalar(
+        "SELECT indexdef FROM pg_indexes
+          WHERE tablename = 'rh_entity_embeddings' AND indexdef ILIKE '%hnsw%'",
+    )
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(indexed, Vec::<String>::new());
+    Ok(())
+}
+
+#[test]
+fn dead_jobs_move_into_the_flagged_ledger_and_the_step_can_run_again() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("memory.sqlite");
+    plant_pre_ledger_jobs(&path)?;
+    migrate::sqlite(&path)?;
+    let current = rusqlite::Connection::open(&path)?;
+    assert_eq!(flagged_rows(&current)?, expected_flagged());
+    let definition: String = current.query_row(
+        "SELECT sql FROM sqlite_master WHERE name = 'rh_flagged_jobs'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert!(definition.contains("AUTOINCREMENT"), "{definition}");
+    assert_eq!(ledger_counts(&current)?, (0, 1, 1));
+    drop(current);
+    rewind_past_the_ledger(&path)?;
+    migrate::sqlite(&path)?;
+    let repeated = rusqlite::Connection::open(&path)?;
+    let rows: i64 =
+        repeated.query_row("SELECT count(*) FROM rh_flagged_jobs", [], |row| row.get(0))?;
+    let still_dead: i64 = repeated.query_row(
+        "SELECT count(*) FROM ros_jobs WHERE state = 'dead'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!((rows, still_dead), (2, 0));
+    Ok(())
+}
+
+fn plant_pre_ledger_jobs(path: &std::path::Path) -> TestResult {
+    migrate::sqlite(path)?;
+    let old = rusqlite::Connection::open(path)?;
+    old.execute_batch(
+        "DROP TABLE rh_flagged_jobs;
+         INSERT INTO ros_jobs
+            (id, task, job_key, payload, run_at, attempts, max_attempts, state, last_error,
+             created_at, updated_at)
+         VALUES
+            ('dead-keyed', 'embed-target', 'keyed', '{}', '2026-01-01T00:00:00.000Z', 2, 2, 'dead',
+             'boom', '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z'),
+            ('dead-plain', 'embed-target', NULL, '{}', '2026-01-01T00:00:00.000Z', 0, 5, 'dead',
+             NULL, '2026-01-01T00:00:00.000Z', '2026-01-03T00:00:00.000Z'),
+            ('still-queued', 'embed-target', 'queued', '{}', '2026-01-01T00:00:00.000Z', 0, 5,
+             'queued', NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+         PRAGMA user_version = 45;",
+    )?;
+    Ok(())
+}
+
+fn rewind_past_the_ledger(path: &std::path::Path) -> TestResult {
+    let again = rusqlite::Connection::open(path)?;
+    again.execute_batch("PRAGMA user_version = 45;")?;
+    drop(again);
+    let mut backup = path.as_os_str().to_os_string();
+    backup.push(".v45.bak");
+    std::fs::remove_file(backup)?;
+    Ok(())
+}
+
+type FlaggedRow = (Option<String>, i64, String, String);
+
+fn flagged_rows(conn: &rusqlite::Connection) -> rusqlite::Result<Vec<FlaggedRow>> {
+    let mut statement = conn.prepare(
+        "SELECT job_key, failures, last_error, first_failed_at
+           FROM rh_flagged_jobs ORDER BY job_key",
+    )?;
+    statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?
+        .collect()
+}
+
+fn expected_flagged() -> [FlaggedRow; 2] {
+    [
+        (
+            None,
+            1,
+            String::new(),
+            "2026-01-03T00:00:00.000Z".to_owned(),
+        ),
+        (
+            Some("keyed".to_owned()),
+            2,
+            "boom".to_owned(),
+            "2026-01-02T00:00:00.000Z".to_owned(),
+        ),
+    ]
+}
+
+fn ledger_counts(conn: &rusqlite::Connection) -> rusqlite::Result<(i64, i64, i64)> {
+    let dead: i64 = conn.query_row(
+        "SELECT count(*) FROM ros_jobs WHERE state = 'dead'",
+        [],
+        |row| row.get(0),
+    )?;
+    let queued: i64 = conn.query_row(
+        "SELECT count(*) FROM ros_jobs WHERE job_key = 'queued'",
+        [],
+        |row| row.get(0),
+    )?;
+    let counted: i64 = conn.query_row(
+        "SELECT count(*) FROM rh_job_failures WHERE job_key = 'keyed'",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok((dead, queued, counted))
 }

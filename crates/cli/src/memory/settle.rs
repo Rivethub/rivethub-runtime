@@ -8,7 +8,7 @@ use kernel::tenancy::{Scope, Viewer};
 use memory_postgres::PostgresMemory;
 use wire::gateway::users::DEFAULT_OWNER_ID;
 
-use super::target::{Kind, Target, load, resolve};
+use super::target::{Kind, Target, resolve};
 use crate::argv::{Scan, Taken};
 use crate::{Error, Report};
 
@@ -46,12 +46,15 @@ pub(super) fn parse(args: &[String]) -> Result<Args, Error> {
 }
 
 pub(super) async fn run(args: Args, env: &Environment) -> Result<Report, Error> {
-    let owner = match load(env)? {
+    let explicit = args.sqlite.is_some();
+    let target = resolve(env, args.sqlite, Kind::Either)?;
+    let owner = match super::target::load_for(env, explicit)? {
         Some(config) => super::bundle::node_owner(&config, env).await?,
+        None if explicit => super::bundle::node_owner(&config::Config::default(), env).await?,
         None => DEFAULT_OWNER_ID.to_owned(),
     };
     let owner = Owner::new(owner)?;
-    let store: Box<dyn MemoryStore> = match resolve(env, args.sqlite, Kind::Either)? {
+    let store: Box<dyn MemoryStore> = match target {
         Target::Postgres(url) => Box::new(PostgresMemory::connect(&url).await?),
         Target::Sqlite(path) => Box::new(super::run::open_sqlite(&path).await?),
     };

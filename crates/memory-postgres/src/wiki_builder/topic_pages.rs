@@ -135,11 +135,14 @@ impl TopicPageStore for PostgresMemory {
         now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         sqlx::query(
-            "INSERT INTO rh_wiki_redirects (from_slug, to_slug, created_at)
-             SELECT $1, $2, $3
+            "INSERT INTO rh_wiki_redirects (from_slug, to_slug, created_at, owner_user_id)
+             SELECT $1, $2, $3, coalesce(rh_scope_principal(),
+                 (SELECT owner_user_id FROM rh_wiki_topics WHERE slug = $2))
               WHERE NOT EXISTS (SELECT 1 FROM rh_wiki_topics WHERE slug = $1)
-             ON CONFLICT (from_slug) DO UPDATE SET to_slug = EXCLUDED.to_slug
-              WHERE rh_wiki_redirects.to_slug <> EXCLUDED.to_slug",
+             ON CONFLICT (from_slug) DO UPDATE SET to_slug = EXCLUDED.to_slug,
+                 owner_user_id = coalesce(rh_wiki_redirects.owner_user_id, EXCLUDED.owner_user_id)
+              WHERE rh_wiki_redirects.to_slug <> EXCLUDED.to_slug
+                 OR (rh_wiki_redirects.owner_user_id IS NULL AND EXCLUDED.owner_user_id IS NOT NULL)",
         )
         .bind(from.as_ref())
         .bind(to.as_ref())
@@ -170,10 +173,19 @@ impl TopicPageStore for PostgresMemory {
         let message = format!("wiki({}): removed after a tidy review", slug.as_ref());
         let removed = {
             let mut repository = self.repository().await?;
-            let removed = repository
-                .remove(&[slug.as_ref().to_owned()], &message)
+            let present = repository
+                .read(slug.as_ref())
                 .await
                 .map_err(WikiStoreError::from);
+            let removed = match present {
+                Ok(None) => Ok(()),
+                Ok(Some(_)) => repository
+                    .remove(&[slug.as_ref().to_owned()], &message)
+                    .await
+                    .map(|_| ())
+                    .map_err(WikiStoreError::from),
+                Err(error) => Err(error),
+            };
             settle(removed, repository.release().await)
         };
         removed?;

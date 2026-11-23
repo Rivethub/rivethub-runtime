@@ -16,6 +16,8 @@ pub enum Base {
     Cursor,
     Dsh,
     Cowork,
+    AntigravityConfig,
+    AntigravityData,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +60,7 @@ pub struct HookFileSpec {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureInstall {
     HookFile(HookFileSpec),
+    AntigravityHooks { file: Location, timeout: u32 },
     OpencodePlugin { directory: Location },
     DshPlugin { directory: Location },
 }
@@ -66,7 +69,10 @@ impl CaptureInstall {
     #[must_use]
     pub const fn writable(&self) -> bool {
         match self {
-            Self::HookFile(_) | Self::OpencodePlugin { .. } | Self::DshPlugin { .. } => true,
+            Self::HookFile(_)
+            | Self::AntigravityHooks { .. }
+            | Self::OpencodePlugin { .. }
+            | Self::DshPlugin { .. } => true,
         }
     }
 }
@@ -294,12 +300,18 @@ pub const REGISTRY: [HarnessSpec; 12] = [
         id: "antigravity",
         name: "Antigravity",
         session_prefix: "antigravity",
-        binaries: &["antigravity"],
-        data: &[at(Base::Home, ".gemini/antigravity")],
-        capture: &[CaptureMethod::ClientPush],
-        install: None,
+        binaries: &["antigravity", "agy"],
+        data: &[
+            at(Base::AntigravityData, ""),
+            at(Base::AntigravityConfig, ""),
+        ],
+        capture: &[CaptureMethod::Hook, CaptureMethod::StoreScan],
+        install: Some(CaptureInstall::AntigravityHooks {
+            file: at(Base::AntigravityConfig, "hooks.json"),
+            timeout: 30,
+        }),
         recall: Recall::Json {
-            file: at(Base::Home, ".gemini/antigravity/mcp_config.json"),
+            file: at(Base::AntigravityConfig, "mcp_config.json"),
             key: JsonKey::McpServers,
             shape: EntryShape::Command,
         },

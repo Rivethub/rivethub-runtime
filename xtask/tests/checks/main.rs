@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
+use xtask::authorship;
 use xtask::baseline;
 use xtask::check;
 use xtask::code;
@@ -152,11 +153,6 @@ fn installed_hooks_reject_and_accept_commits() -> Result<(), Box<dyn std::error:
     repo.write("crates/wire/src/lib.rs", "pub fn start() {}\n")?;
     repo.write("xtask/data/privacy-denylist.json", "{\"sha256\": []}")?;
     repo.write("xtask/data/secret-denylist.json", "{\"sha256\": []}")?;
-    let digest = privacy::sha256("test user <test@example.com>");
-    repo.write(
-        "xtask/data/house-identities.json",
-        &format!("{{\"sha256\": [\"{digest}\"]}}"),
-    )?;
     repo.track()?;
     let hook_binary = std::env::vars_os()
         .find(|(name, _)| name == std::ffi::OsStr::new("CARGO_BIN_EXE_xtask"))
@@ -173,12 +169,12 @@ fn installed_hooks_reject_and_accept_commits() -> Result<(), Box<dyn std::error:
             "-q",
             "--allow-empty",
             "-m",
-            "build: x\n\nCo-authored-by: Claude <noreply@example.com>\n",
+            "build: x\n\nCo-authored-by: Claude <noreply@anthropic.com>\n",
         ],
     );
     assert!(
         bad.is_err(),
-        "an attribution trailer must be rejected by the installed commit-msg hook"
+        "an AI co-author trailer must be rejected by the installed commit-msg hook"
     );
 
     let good = git(
@@ -193,7 +189,7 @@ fn installed_hooks_reject_and_accept_commits() -> Result<(), Box<dyn std::error:
     );
     assert!(
         good.is_ok(),
-        "a house commit must pass the installed hooks: {good:?}"
+        "a person's commit must pass the installed hooks: {good:?}"
     );
     Ok(())
 }
@@ -674,65 +670,132 @@ fn lint_policy_fires_and_passes() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn authorship(text: &str, author: Option<(&str, &str)>) -> Vec<String> {
+    let mut findings = Vec::new();
+    authorship::commit_message(&mut findings, text, author);
+    findings
+}
+
 #[test]
-fn identity_foreign_fails_house_passes() -> Result<(), Box<dyn std::error::Error>> {
-    let repo = Repo::new()?;
-    let digest = privacy::sha256("test user <test@example.com>");
-    repo.write(
-        "xtask/data/house-identities.json",
-        &format!("{{\"sha256\": [\"{digest}\"]}}"),
-    )?;
-    repo.track()?;
-    let mut findings = Vec::new();
-    manifests::commit_message(
-        repo.root(),
-        &mut findings,
-        "build: a house commit\n",
-        Some(("Test User", "test@example.com")),
-    )?;
-    assert!(
-        findings.is_empty(),
-        "the house identity passes: {findings:?}"
-    );
-
-    let mut findings = Vec::new();
-    manifests::commit_message(
-        repo.root(),
-        &mut findings,
-        "build: a foreign commit\n",
-        Some(("Foreign Bot", "bot@foreign.dev")),
-    )?;
-    assert!(
-        findings
-            .iter()
-            .any(|finding| finding.contains("is not a house identity")),
-        "a foreign identity fails: {findings:?}"
-    );
-
-    let mut findings = Vec::new();
-    manifests::commit_message(
-        repo.root(),
-        &mut findings,
-        "build: x\n\nCo-authored-by: Claude <noreply@anthropic.com>\n",
+fn any_person_may_author_and_be_credited() {
+    for author in [
+        ("Foreign Dev", "dev@foreign.example"),
+        ("Claude Dupont", "claude@dupont.example"),
+        ("octocat", "583231+octocat@users.noreply.github.com"),
+    ] {
+        let findings = authorship("fix: move the cursor to the row end\n", Some(author));
+        assert!(findings.is_empty(), "{author:?} passes: {findings:?}");
+    }
+    let findings = authorship(
+        "fix: move the cursor to the row end\n\nCo-authored-by: Ada Lovelace <ada@example.org>\nSigned-off-by: Ada Lovelace <ada@example.org>\n",
         None,
-    )?;
-    assert!(
-        findings
-            .iter()
-            .any(|finding| finding.contains("Co-authored-by")),
-        "an attribution trailer fails: {findings:?}"
     );
-    Ok(())
+    assert!(findings.is_empty(), "a person is credited: {findings:?}");
+    for text in [
+        "docs: explain the pages generated with mdbook\n\nThe cursor sessions table keeps its session_id column.\n",
+        "fix(capture): advance cursor after reading session_part rows\n",
+        "fix(capture): read Grok sessions\n\nSession keys are\ngrok-build:<uuid> and event ids are <session>:l<line>.\n",
+        "feat(capture): import the sessions created by Claude Code and Cursor\n",
+        "docs: follow https://docs.anthropic.com/en/api/messages for the request shape\n",
+        "feat(capture): import transcripts\n\nNormalize logs\ncreated by Claude Code and Cursor before indexing.\n",
+        "fix(capture): parse SessionStart\n\nSee https://docs.claude.com/en/docs/claude-code/hooks#sessionstart\n",
+        "fix(capture): align prefixes\n\nClaude-hook: emits tool_use.\nCursor-based: paginates by token.\n",
+        "docs: list the fixtures\n\n- Generated by Claude Code 2.1\n- Generated by Codex 0.9\n",
+        "fix: x\n\nReviewed-by: Claude Dupont <claude@dupont.example>\nCo-authored-by: Claude Dupont <claude@dupont.example>\n",
+        "test(capture): add fixture\n\nGenerated by Claude Code 2.1 during a worktree run.\n",
+        "test(capture): add fixture\n\nGenerated by Codex for tests.\n",
+        "docs: show a trailer\n\nThe hook refuses a line such as\n  Claude-Session: session_01\nin a message.\n",
+        "fix: x\n\nCo-authored-by: Gemini Clifford <gemini@clifford.example>\n",
+    ] {
+        let findings = authorship(text, None);
+        assert!(
+            findings.is_empty(),
+            "{text:?} is ordinary wording: {findings:?}"
+        );
+    }
+}
+
+#[test]
+fn ai_products_may_not_author_or_be_credited() {
+    for author in [
+        ("Claude", "noreply@anthropic.com"),
+        ("Cursor Agent", "cursoragent@cursor.com"),
+        ("Copilot", "198982749+Copilot@users.noreply.github.com"),
+        ("Claude Opus 5.5", "someone@example.org"),
+        ("Gemini 2.5 Pro", "someone@example.org"),
+        ("Claude 3.7 Sonnet", "bot@example.org"),
+        ("OpenCode Bot", "bot@example.org"),
+        ("Alice Smith (aider)", "alice@example.org"),
+        (
+            "factory-droid[bot]",
+            "138933559+factory-droid[bot]@users.noreply.github.com",
+        ),
+    ] {
+        let findings = authorship("fix: a change\n", Some(author));
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.contains("is an AI product")),
+            "{author:?} fails: {findings:?}"
+        );
+    }
+    for text in [
+        "fix: x\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n",
+        "fix: x\n\nCo-authored-by: Cursor Agent <cursoragent@cursor.com>\n",
+        "fix: x\n\nClaude-Session: https://claude.ai/code/session_01\n",
+        "fix: x\n\nGenerated with [Claude Code](https://claude.com/claude-code)\n",
+        "fix: x\n\nAmp-Thread-ID: https://ampcode.com/threads/T-1\n",
+        "fix: x\r\n\r\nCo-authored-by: Claude Opus 4.6 <noreply@anthropic.com>\r\n",
+        "fix: x\n\nMade-with: Cursor\n",
+        "fix: x\n\nGenerated by Codex\n",
+        "fix: x\n\nClaude-Session: 01abc\n",
+        "fix: x\n\nclaude-session: 01abc\n",
+        "fix: x\n\nClaude-Session:\t01abc\n",
+        "fix: x\n\nMade-with: cursor\n",
+        "fix: x\n\nGenerated with https://claude.ai/code\n",
+        "fix: x\n\nAssisted-by: Claude Code\n",
+        "fix: x\n\nSigned-off-by: Claude <noreply@anthropic.com>\n",
+        "fix: x\n\nCo-Authored-By: Warp <agent@warp.dev>\n",
+        "fix: x\n\nCo-authored-by: openhands <openhands@all-hands.dev>\n",
+        "fix: x\n\nGenerated with [Claude Code](https://claude.com/claude-code)\n\nSigned-off-by: Ada Lovelace <ada@example.org>\n",
+        "fix: x\n\nGenerated with [Claude](https://claude.ai/code)\n",
+        "fix: x\n\nGenerated with [Amp](https://ampcode.com/threads/T-1)\n",
+        "fix: x\n\nMade-with: https://cursor.com\n",
+        "fix: x\n\nAssisted-by: https://app.devin.ai/sessions/1\n",
+        "fix: x\n\nCo-authored-by: noreply@anthropic.com\n",
+        "fix: x\n\nCo-authored-by: Claude <noreply@anthropic.com> (AI)\n",
+        "fix: x\n\nMade-with: Cursor 0.50\n",
+        "fix: x\n\nGenerated with Cursor.\n",
+        "fix: x\n\nGenerated by Claude Code 2.1\n",
+        "fix: x\n\nMade-with: https://cursor.com?ref=1\n",
+        "fix: x\n\nCo-authored-by: Claude 10 <bot@example.org>\n",
+    ] {
+        let findings = authorship(text, None);
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.starts_with("AUTHORSHIP ")),
+            "{text:?} fails: {findings:?}"
+        );
+    }
+}
+
+#[test]
+fn the_hook_reads_the_message_without_git_comments_or_the_verbose_diff() {
+    let raw = "fix: x\n\nGenerated with [Claude Code](https://claude.com/claude-code)\n\n# Please enter the commit message for your changes.\n# ------------------------ >8 ------------------------\ndiff --git a/t b/t\n+Co-authored-by: Claude <noreply@anthropic.com>\n";
+    let message = authorship::edited_message(raw);
+    assert!(!message.contains("diff --git"), "{message}");
+    let findings = authorship(&message, None);
+    assert_eq!(findings.len(), 1, "only the footer is credit: {findings:?}");
+    let diff_only = authorship::edited_message(
+        "fix: x\n# ------------------------ >8 ------------------------\nCo-authored-by: Claude <noreply@anthropic.com>\n",
+    );
+    assert_eq!(authorship(&diff_only, None), Vec::<String>::new());
 }
 
 #[test]
 fn commits_mode_reports_range() -> Result<(), Box<dyn std::error::Error>> {
     let repo = Repo::new()?;
-    let digest = privacy::sha256("test user <test@example.com>");
-    repo.write(
-        "xtask/data/house-identities.json",
-        &format!("{{\"sha256\": [\"{digest}\"]}}"),
-    )?;
     repo.track()?;
     let output = std::process::Command::new("git")
         .current_dir(repo.root())
@@ -758,9 +821,37 @@ fn commits_mode_reports_range() -> Result<(), Box<dyn std::error::Error>> {
         String::from_utf8_lossy(&output.stderr)
     );
     let mut findings = Vec::new();
-    let count = manifests::commits(repo.root(), "HEAD", &mut findings)?;
+    let count = authorship::commits(repo.root(), "HEAD", &mut findings)?;
     assert_eq!(count, 1);
-    assert!(findings.is_empty(), "house commits pass: {findings:?}");
+    assert!(findings.is_empty(), "a person's commits pass: {findings:?}");
+
+    let output = std::process::Command::new("git")
+        .current_dir(repo.root())
+        .args([
+            "-c",
+            "user.name=Test User",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "feat: committed by a tool",
+        ])
+        .env_remove("GIT_AUTHOR_NAME")
+        .env_remove("GIT_AUTHOR_EMAIL")
+        .env("GIT_COMMITTER_NAME", "Test User (aider)")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+        .output()?;
+    assert!(output.status.success());
+    let mut findings = Vec::new();
+    authorship::commits(repo.root(), "HEAD~1..HEAD", &mut findings)?;
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.contains("Test User (aider)")),
+        "an AI committer fails: {findings:?}"
+    );
     Ok(())
 }
 

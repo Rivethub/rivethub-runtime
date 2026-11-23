@@ -73,7 +73,10 @@ async fn memory_rejects_unknown_options_and_incomplete_flags() {
     let missing = run(&["memory", "queue-status"], &environment).await;
     failure(&missing, "This command needs a datahub (Postgres).");
     let unknown = run(&["memory", "queue-status", "--sqlite", "db"], &environment).await;
-    failure(&unknown, "Unknown option: --sqlite");
+    failure(
+        &unknown,
+        "the memory file at db is not initialised — run rh db migrate --path db",
+    );
     let retry = run(&["memory", "retry-failed"], &environment).await;
     failure(
         &retry,
@@ -130,11 +133,15 @@ async fn memory_rejects_unknown_options_and_incomplete_flags() {
 }
 
 #[tokio::test]
-async fn sqlite_config_does_not_satisfy_a_queue_command() {
+async fn sqlite_config_opens_the_configured_file_for_queue_status() {
     let (home, environment) = env(&[]);
-    support::config(&home, "memory:\n  sqlite:\n    path: /tmp/memory.sqlite\n");
+    let database = home.path().join("missing.sqlite");
+    support::config(
+        &home,
+        &format!("memory:\n  sqlite:\n    path: {}\n", database.display()),
+    );
     let report = run(&["memory", "queue-status"], &environment).await;
-    failure(&report, "This command needs a datahub (Postgres).");
+    failure(&report, &unready(&database));
     assert!(
         !report.stderr.contains("RIVETHUB_PG_URL"),
         "{}",
@@ -153,9 +160,14 @@ async fn a_sqlite_node_keeps_postgres_commands_off_a_stray_database_url() {
             database.display()
         ),
     );
-    for command in ["queue-status", "consolidate-wiki", "backfill-tool-synth"] {
+    for command in [
+        "queue-status",
+        "consolidate-wiki",
+        "pause",
+        "backfill-tool-synth",
+    ] {
         let report = run(&["memory", command], &environment).await;
-        failure(&report, "This command needs a datahub (Postgres).");
+        failure(&report, &unready(&database));
         assert!(
             !report.stderr.contains("RIVETHUB_PG_URL"),
             "{command}: {}",
@@ -248,6 +260,200 @@ async fn sqlite_reembed_clears_imported_vectors_and_requeues_every_row() {
     );
 }
 
+#[tokio::test]
+async fn sqlite_tool_synth_enqueues_each_empty_assistant_once() {
+    let directory = tempfile::tempdir().expect("directory");
+    let database = migrated(directory.path());
+    let path = database.to_string_lossy().to_string();
+    let message = seed_sqlite_tool(&database);
+    let (_home, environment) = env(&[]);
+    let first = run(
+        &["memory", "backfill-tool-synth", "--sqlite", &path],
+        &environment,
+    )
+    .await;
+    assert_eq!(first.exit, Exit::Ok, "{}", first.stderr);
+    assert_eq!(first.stdout, "enqueued 1 synthesize-tool-call job(s)\n");
+    assert_eq!(
+        scalar(
+            &database,
+            &format!("SELECT count(*) FROM ros_jobs WHERE job_key = 'tool-synth-{message}'")
+        ),
+        1
+    );
+    let second = run(
+        &["memory", "backfill-tool-synth", "--sqlite", &path, "--json"],
+        &environment,
+    )
+    .await;
+    assert_eq!(second.stdout, "{\"enqueued\":0,\"dry_run\":false}\n");
+}
+
+fn seed_sqlite_tool(path: &Path) -> Uuid {
+    let message = Uuid::new_v4();
+    let conversation = Uuid::new_v4();
+    let connection = rusqlite::Connection::open(path).expect("sqlite");
+    connection
+        .execute(
+            "INSERT INTO ros_conversations \
+                (id, session_key, agent, channel, settings, active, created_at, updated_at) \
+             VALUES (?1, 'cli:synth', 'rivet', 'cli', '{}', 1, ?2, ?2)",
+            rusqlite::params![conversation.to_string(), "2026-06-01T00:00:00Z"],
+        )
+        .expect("conversation");
+    connection
+        .execute(
+            "INSERT INTO ros_messages \
+                (id, conversation_id, agent, channel, role, content, tool_name, metadata, created_at) \
+             VALUES (?1, ?2, 'rivet', 'cli', 'assistant', '   ', 'Bash', '{}', ?3)",
+            rusqlite::params![
+                message.to_string(),
+                conversation.to_string(),
+                "2026-06-01T00:00:00Z"
+            ],
+        )
+        .expect("blank");
+    connection
+        .execute(
+            "INSERT INTO ros_messages \
+                (id, conversation_id, agent, channel, role, content, tool_name, metadata, created_at) \
+             VALUES (?1, ?2, 'rivet', 'cli', 'assistant', 'hello', 'Bash', '{}', ?3)",
+            rusqlite::params![
+                Uuid::new_v4().to_string(),
+                conversation.to_string(),
+                "2026-06-01T00:00:01Z"
+            ],
+        )
+        .expect("filled");
+    message
+}
+
+const EMPTY_QUEUE: &str = "\
+extract-wiki pending=0 running=0 scheduled=0 dead=0 recent_dead=0
+compact-conversation pending=0 running=0 scheduled=0 dead=0 recent_dead=0
+embed-target pending=0 running=0 scheduled=0 dead=0 recent_dead=0
+synthesize-tool-call pending=0 running=0 scheduled=0 dead=0 recent_dead=0
+file-conversation pending=0 running=0 scheduled=0 dead=0 recent_dead=0
+";
+
+#[tokio::test]
+async fn sqlite_queue_commands_use_the_postgres_text() {
+    let directory = tempfile::tempdir().expect("directory");
+    let database = migrated(directory.path());
+    let path = database.to_string_lossy().to_string();
+    let (_home, environment) = env(&[]);
+    let status = run(&["memory", "queue-status", "--sqlite", &path], &environment).await;
+    assert_eq!(status.exit, Exit::Ok, "{}", status.stderr);
+    assert_eq!(status.stdout, EMPTY_QUEUE);
+    dead_sqlite(
+        &database,
+        "wiki-open",
+        "wiki failed",
+        "2026-11-22T00:00:00.000Z",
+    );
+    dead_sqlite(&database, "old-open", "stale", "2020-01-01T00:00:00.000Z");
+    let reset = run(
+        &[
+            "memory",
+            "retry-failed",
+            "--task",
+            "extract-wiki",
+            "--error",
+            "wiki",
+            "--sqlite",
+            &path,
+        ],
+        &environment,
+    )
+    .await;
+    assert_eq!(reset.stdout, "reset 1 dead job(s)\n", "{}", reset.stderr);
+    let revived = run(
+        &[
+            "memory",
+            "requeue",
+            "--task",
+            "extract-wiki",
+            "--sqlite",
+            &path,
+        ],
+        &environment,
+    )
+    .await;
+    assert_eq!(
+        revived.stdout, "requeued 1 dead job(s)\n",
+        "{}",
+        revived.stderr
+    );
+    let folded = run(
+        &["memory", "consolidate-wiki", "--dry-run", "--sqlite", &path],
+        &environment,
+    )
+    .await;
+    assert_eq!(
+        folded.stdout,
+        "0 fold(s) planned, 0 page(s) would be merged (dry run)\n"
+    );
+}
+
+#[tokio::test]
+async fn an_explicit_sqlite_file_overrides_configured_postgres() {
+    let (home, environment) = env(&[("RIVETHUB_PG_URL", "postgres://127.0.0.1:1/stray")]);
+    support::config(
+        &home,
+        "memory:\n  backend: postgres\n  postgres:\n    connection_string: postgres://127.0.0.1:1/closed\n",
+    );
+    let database = migrated(home.path());
+    let path = database.to_string_lossy().to_string();
+    let report = run(&["memory", "queue-status", "--sqlite", &path], &environment).await;
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+}
+
+#[tokio::test]
+async fn a_pending_pglite_import_uses_the_state_file() {
+    let (home, environment) = env(&[("RIVETHUB_PG_URL", "postgres://127.0.0.1:1/stray")]);
+    support::config(&home, "memory:\n  postgres:\n    embedded: {}\n");
+    let report = run(
+        &["memory", "requeue", "--task", "extract-wiki"],
+        &environment,
+    )
+    .await;
+    failure(
+        &report,
+        &unready(&home.path().join(".rivethub").join("memory.sqlite")),
+    );
+}
+
+#[tokio::test]
+async fn sqlite_pause_uses_the_file() {
+    let directory = tempfile::tempdir().expect("directory");
+    let database = migrated(directory.path());
+    let path = database.to_string_lossy().to_string();
+    let (_home, environment) = env(&[]);
+    let paused = run(
+        &["memory", "pause", "wiki-builder", "--sqlite", &path],
+        &environment,
+    )
+    .await;
+    assert_eq!(paused.exit, Exit::Ok, "{}", paused.stderr);
+    assert!(paused.stdout.contains("categorizer running, 0 queued\n"));
+    assert!(paused.stdout.contains("wiki-builder paused since "));
+    assert!(paused.stdout.contains(" by cli, 0 queued\n"));
+    assert!(paused.stdout.contains("entity-builder running, 0 queued\n"));
+}
+
+fn dead_sqlite(path: &Path, key: &str, error: &str, at: &str) {
+    let connection = rusqlite::Connection::open(path).expect("sqlite");
+    connection
+        .execute(
+            "INSERT INTO ros_jobs (
+                id, task, job_key, payload, run_at, attempts, max_attempts, state,
+                last_error, created_at, updated_at
+             ) VALUES (?1, 'extract-wiki', ?2, '{}', ?3, 2, 2, 'dead', ?4, ?3, ?3)",
+            (Uuid::new_v4().to_string(), key, at, error),
+        )
+        .expect("dead job");
+}
+
 fn vectors(path: &Path) -> i64 {
     scalar(
         path,
@@ -261,6 +467,14 @@ fn recording() -> String {
     testkit::recording("memory-sqlite/import/copy-cases.txt")
         .display()
         .to_string()
+}
+
+fn unready(path: &Path) -> String {
+    format!(
+        "the memory file at {} is not initialised — run rh db migrate --path {}",
+        path.display(),
+        path.display()
+    )
 }
 
 fn migrated(directory: &Path) -> PathBuf {
@@ -845,17 +1059,31 @@ async fn queue_commands_fail_when_graphile_is_absent(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn env_url_beats_config_and_the_legacy_name_warns_once(pool: PgPool) {
+async fn an_environment_url_beats_the_configured_url_and_the_legacy_name_warns_once(pool: PgPool) {
     install_graphile(&pool).await;
     let url = url_of(&pool);
-    let (home, environment) = env(&[("RIVETHUB_PG_URL", &url)]);
+    let (home, environment) = env(&[("RIVETHUB_PG_URL", "postgres://127.0.0.1:1/stray")]);
     support::config(
         &home,
-        "memory:\n  postgres:\n    connection_string: postgres://127.0.0.1:1/closed\n",
+        &format!("memory:\n  postgres:\n    connection_string: \"{url}\"\n"),
     );
     let preferred = run(&["memory", "queue-status"], &environment).await;
-    assert_eq!(preferred.exit, Exit::Ok, "{}", preferred.stderr);
-    assert_eq!(preferred.stderr, "");
+    assert_eq!(preferred.exit, Exit::Failure, "{}", preferred.stdout);
+    assert!(
+        preferred
+            .stderr
+            .contains("connection to the memory database failed"),
+        "{}",
+        preferred.stderr
+    );
+    let (closed_home, closed) = env(&[("RIVETHUB_PG_URL", &url)]);
+    support::config(
+        &closed_home,
+        "memory:\n  postgres:\n    connection_string: postgres://127.0.0.1:1/closed\n",
+    );
+    let opened = run(&["memory", "queue-status"], &closed).await;
+    assert_eq!(opened.exit, Exit::Ok, "{}", opened.stderr);
+    assert_eq!(opened.stderr, "");
     let (legacy_home, legacy) = env(&[("RIVETOS_PG_URL", &url)]);
     let warned = run(&["memory", "queue-status"], &legacy).await;
     assert_eq!(warned.exit, Exit::Ok, "{}", warned.stderr);
@@ -1360,4 +1588,50 @@ async fn conversion_status_counts_debits_without_provider_usage_on_both_stores(
     }
     assert_eq!(totals, [(140, 40, 5); 2]);
     Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn pause_and_resume_a_builder_from_the_command_line(pool: PgPool) {
+    install_graphile(&pool).await;
+    let (_home, environment) = env(&[("RIVETHUB_PG_URL", &url_of(&pool))]);
+    let paused = run(&["memory", "pause", "entity-builder"], &environment).await;
+    assert_eq!(paused.exit, Exit::Ok, "{}", paused.stderr);
+    let lines: Vec<&str> = paused.stdout.lines().collect();
+    let [categorizer, wiki, entity] = lines.as_slice() else {
+        panic!("one line per pausable role: {}", paused.stdout);
+    };
+    assert_eq!(*categorizer, "categorizer running, 0 queued");
+    assert_eq!(*wiki, "wiki-builder running, 0 queued");
+    assert!(
+        entity.starts_with("entity-builder paused since ") && entity.ends_with(" by cli, 0 queued"),
+        "{entity}"
+    );
+    let again = run(&["memory", "pause", "entity-builder"], &environment).await;
+    assert_eq!(again.stdout, paused.stdout);
+    let status = run(&["memory", "pause", "--json"], &environment).await;
+    let listed: wire::gateway::worker_pauses::WorkerPauses =
+        serde_json::from_str(&status.stdout).expect("status json");
+    assert_eq!(
+        listed.roles.iter().filter(|role| role.paused).count(),
+        1,
+        "{}",
+        status.stdout
+    );
+
+    let resumed = run(&["memory", "resume", "entity-builder"], &environment).await;
+    assert_eq!(resumed.exit, Exit::Ok, "{}", resumed.stderr);
+    assert!(
+        resumed
+            .stdout
+            .ends_with("entity-builder running, 0 queued\n")
+    );
+
+    failure(
+        &run(&["memory", "pause", "summarizer"], &environment).await,
+        "summarizer cannot be paused; the pausable roles are categorizer, wiki-builder, entity-builder",
+    );
+    failure(
+        &run(&["memory", "resume"], &environment).await,
+        "usage: rh memory pause [<role>] [--json] | rh memory resume <role> [--json]; roles: categorizer, wiki-builder, entity-builder",
+    );
 }

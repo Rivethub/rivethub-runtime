@@ -19,6 +19,7 @@ pub(in crate::entity_builder) use report::record_redirected;
 pub(in crate::entity_builder) use report::record_verified_ref;
 #[cfg(test)]
 pub(in crate::entity_builder) use run::AcceptedRewrite;
+pub use run::RewriteLimit;
 pub(in crate::entity_builder) use run::StoredPage;
 pub(in crate::entity_builder) use run::TouchedEntity;
 #[cfg(test)]

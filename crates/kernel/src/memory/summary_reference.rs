@@ -9,7 +9,8 @@ pub enum SummaryReferenceError {
     Stale(Uuid),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumString)]
+#[strum(serialize_all = "lowercase")]
 pub enum SummaryConsumer {
     Wiki,
     Entity,

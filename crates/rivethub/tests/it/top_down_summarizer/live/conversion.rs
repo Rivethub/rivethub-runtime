@@ -1138,4 +1138,255 @@ async fn top_down_conversion_inventory_postgres(pool: sqlx::PgPool) -> TestResul
         .await
 }
 
+async fn historical_parts(
+    store: &(impl SummaryStore + MemoryStore),
+    session: &str,
+    make_historical: impl AsyncFnOnce(Uuid) -> TestResult,
+) -> TestResult<Uuid> {
+    let base = Timestamp::now() - wire::time::elapsed_days(3);
+    let rows = (1..=8)
+        .map(|index| {
+            (
+                format!("Deposit {index} {}", "chestnut ".repeat(1_750)),
+                base + jiff::SignedDuration::from_mins(index),
+            )
+        })
+        .collect();
+    let id = capture(store, session, rows).await?;
+    make_historical(id).await?;
+    let capability = store.summary_conversion().ok_or("conversion support")?;
+    capability
+        .control(ConversionControl::Start {
+            rate: Some(10_000_000),
+            include_giants: false,
+        })
+        .await?;
+    Ok(id)
+}
+
+fn part_calls(calls: &[script::Captured]) -> usize {
+    calls
+        .iter()
+        .filter(|call| call.kind == "TOP_DOWN_PART")
+        .count()
+}
+
+async fn parallel_parts(
+    store: &(impl SummaryStore + MemoryStore),
+    make_historical: impl AsyncFnOnce(Uuid) -> TestResult,
+) -> TestResult {
+    let id = historical_parts(store, "codex:parallel-parts", make_historical).await?;
+    let provider = Provider {
+        script: Scripted {
+            part_pause: Some(Arc::new(Barrier::new(3))),
+            ..Scripted::live()
+        },
+        chat_gate: false.into(),
+        ..Provider::new()
+    };
+    let permits = Semaphore::new(4);
+    let settings = config::Environment::from_vars([
+        ("RIVETHUB_SUMMARY_MODEL_CONCURRENCY", "4"),
+        ("RIVETHUB_SUMMARY_CONVERSION_PARALLELISM", "3"),
+    ]);
+    tick_with(store, &provider, &permits, &settings).await?;
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        tick_with(store, &provider, &permits, &settings),
+    )
+    .await
+    .map_err(|_| "three parts never ran at once")??;
+    let capability = store.summary_conversion().ok_or("conversion support")?;
+    assert_eq!(capability.status().await?.complete, 1);
+    assert_eq!(provider.script.peak.load(SeqCst), 3);
+    assert_eq!(part_calls(&provider.script.calls.lock().await), 4);
+    assert_eq!(
+        store.live_input(id).await?.ok_or("converted")?.parts.len(),
+        4
+    );
+    assert_eq!(permits.available_permits(), 4);
+    Ok(())
+}
+
+async fn yield_keeps_sibling(
+    store: &(impl SummaryStore + MemoryStore),
+    make_historical: impl AsyncFnOnce(Uuid) -> TestResult,
+) -> TestResult {
+    historical_parts(store, "codex:yielding-parts", make_historical).await?;
+    let provider = Provider::new();
+    let permits = Semaphore::new(3);
+    let settings =
+        config::Environment::from_vars([("RIVETHUB_SUMMARY_CONVERSION_PARALLELISM", "2")]);
+    tick_with(store, &provider, &permits, &settings).await?;
+    let live = permits.acquire().await?;
+    let release_after_sibling_yields = async {
+        provider.entered.notified().await;
+        #[cfg_attr(
+            dylint_lib = "rr_lints",
+            expect(
+                sleep,
+                reason = "a sibling refused a model slot leaves nothing to wait on"
+            )
+        )]
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        provider.proceed.notify_one();
+    };
+    let (result, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(
+            tick_with(store, &provider, &permits, &settings),
+            release_after_sibling_yields
+        )
+    })
+    .await?;
+    result?;
+    let capability = store.summary_conversion().ok_or("conversion support")?;
+    assert_eq!(
+        capability.status().await?.complete,
+        0,
+        "the session yielded"
+    );
+    assert_eq!(
+        part_calls(&provider.script.calls.lock().await),
+        1,
+        "no part launched after the sibling yielded"
+    );
+    drop(live);
+    tick_with(store, &provider, &permits, &settings).await?;
+    assert_eq!(capability.status().await?.complete, 1);
+    assert_eq!(
+        part_calls(&provider.script.calls.lock().await),
+        4,
+        "the in-flight part finished and its checkpoint was reused"
+    );
+    Ok(())
+}
+
+fn sqlite_parts_store(
+    dir: &tempfile::TempDir,
+) -> TestResult<(std::path::PathBuf, memory_sqlite::SqliteStore)> {
+    let path = dir.path().join("s.sqlite");
+    migrate::sqlite(&path)?;
+    let store = memory_sqlite::SqliteStore::open(&path)?.with_summary_index_key([7; 32]);
+    Ok((path, store))
+}
+
+fn sqlite_historical(path: &std::path::Path, id: Uuid) -> TestResult {
+    let conn = rusqlite::Connection::open(path)?;
+    for table in ["rh_summary_capture_clock", "rh_summary_state"] {
+        conn.execute(
+            &format!("DELETE FROM {table} WHERE conversation_id = ?1"),
+            [id.to_string()],
+        )?;
+    }
+    Ok(())
+}
+
+async fn postgres_parts_store(pool: &sqlx::PgPool) -> TestResult<memory_postgres::PostgresMemory> {
+    let scoped = memory_postgres::scoped(sqlx::postgres::PgPoolOptions::new())
+        .connect_with(pool.connect_options().as_ref().clone())
+        .await?;
+    Ok(memory_postgres::PostgresMemory::new(scoped).with_summary_index_key([7; 32]))
+}
+
+async fn postgres_historical(pool: &sqlx::PgPool, id: Uuid) -> TestResult {
+    sqlx::query("UPDATE rh_conversations SET last_summary_input_at = NULL WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM rh_summary_state WHERE conversation_id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn conversion_parts_run_in_parallel_sqlite() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let (path, store) = sqlite_parts_store(&dir)?;
+    parallel_parts(&store, async |id| sqlite_historical(&path, id)).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn conversion_parts_run_in_parallel_postgres(pool: sqlx::PgPool) -> TestResult {
+    let store = postgres_parts_store(&pool).await?;
+    Scope::Maintenance
+        .run(parallel_parts(&store, async |id| {
+            postgres_historical(&pool, id).await
+        }))
+        .await
+}
+
+#[tokio::test]
+async fn conversion_yield_keeps_in_flight_part_sqlite() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let (path, store) = sqlite_parts_store(&dir)?;
+    yield_keeps_sibling(&store, async |id| sqlite_historical(&path, id)).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn conversion_yield_keeps_in_flight_part_postgres(pool: sqlx::PgPool) -> TestResult {
+    let store = postgres_parts_store(&pool).await?;
+    Scope::Maintenance
+        .run(yield_keeps_sibling(&store, async |id| {
+            postgres_historical(&pool, id).await
+        }))
+        .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn conversion_owns_only_the_top_model_slots_postgres(pool: sqlx::PgPool) -> TestResult {
+    let store = postgres_parts_store(&pool).await?;
+    let capability = store.summary_conversion().ok_or("conversion support")?;
+    let _top = capability.try_model_slot(3, 2).await?.ok_or("top slot")?;
+    let _next = capability
+        .try_model_slot(3, 2)
+        .await?
+        .ok_or("second slot")?;
+    assert!(
+        capability.try_model_slot(3, 2).await?.is_none(),
+        "conversion never takes the bottom slot"
+    );
+    let _live = store
+        .try_summary_permit(3)
+        .await?
+        .ok_or("live keeps the bottom slot")?;
+    assert!(store.try_summary_permit(3).await?.is_none());
+    assert!(capability.try_model_slot(3, 3).await?.is_none());
+    assert!(capability.try_model_slot(3, 0).await?.is_none());
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn concurrent_admissions_share_one_bucket_postgres(pool: sqlx::PgPool) -> TestResult {
+    let store = postgres_parts_store(&pool).await?;
+    Scope::Maintenance
+        .run(async {
+            let (id, _) = legacy(&store).await?;
+            postgres_historical(&pool, id).await?;
+            let capability = store.summary_conversion().ok_or("conversion support")?;
+            capability
+                .control(ConversionControl::Start {
+                    rate: Some(10_000),
+                    include_giants: false,
+                })
+                .await?;
+            assert!(capability.claim(QUIET).await?.is_none());
+            let lease = capability.claim(QUIET).await?.ok_or("lease")?;
+            let charge = ConversionCharge {
+                estimate: 1_000,
+                capacity: 10_000,
+            };
+            let admitted =
+                futures::future::join_all((0..16).map(|_| capability.admit(lease, Some(charge))))
+                    .await
+                    .into_iter()
+                    .collect::<Result<Vec<_>, _>>()?;
+            assert_eq!(admitted.iter().filter(|&&ok| ok).count(), 10);
+            assert_eq!(capability.status().await?.charged_tokens, 10_000);
+            Ok(())
+        })
+        .await
+}
+
 mod openings;

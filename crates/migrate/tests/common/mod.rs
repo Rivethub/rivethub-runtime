@@ -60,7 +60,7 @@ pub(crate) fn read_pragmas(conn: &Connection) -> TestResult<Pragmas> {
 
 pub(crate) fn read_legacy_master_entries(conn: &Connection) -> TestResult<Vec<MasterEntry>> {
     let mut statement =
-        conn.prepare("SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT GLOB 'rh_*' AND tbl_name NOT GLOB 'rh_*' AND tbl_name <> 'ros_summary_deliveries' ORDER BY rowid")?;
+        conn.prepare("SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT GLOB 'rh_*' AND tbl_name NOT GLOB 'rh_*' AND tbl_name <> 'ros_summary_deliveries'          AND name NOT GLOB 'ros_summary_passages*' AND tbl_name NOT GLOB 'ros_summary_passages*'          AND name <> 'ros_summary_records_indexed' AND name <> 'sqlite_sequence' ORDER BY rowid")?;
     let mut rows = statement.query([])?;
     let mut out = Vec::new();
     while let Some(row) = rows.next()? {
@@ -78,6 +78,19 @@ pub(crate) fn read_legacy_master_entries(conn: &Connection) -> TestResult<Vec<Ma
                 && let Some(end) = sql.rfind(')')
             {
                 sql.replace_range(start..end, "");
+            }
+            if name == "ros_wiki_topics"
+                && let Some(start) = sql
+                    .find(", visibility TEXT")
+                    .or_else(|| sql.find(", history TEXT"))
+                && let Some(end) = sql.rfind(')')
+            {
+                sql.replace_range(start..end, "");
+            }
+            if matches!(name.as_str(), "ros_tag_taxonomy" | "ros_wiki_redirects") {
+                *sql = sql
+                    .replace(", owner_user_id TEXT", "")
+                    .replace(", globally_shared INTEGER CHECK (globally_shared = 1)", "");
             }
             if name == "ros_summary_sources" {
                 *sql = sql.replace(", render_key BLOB CHECK (length(render_key) = 32)", "");
@@ -138,6 +151,12 @@ fn legacy_column(table: &str, column: &str) -> bool {
         (table, column),
         ("ros_summary_sources", "render_key")
             | ("ros_conversations", "title_from_capture")
+            | (
+                "ros_wiki_topics",
+                "visibility" | "scope" | "local_slug" | "history"
+            )
+            | ("ros_tag_taxonomy", "owner_user_id" | "globally_shared")
+            | ("ros_wiki_redirects", "owner_user_id")
             | (
                 "ros_summaries",
                 "summary_ordinal"

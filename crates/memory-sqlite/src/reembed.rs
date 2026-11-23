@@ -67,6 +67,16 @@ fn reset(conn: &Connection, now: Timestamp) -> Result<ReembedReport, SqliteError
             }
         }
     }
+    let cleared = conn
+        .execute(
+            "UPDATE ros_summary_passages SET embedding = NULL WHERE embedding IS NOT NULL",
+            [],
+        )
+        .map_err(SqliteError::query("reembed summary passages"))?;
+    report.cleared += u64::try_from(cleared).map_err(SqliteError::Count)?;
+    let chunks = reset_chunks(conn, now)?;
+    report.cleared += chunks.cleared;
+    report.queued += chunks.queued;
     let mut owners = conn
         .prepare("SELECT id FROM ros_summaries WHERE kind IN ('session', 'part')")
         .map_err(SqliteError::query("reembed session records"))?;
@@ -87,6 +97,52 @@ fn reset(conn: &Connection, now: Timestamp) -> Result<ReembedReport, SqliteError
     meta::forget(conn, MetaKey::EmbedModel)?;
     meta::forget(conn, MetaKey::EmbedDims)?;
     Ok(report)
+}
+
+fn reset_chunks(conn: &Connection, now: Timestamp) -> Result<ReembedReport, SqliteError> {
+    let cleared = clear_chunks(conn)?;
+    let mut queued = 0;
+    for id in chunk_ids(conn)? {
+        if enqueue_embed(conn, &EmbedTable::MessageChunks.to_string(), &id, now)? {
+            queued += 1;
+        }
+    }
+    Ok(ReembedReport { cleared, queued })
+}
+
+fn clear_chunks(conn: &Connection) -> Result<u64, SqliteError> {
+    let held: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM rh_message_chunks WHERE embedding IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(SqliteError::query("reembed chunk count"))?;
+    conn.execute(
+        "UPDATE rh_message_chunks SET embedding = NULL, \
+         embed_status = CASE WHEN embed_status = 'unembeddable' THEN embed_status ELSE NULL END, \
+         embed_error = CASE WHEN embed_status = 'unembeddable' THEN embed_error ELSE NULL END, \
+         embed_failures = CASE WHEN embed_status = 'unembeddable' THEN embed_failures ELSE 0 END \
+         WHERE embedding IS NOT NULL",
+        [],
+    )
+    .map_err(SqliteError::query("reembed chunks"))?;
+    u64::try_from(held).map_err(SqliteError::Count)
+}
+
+fn chunk_ids(conn: &Connection) -> Result<Vec<String>, SqliteError> {
+    let mut statement = conn
+        .prepare(
+            "SELECT id FROM rh_message_chunks \
+              WHERE embed_status IS NOT 'unembeddable' AND length(trim(content)) > 0 \
+              ORDER BY rowid",
+        )
+        .map_err(SqliteError::query("reembed chunk targets"))?;
+    statement
+        .query_map([], |row| row.get(0))
+        .map_err(SqliteError::query("reembed chunk targets"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(SqliteError::query("reembed chunk targets"))
 }
 
 fn clear(conn: &Connection, table: EmbedTable) -> Result<u64, SqliteError> {

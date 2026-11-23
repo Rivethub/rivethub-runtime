@@ -52,7 +52,23 @@ impl SqliteStore {
         slug: &WikiSlug,
     ) -> Result<WikiLookup, MemoryStoreError> {
         let slug = slug.as_ref().to_owned();
-        self.with_conn(move |conn| page(conn, &slug))
+        let directory = self.wiki_directory().map(std::path::Path::to_path_buf);
+        self.with_conn(move |conn| page(conn, &slug, directory.as_deref()))
+            .await
+            .map_err(MemoryStoreError::from)
+    }
+
+    pub(crate) async fn read_wiki_archive(
+        &self,
+        slug: &str,
+        month: Option<&str>,
+    ) -> Result<Option<String>, MemoryStoreError> {
+        let Some(directory) = self.wiki_directory().map(std::path::Path::to_path_buf) else {
+            return Ok(None);
+        };
+        let slug = slug.to_owned();
+        let month = month.map(str::to_owned);
+        crate::wiki_archive::read(&directory, &slug, month.as_deref())
             .await
             .map_err(MemoryStoreError::from)
     }
@@ -133,85 +149,202 @@ fn topic_filter(filter: &WikiFilter) -> (String, Vec<Value>) {
     (sql, params)
 }
 
-fn page(conn: &Connection, slug: &str) -> Result<WikiLookup, SqliteError> {
-    let found = conn
-        .query_row(
-            "SELECT slug, title, aliases, tags, entities, current_state, article, related, \
-                    git_sha, last_verified_at, updated_at, \
-                    (SELECT topic_id FROM rh_topic_pages WHERE page_slug = ros_wiki_topics.slug), \
-                    (SELECT sections FROM rh_topic_pages WHERE page_slug = ros_wiki_topics.slug) \
-               FROM ros_wiki_topics WHERE slug = ?1",
-            params_from_iter([Value::Text(slug.to_owned())]),
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, String>(5)?,
-                    row.get::<_, String>(6)?,
-                    row.get::<_, String>(7)?,
-                    row.get::<_, Option<String>>(8)?,
-                    row.get::<_, Option<String>>(9)?,
-                    row.get::<_, String>(10)?,
-                    row.get::<_, Option<String>>(11)?,
-                    row.get::<_, Option<String>>(12)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(SqliteError::query("wiki page"))?;
-    let Some((
-        slug,
-        title,
-        aliases,
-        tags,
-        entities,
-        state,
-        article,
-        related,
-        git_sha,
-        verified,
-        updated,
-        topic_id,
-        sections,
-    )) = found
-    else {
+struct TopicRow {
+    slug: String,
+    title: String,
+    aliases: String,
+    tags: String,
+    entities: String,
+    state: String,
+    article: String,
+    related: String,
+    git_sha: Option<String>,
+    verified: Option<String>,
+    updated: String,
+    topic_id: Option<String>,
+    sections: Option<String>,
+}
+
+fn page(
+    conn: &Connection,
+    slug: &str,
+    directory: Option<&std::path::Path>,
+) -> Result<WikiLookup, SqliteError> {
+    let Some(stored) = stored_topic(conn, slug)? else {
         return redirect(conn, slug);
     };
-    let article_text = if article.is_empty() {
-        None
-    } else {
-        Some(article)
-    };
-    let sections = sections_markdown(sections.as_deref())?;
-    let markdown = match &article_text {
-        None => format!("# {title}\n\n{state}\n{sections}"),
-        Some(body) => format!("# {title}\n\n{state}\n\n{body}\n{sections}"),
-    };
+    let citations = crate::wiki_citations::citations(conn, &stored.slug)?;
+    let sources = sources(conn, &stored.slug)?;
+    let markdown = rendered_markdown(conn, directory, &stored, &citations, &sources)?;
+    let article = (!stored.article.is_empty()).then_some(stored.article);
     Ok(WikiLookup::Page(Box::new(WikiPageResponse {
-        slug: slug.clone(),
-        title,
-        aliases: json_list(&aliases, "aliases")?,
-        tags: json_list(&tags, "tags")?,
-        entities: json_list(&entities, "entities")?,
-        current_state: state,
-        article: article_text,
+        slug: stored.slug,
+        title: stored.title,
+        aliases: json_list(&stored.aliases, "aliases")?,
+        tags: json_list(&stored.tags, "tags")?,
+        entities: json_list(&stored.entities, "entities")?,
+        current_state: stored.state,
+        article,
         see_also: None,
         history: Vec::new(),
-        citations: crate::wiki_citations::citations(conn, &slug)?,
+        citations,
         markdown,
-        sources: sources(conn, &slug)?,
-        git_sha,
-        last_verified: verified
+        sources,
+        git_sha: stored.git_sha,
+        last_verified: stored
+            .verified
             .as_deref()
             .map(|text| time::stored(text, "last_verified_at"))
             .transpose()?,
-        updated_at: time::stored(&updated, "updated_at")?,
-        related: Some(json_list(&related, "related")?),
-        topic_id,
+        updated_at: time::stored(&stored.updated, "updated_at")?,
+        related: Some(json_list(&stored.related, "related")?),
+        topic_id: stored.topic_id,
     })))
+}
+
+fn stored_topic(conn: &Connection, slug: &str) -> Result<Option<TopicRow>, SqliteError> {
+    conn.query_row(
+        "SELECT slug, title, aliases, tags, entities, current_state, article, related, \
+                git_sha, last_verified_at, updated_at, \
+                (SELECT topic_id FROM rh_topic_pages WHERE page_slug = ros_wiki_topics.slug), \
+                (SELECT sections FROM rh_topic_pages WHERE page_slug = ros_wiki_topics.slug) \
+           FROM ros_wiki_topics WHERE slug = ?1",
+        params_from_iter([Value::Text(slug.to_owned())]),
+        topic_row,
+    )
+    .optional()
+    .map_err(SqliteError::query("wiki page"))
+}
+
+fn topic_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TopicRow> {
+    Ok(TopicRow {
+        slug: row.get(0)?,
+        title: row.get(1)?,
+        aliases: row.get(2)?,
+        tags: row.get(3)?,
+        entities: row.get(4)?,
+        state: row.get(5)?,
+        article: row.get(6)?,
+        related: row.get(7)?,
+        git_sha: row.get(8)?,
+        verified: row.get(9)?,
+        updated: row.get(10)?,
+        topic_id: row.get(11)?,
+        sections: row.get(12)?,
+    })
+}
+
+fn rendered_markdown(
+    conn: &Connection,
+    directory: Option<&std::path::Path>,
+    topic: &TopicRow,
+    citations: &[kernel::wiki::WikiCitation],
+    sources: &[WikiSource],
+) -> Result<String, SqliteError> {
+    if let Some(root) = directory
+        && let Some(markdown) = filed_or_stored(root, &topic.slug, citations, sources)?
+    {
+        return Ok(markdown);
+    }
+    let history = match topic.topic_id.as_deref() {
+        Some(topic_id) => crate::entity_builder::history_entries(conn, topic_id)?,
+        None => Vec::new(),
+    };
+    let page = stored_page(topic, &history)?;
+    let markdown = kernel::wiki::page::serialize_wiki_page(&page).map_err(invalid_page)?;
+    wiki_files::wiki_writer::references::project(markdown, citations, sources).map_err(invalid_page)
+}
+
+pub(crate) struct StoredWiki {
+    pub(crate) page: kernel::wiki::page::WikiPage,
+    pub(crate) git_sha: Option<String>,
+}
+
+pub(crate) fn database_page(
+    conn: &Connection,
+    slug: &str,
+) -> Result<Option<StoredWiki>, SqliteError> {
+    let Some(topic) = stored_topic(conn, slug)? else {
+        return Ok(None);
+    };
+    let history = match topic.topic_id.as_deref() {
+        Some(topic_id) => crate::entity_builder::history_entries(conn, topic_id)?,
+        None => Vec::new(),
+    };
+    let mut page = stored_page(&topic, &history)?;
+    page.meta.last_verified = topic.verified.as_deref().map(verified_at).transpose()?;
+    let citations = crate::wiki_citations::citations(conn, slug)?;
+    let sources = sources(conn, slug)?;
+    let markdown = kernel::wiki::page::serialize_wiki_page(&page).map_err(invalid_page)?;
+    let markdown = wiki_files::wiki_writer::references::project(markdown, &citations, &sources)
+        .map_err(invalid_page)?;
+    let page = kernel::wiki::page::parse_wiki_page(&markdown).map_err(invalid_page)?;
+    Ok(Some(StoredWiki {
+        page,
+        git_sha: topic.git_sha,
+    }))
+}
+
+fn verified_at(text: &str) -> Result<kernel::wiki::page::LastVerified, SqliteError> {
+    kernel::wiki::page::LastVerified::try_from(text.to_owned()).map_err(invalid_page)
+}
+
+fn invalid_page(error: impl std::fmt::Display) -> SqliteError {
+    SqliteError::Invalid {
+        message: error.to_string(),
+    }
+}
+
+fn stored_page(
+    topic: &TopicRow,
+    history: &[kernel::wiki::page::WikiHistoryEntry],
+) -> Result<kernel::wiki::page::WikiPage, SqliteError> {
+    use kernel::wiki::page::{ArticleSection, WikiPage, WikiSectionRef, WikiSlug};
+    let slug = WikiSlug::try_from(topic.slug.clone()).map_err(|error| SqliteError::Invalid {
+        message: error.to_string(),
+    })?;
+    let mut page = WikiPage::empty(slug, topic.title.clone());
+    page.current_state.clone_from(&topic.state);
+    page.article.clone_from(&topic.article);
+    page.meta.aliases = json_list(&topic.aliases, "aliases")?;
+    page.meta.tags = json_list(&topic.tags, "tags")?;
+    page.meta.entities = json_list(&topic.entities, "entities")?;
+    page.meta.related = json_list(&topic.related, "related")?;
+    let sections = stored_sections(topic.sections.as_deref())?;
+    page.meta.sections = sections
+        .iter()
+        .filter_map(|section| {
+            section.topic.map(|topic| WikiSectionRef {
+                topic: topic.to_string(),
+                heading: section.heading.clone(),
+            })
+        })
+        .collect();
+    page.extra_sections = sections
+        .into_iter()
+        .map(|section| ArticleSection {
+            heading: section.heading,
+            body: section.body,
+        })
+        .collect();
+    page.history = history.to_vec();
+    Ok(page)
+}
+
+fn stored_sections(
+    text: Option<&str>,
+) -> Result<Vec<crate::topic_pages::StoredSection>, SqliteError> {
+    let Some(text) = text else {
+        return Ok(Vec::new());
+    };
+    serde_json::from_str(text).map_err(|source| SqliteError::Query {
+        operation: "sections",
+        source: rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Text,
+            Box::new(source),
+        ),
+    })
 }
 
 fn redirect(conn: &Connection, slug: &str) -> Result<WikiLookup, SqliteError> {
@@ -404,14 +537,38 @@ fn topic_wire(topic: Topic) -> Result<WikiTopic, SqliteError> {
     })
 }
 
-fn sections_markdown(sections: Option<&str>) -> Result<String, SqliteError> {
-    crate::topic_pages::rendered(sections).map_err(|source| SqliteError::Query {
-        operation: "sections",
-        source: rusqlite::Error::FromSqlConversionFailure(
-            0,
-            rusqlite::types::Type::Text,
-            Box::new(source),
-        ),
+fn filed_or_stored(
+    root: &std::path::Path,
+    slug: &str,
+    citations: &[kernel::wiki::WikiCitation],
+    sources: &[WikiSource],
+) -> Result<Option<String>, SqliteError> {
+    match filed_markdown(root, slug, citations, sources) {
+        Ok(markdown) => Ok(Some(markdown)),
+        Err(SqliteError::WikiIo(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn filed_markdown(
+    root: &std::path::Path,
+    slug: &str,
+    citations: &[kernel::wiki::WikiCitation],
+    sources: &[WikiSource],
+) -> Result<String, SqliteError> {
+    let topics = std::fs::canonicalize(root.join("topics")).map_err(SqliteError::WikiIo)?;
+    let path =
+        std::fs::canonicalize(topics.join(format!("{slug}.md"))).map_err(SqliteError::WikiIo)?;
+    if !path.starts_with(&topics) {
+        return Err(SqliteError::Invalid {
+            message: "wiki page escaped its directory".to_owned(),
+        });
+    }
+    let markdown = std::fs::read_to_string(path).map_err(SqliteError::WikiIo)?;
+    wiki_files::wiki_writer::references::project(markdown, citations, sources).map_err(|error| {
+        SqliteError::Invalid {
+            message: error.to_string(),
+        }
     })
 }
 

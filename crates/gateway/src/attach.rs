@@ -91,6 +91,33 @@ impl Gateway {
     }
 
     #[must_use]
+    pub fn with_worker_reports(mut self, reporting: crate::WorkerReporting) -> Self {
+        self.worker_reports = Some(reporting);
+        self
+    }
+
+    pub(crate) fn worker_reports(&self) -> Option<&crate::WorkerReporting> {
+        self.worker_reports.as_ref()
+    }
+
+    #[must_use]
+    pub fn with_worker_pauses(
+        mut self,
+        pauses: Arc<dyn kernel::queue::pause::WorkerPauses>,
+    ) -> Self {
+        self.worker_pauses = Some(pauses);
+        self
+    }
+
+    pub(crate) fn worker_pauses(
+        &self,
+    ) -> Result<&Arc<dyn kernel::queue::pause::WorkerPauses>, crate::error::ApiError> {
+        self.worker_pauses.as_ref().ok_or_else(|| {
+            crate::error::ApiError::Unavailable("pausing workers needs a Postgres hub".into())
+        })
+    }
+
+    #[must_use]
     pub fn with_flagged(mut self, flagged: Arc<dyn kernel::flagged::FlaggedJobs>) -> Self {
         self.flagged = Some(flagged);
         self

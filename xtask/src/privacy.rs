@@ -15,11 +15,6 @@ pub struct DenylistFile {
     pub sha256: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct IdentityFile {
-    pub sha256: Vec<String>,
-}
-
 #[derive(Debug)]
 pub struct PrivacyRes {
     pub uuid: Regex,
@@ -483,8 +478,7 @@ pub fn is_fixture_file(file: &str) -> bool {
 }
 
 pub fn skip_scan(file: &str) -> bool {
-    file == "xtask/data/house-identities.json"
-        || file == "xtask/data/privacy-denylist.json"
+    file == "xtask/data/privacy-denylist.json"
         || file == "xtask/data/secret-denylist.json"
         || file.ends_with("/Cargo.lock")
         || file == "Cargo.lock"

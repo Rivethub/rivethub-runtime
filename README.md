@@ -98,6 +98,50 @@ node reads the certificate file when it starts. A replaced file changes what the
 the node serves after its next restart. Read the fingerprint again after each restart of the node and after
 `not_after`. A renewal that keeps the key changes `sha256` and keeps `spki_sha256`.
 
+## SQLite and Postgres memory transfer
+
+```sh
+rh memory merge-store --from-sqlite memory.sqlite --into <hub-url> --owner alice --sqlite-owner owner
+rh memory merge-store --from <hub-url> --into-sqlite memory.sqlite --owner alice --sqlite-owner owner
+```
+
+Use the local principal configured for the SQLite runtime. It defaults to the hub principal on the command line. Both directions support `--dry-run` and `--json`. The transfer takes a snapshot of the source, copies rows in a destination transaction, and leaves the source in place. When copying into a SQLite path that does not exist, the command initializes it. An unsuccessful copy can leave that initialized database on disk.
+
+The transfer holds the selected person's full snapshot in RAM. Postgres writes use pieces of
+up to 5,000 rows and 64 MiB of bound data, with a piece for each row that exceeds the byte cap.
+SQLite writes one row at a time. Allow at least 1 GiB of available client RAM for a store with
+around 100,000 messages averaging 2 KiB. Larger stores, including those with large summaries,
+need more RAM in proportion to the size and number of rows copied.
+
+Use an administrative Postgres connection and migrate both databases to the current schema first.
+The hub must already have matching spaces and memberships for the selected owner. Global type
+references resolve by slug against the destination's catalog. If any required global type is
+missing, the command lists its slug before inserting any destination rows. Provision those
+types on the destination and retry. Conflicting rows abort the destination transaction.
+
+The copy includes claims on the person's own topics and on global types. It reports how
+many of their claims refer to topics another person owns. A hub wiki redirect travels
+when its target page travels and its owner is the selected hub person or is unknown.
+The SQLite copy assigns the selected SQLite principal to legacy redirects with unknown
+owners. The report counts redirects to copied pages left behind because someone else owns them.
+The copy preserves each tag's stored display and includes shared taxonomy entries for its
+key and value. Without a taxonomy entry, the tag still has its own display text or the raw
+key and value. Unused shared vocabulary and other people's private vocabulary stay behind.
+
+The copy assigns ownerless personal rows in a standalone SQLite file to the chosen
+principal. Global type and shared taxonomy rows retain their shared status. Legacy
+`work`, `entity`, and `type` topic tombstones without evidence of ownership stay behind.
+The report counts those unattributed tombstones.
+
+Carried vectors are derived from their rows and travel at the destination's precision.
+SQLite stores them as f32 and Postgres stores entity and passage vectors at half precision.
+Conflict checks exclude vectors, and the copy keeps any destination vector already present.
+Summary passages travel with their owning summaries. Pass the destination worker's reported
+index key as `--destination-index-key <hex>` to reuse matching passage vectors. With a
+different or unknown key, the destination worker rebuilds the passage index. The destination also
+rebuilds the other search embeddings and indexes. The command reports excluded data,
+including Git-backed wiki files and history, which require a separate repository backup.
+
 ## Layout
 
 | Path | What it holds |

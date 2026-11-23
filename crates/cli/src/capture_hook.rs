@@ -5,6 +5,7 @@ use capture::backfill::Backfill;
 use capture::backfill::HarnessTotals;
 use capture::hook::ClaudeHook;
 use capture::hook::HookRun;
+use capture::hook::antigravity::AntigravityHook;
 use capture::hook::store::StoreHarness;
 use capture::hook::store::StoreHook;
 use capture::spool::CaptureSpool;
@@ -56,6 +57,7 @@ pub enum CaptureHarness {
     Opencode,
     Codex,
     Dsh,
+    Antigravity,
 }
 
 impl CaptureHarness {
@@ -66,6 +68,7 @@ impl CaptureHarness {
             Self::Opencode => HarnessId::Opencode,
             Self::Codex => HarnessId::Codex,
             Self::Dsh => HarnessId::Dsh,
+            Self::Antigravity => HarnessId::Antigravity,
         }
     }
 }
@@ -77,7 +80,14 @@ pub(crate) async fn run(command: CaptureCommand, env: &Environment) -> Result<Re
             let mut stdin = String::new();
             tokio::io::stdin().read_to_string(&mut stdin).await?;
             if env.get(config::MODEL_RUN_VARIABLE).is_some() {
-                return Ok(report(HookRun::done()));
+                return Ok(match harness {
+                    CaptureHarness::Antigravity => json_report(HookRun::done()),
+                    CaptureHarness::ClaudeCode
+                    | CaptureHarness::GrokBuild
+                    | CaptureHarness::Opencode
+                    | CaptureHarness::Codex
+                    | CaptureHarness::Dsh => report(HookRun::done()),
+                });
             }
             Ok(match harness {
                 CaptureHarness::ClaudeCode => hook(env, &stdin, Timestamp::now()).await,
@@ -92,6 +102,9 @@ pub(crate) async fn run(command: CaptureCommand, env: &Environment) -> Result<Re
                 }
                 CaptureHarness::Dsh => {
                     store_hook(env, &stdin, Timestamp::now(), StoreHarness::Dsh).await
+                }
+                CaptureHarness::Antigravity => {
+                    antigravity_hook(env, &stdin, Timestamp::now()).await
                 }
             })
         }
@@ -220,6 +233,18 @@ pub async fn store_hook(
     }
 }
 
+pub async fn antigravity_hook(env: &Environment, stdin: &str, now: Timestamp) -> Report {
+    match writer(env).await {
+        Ok((writer, paths)) => {
+            let hook = AntigravityHook::new(writer, &capture::listing::store_roots(env), &paths);
+            json_report(hook.run(stdin, now).await)
+        }
+        Err(error) => json_report(HookRun::failed(format!(
+            "capture hook is not configured: {error}"
+        ))),
+    }
+}
+
 pub(crate) async fn ingest_bundle(
     env: &Environment,
     imports: &[(
@@ -317,6 +342,12 @@ fn report(run: HookRun) -> Report {
         },
         stdout_raw: Vec::new(),
     }
+}
+
+fn json_report(run: HookRun) -> Report {
+    let mut out = report(run);
+    "{}\n".clone_into(&mut out.stdout);
+    out
 }
 
 async fn writer(env: &Environment) -> Result<(CaptureWriter<HookTransport>, config::Paths), Error> {

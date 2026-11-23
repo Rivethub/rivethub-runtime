@@ -7,7 +7,7 @@ use crate::worker::ComposedRunner;
 use config::{Config, Environment, ServiceSwitch};
 use gateway::server::ServeOptions;
 use kernel::filing::FilingStore;
-use kernel::memory::jobs::UnembeddedStore;
+use kernel::memory::jobs::{MemoryJobStore, UnembeddedStore};
 use kernel::memory::{EmbeddingStore, MemoryStore, SessionDeletion, SummaryStore};
 use kernel::queue::{FixedJob, Job, JobKeyMode, JobName, JobQueue, MAINTENANCE_PRIORITY};
 use kernel::shutdown::Activities;
@@ -160,6 +160,7 @@ async fn run(
         model,
         crate::models::summary_index_key(config, env),
         config.memory_models_available(),
+        config.wiki_directory(env),
     )
     .await?;
     import::pending(&store, config, &shutdown).await?;
@@ -289,13 +290,6 @@ impl NodeBoot<'_> {
             .await?;
         }
         if self.switches.contains(&ServiceSwitch::Wiki) {
-            enqueue_sweep(
-                self.store,
-                FixedJob::EnqueueWikiBackfill,
-                "wiki-backfill",
-                MAINTENANCE_PRIORITY,
-            )
-            .await?;
             enqueue_sweep(self.store, FixedJob::ConsolidateWiki, "wiki-consolidate", 5).await?;
         }
         spawn_workers(self.tracker, self.failed, self.shutdown, runners);
@@ -399,6 +393,7 @@ async fn open_store(
     model: Option<String>,
     index_key: Option<[u8; 32]>,
     language_available: bool,
+    wiki: PathBuf,
 ) -> Result<Arc<SqliteStore>, LocalError> {
     let store = tokio::task::spawn_blocking(move || SqliteStore::open(path)).await??;
     let store = match embed {
@@ -413,7 +408,9 @@ async fn open_store(
         Some(key) => store.with_summary_index_key(key),
         None => store,
     };
-    let store = store.with_language_available(language_available);
+    let store = store
+        .with_language_available(language_available)
+        .with_wiki_directory(wiki);
     Ok(Arc::new(match model {
         Some(model) => store.with_embed_model(&model),
         None => store,
@@ -428,6 +425,8 @@ async fn build_runners(
     shutdown: &CancellationToken,
     activities: &Activities,
 ) -> Result<Vec<(ProcessRole, ComposedRunner<SqliteStore>)>, LocalError> {
+    let settings =
+        workers::MemoryJobSettings::from_environment(env).map_err(worker::RootError::from)?;
     let mut built = Vec::new();
     for role in roles {
         let ports = WorkerPorts {
@@ -435,9 +434,11 @@ async fn build_runners(
             targets: Arc::clone(store) as Arc<dyn EmbeddingStore>,
             summaries: Arc::clone(store) as Arc<dyn SummaryStore>,
             wiki: Arc::clone(store) as Arc<dyn WikiBuilderStore>,
-            entity: None,
+            entity: Some(Arc::clone(store) as Arc<dyn kernel::wiki::entity_pass::EntityStore>),
             consolidate: Some(Arc::clone(store) as Arc<dyn WikiConsolidateStore>),
-            recompile: None,
+            recompile: Some(
+                Arc::clone(store) as Arc<dyn kernel::wiki::recompile::WikiRecompileStore>
+            ),
             topics: Arc::clone(store) as Arc<dyn TopicStore>,
             filing: Arc::clone(store) as Arc<dyn FilingStore>,
             pages: Arc::clone(store) as Arc<dyn TopicPageStore>,
@@ -458,10 +459,17 @@ async fn build_runners(
         }
         runner.runner = runner
             .runner
-            .with_session_deletion(Arc::clone(store) as Arc<dyn SessionDeletion>);
+            .with_memory_jobs(Arc::clone(store) as Arc<dyn MemoryJobStore>)
+            .with_job_settings(settings)
+            .with_session_deletion(Arc::clone(store) as Arc<dyn SessionDeletion>)
+            .with_pauses(Arc::clone(store) as Arc<dyn kernel::queue::pause::WorkerPauses>);
         if matches!(
             role,
-            ProcessRole::Embedder | ProcessRole::Summarizer | ProcessRole::Categorizer
+            ProcessRole::Embedder
+                | ProcessRole::Summarizer
+                | ProcessRole::Categorizer
+                | ProcessRole::WikiBuilder
+                | ProcessRole::EntityBuilder
         ) {
             runner.runner = runner.runner.with_schedules(true).with_schedule_at_start();
         }
@@ -480,7 +488,10 @@ fn worker_roles(switches: &[ServiceSwitch]) -> Vec<ProcessRole> {
                 roles.push(ProcessRole::Summarizer);
             }
             ServiceSwitch::Tagging => roles.push(ProcessRole::Categorizer),
-            ServiceSwitch::Wiki => roles.push(ProcessRole::WikiBuilder),
+            ServiceSwitch::Wiki => {
+                roles.push(ProcessRole::WikiBuilder);
+                roles.push(ProcessRole::EntityBuilder);
+            }
             ServiceSwitch::Gateway | ServiceSwitch::Mcp => {}
         }
     }

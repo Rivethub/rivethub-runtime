@@ -205,7 +205,7 @@ impl Node {
             &config,
             &env,
             self.owner.clone(),
-            cli::memory::SessionStore::Sqlite(store.clone()),
+            cli::memory::SessionStore::Sqlite(Box::new(store.clone())),
         )?;
         Ok(
             mcp::Server::builder(Arc::new(store), CancellationToken::new())

@@ -94,7 +94,7 @@ SELECT g.key,
        (SELECT pt.name FROM rh_topics t JOIN rh_topics pt ON pt.id = t.parent_id WHERE t.id = g.topic_id),
        EXISTS (SELECT 1 FROM ros_summaries s
                 WHERE s.conversation_id IN (SELECT value FROM json_each(g.conversations))),
-       EXISTS (SELECT 1 FROM ros_jobs j
+       (EXISTS (SELECT 1 FROM ros_jobs j
                  LEFT JOIN ros_messages m
                         ON m.id = coalesce(
                                CASE WHEN json_valid(j.payload) THEN json_extract(j.payload, '$.messageId') END,
@@ -104,7 +104,18 @@ SELECT g.key,
                    ON c.id = coalesce(
                           CASE WHEN json_valid(j.payload) THEN json_extract(j.payload, '$.conversationId') END,
                           m.conversation_id)
-                WHERE j.state = 'dead' AND c.id IN (SELECT value FROM json_each(g.conversations))),
+                WHERE j.state = 'dead' AND c.id IN (SELECT value FROM json_each(g.conversations)))
+        OR EXISTS (SELECT 1 FROM rh_flagged_jobs f
+                 LEFT JOIN ros_messages m
+                        ON m.id = coalesce(
+                               CASE WHEN json_valid(f.payload) THEN json_extract(f.payload, '$.messageId') END,
+                               CASE WHEN json_valid(f.payload) AND json_extract(f.payload, '$.targetTable') = 'ros_messages'
+                                    THEN json_extract(f.payload, '$.targetId') END)
+                 JOIN ros_conversations c
+                   ON c.id = coalesce(
+                          CASE WHEN json_valid(f.payload) THEN json_extract(f.payload, '$.conversationId') END,
+                          m.conversation_id)
+                WHERE f.dismissed_at IS NULL AND c.id IN (SELECT value FROM json_each(g.conversations)))),
        (SELECT s.content FROM ros_summaries s
          WHERE s.conversation_id IN (SELECT value FROM json_each(g.conversations))
          ORDER BY (s.kind = 'session') DESC, s.depth DESC, julianday(s.created_at) DESC LIMIT 1),

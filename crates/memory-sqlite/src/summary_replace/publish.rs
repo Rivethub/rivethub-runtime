@@ -1,6 +1,8 @@
 use super::sql;
 use kernel::memory::summary_conversion::ConversionLease;
+use kernel::memory::summary_reference::SummaryConsumer;
 use kernel::memory::{WrittenSummary, summary_backend::SummaryIndexes};
+use kernel::queue::FixedJob;
 use std::collections::{BTreeMap, BTreeSet};
 
 use kernel::memory::summary_reference::{
@@ -12,7 +14,7 @@ use uuid::Uuid;
 
 use crate::{SqliteError, SqliteStore, time};
 
-use super::{immediate, retain};
+use super::{immediate, passages, retain};
 
 const INSERT_RECORD: &str = "
 INSERT INTO ros_summaries (id, conversation_id, parent_id, kind, depth, content,
@@ -82,30 +84,38 @@ impl SqliteStore {
                 return Err(SummaryReferenceError::Stale(prepared.conversation).into());
             }
             if indexes.is_some() {
-                let revision = prepared.expected_revision.ok_or(SummaryReferenceError::Stale(prepared.conversation))?;
+                let revision = prepared
+                    .expected_revision
+                    .ok_or(SummaryReferenceError::Stale(prepared.conversation))?;
                 if !crate::summary_backend::eligible(&tx, prepared.conversation, revision)? {
                     return Err(SummaryReferenceError::Stale(prepared.conversation).into());
                 }
                 if prepared.records.is_empty() {
                     if !prepared.expected_ids.is_empty() {
-                        return Err(SqliteError::Invalid { message: "empty transcript would replace an existing summary".into() });
+                        return Err(SqliteError::Invalid {
+                            message: "empty transcript would replace an existing summary".into(),
+                        });
                     }
                     finish_revision(&tx, &prepared, conversion.is_some())?;
                     tx.commit().map_err(failure)?;
                     return Ok(Vec::new());
                 }
             }
-            let mut coverage = prepared.coverage().map_err(|error| SqliteError::Invalid { message: error.to_string() })?;
+            let mut coverage = prepared.coverage().map_err(|error| SqliteError::Invalid {
+                message: error.to_string(),
+            })?;
             let old = old_coverage(&tx, prepared.conversation)?;
             let retained = retain::plan(&tx, &mut prepared, &mut coverage)?;
             stage(&tx, &prepared, &coverage, &old, &retained)?;
+            passages::snapshot(&tx, prepared.conversation)?;
             retain::reparent(&tx, &prepared, &retained)?;
             tx.execute(
                 sql::DELIVERIES,
                 params![prepared.conversation.to_string(), prepared.historical],
-            ).map_err(failure)?;
-            tx.execute_batch(sql::REUSE_VECTORS).map_err(failure)?;
-            tx.execute(sql::REBIND_DELIVERIES, [prepared.conversation.to_string()]).map_err(failure)?;
+            )
+            .map_err(failure)?;
+            tx.execute(sql::REBIND_DELIVERIES, [prepared.conversation.to_string()])
+                .map_err(failure)?;
             tx.execute_batch(sql::BEFORE_DELETE).map_err(failure)?;
 
             let mut records: Vec<_> = prepared.records.iter().collect();
@@ -116,42 +126,48 @@ impl SqliteStore {
                 }
             }
 
-            tx.execute_batch(
-                "UPDATE ros_summaries AS dest
-                 SET (embedding, index_needs_repair) = (
-                     SELECT old.embedding, 0 FROM summary_old_vectors old
-                     WHERE old.content = dest.content AND old.index_key = dest.index_key
-                     ORDER BY old.id LIMIT 1)
-                 WHERE dest.conversation_id = (SELECT conversation_id FROM summary_old_vectors LIMIT 1)
-                   AND dest.kind IN ('session', 'part')
-                   AND dest.id NOT IN (SELECT id FROM summary_retained)
-                   AND EXISTS (SELECT 1 FROM summary_old_vectors old
-                       WHERE old.content = dest.content AND old.index_key = dest.index_key);
-                 DROP TABLE summary_old_vectors;",
-            ).map_err(failure)?;
-            let written = if let Some(indexes) = indexes {
+            passages::publish(&tx, &prepared, &retained, indexes.as_ref())?;
+            let written = if indexes.is_some() {
                 if conversion.is_none() {
                     enqueue_deliveries(&tx, &prepared)?;
                 }
-                for (id, index) in indexes {
-                    index.validate_width().map_err(|error| SqliteError::Invalid { message: error.to_string() })?;
-                    tx.execute("UPDATE ros_summaries SET embedding = ?2, index_needs_repair = 0 WHERE id = ?1",
-                        params![id.to_string(), crate::vector::pack(&index.pooled)]).map_err(failure)?;
-                }
-                let session_key: String = tx.query_row("SELECT session_key FROM ros_conversations WHERE id = ?1",
-                    [prepared.conversation.to_string()], |row| row.get(0)).map_err(failure)?;
-                prepared.records.iter().filter(|record| !retained.contains(&record.id)).map(|record| WrittenSummary {
-                    id: record.id, session_key: session_key.clone(), kind: record.kind, depth: record.kind.depth(),
-                }).collect()
+                publication_notices(&tx, &prepared, &retained)?
             } else {
                 Vec::new()
             };
+            tx.execute_batch(sql::ENTITY_REFERENCES).map_err(failure)?;
             tx.execute_batch(sql::REFERENCES).map_err(failure)?;
             finish_revision(&tx, &prepared, conversion.is_some())?;
             tx.commit().map_err(failure)?;
             Ok(written)
-        }).await
+        })
+        .await
     }
+}
+
+fn publication_notices(
+    conn: &Connection,
+    prepared: &PreparedSummaryTree,
+    retained: &BTreeSet<Uuid>,
+) -> Result<Vec<WrittenSummary>, SqliteError> {
+    let session_key: String = conn
+        .query_row(
+            "SELECT session_key FROM ros_conversations WHERE id = ?1",
+            [prepared.conversation.to_string()],
+            |row| row.get(0),
+        )
+        .map_err(failure)?;
+    Ok(prepared
+        .records
+        .iter()
+        .filter(|record| !retained.contains(&record.id))
+        .map(|record| WrittenSummary {
+            id: record.id,
+            session_key: session_key.clone(),
+            kind: record.kind,
+            depth: record.kind.depth(),
+        })
+        .collect())
 }
 
 pub(super) fn failure(error: rusqlite::Error) -> SqliteError {
@@ -405,30 +421,46 @@ fn enqueue_deliveries(
     }
     let mut statement = conn
         .prepare(
-            "SELECT DISTINCT anchor_id FROM ros_summary_deliveries d
-         WHERE conversation_id = ?1 AND consumer = 'wiki' AND anchor_id IS NOT NULL
-           AND NOT EXISTS (SELECT 1 FROM ros_jobs j WHERE j.job_key = 'wiki-ext-' || d.anchor_id)",
+            "WITH candidates AS (
+                SELECT DISTINCT anchor_id, consumer,
+                    CASE consumer WHEN 'wiki' THEN 'wiki-ext-' ELSE 'entity-ext-' END || anchor_id AS key
+                FROM ros_summary_deliveries WHERE conversation_id = ?1 AND anchor_id IS NOT NULL
+             )
+             SELECT anchor_id, consumer, key FROM candidates c
+             WHERE NOT EXISTS (SELECT 1 FROM ros_jobs j WHERE j.job_key = c.key)",
         )
         .map_err(failure)?;
     let anchors = statement
         .query_map([prepared.conversation.to_string()], |row| {
-            row.get::<_, String>(0)
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
         })
         .map_err(failure)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(failure)?;
-    for anchor in anchors {
+    for (anchor, consumer, key) in anchors {
         let payload = Delivery {
             summary_id: &anchor,
             conversation_id: prepared.conversation,
         };
         let payload =
             serde_json::to_string(&payload).map_err(|source| SqliteError::StoredJson {
-                column: "wiki delivery payload",
+                column: "summary delivery payload",
                 source,
             })?;
-        let mut job = crate::queue::JobInsert::new("extract-wiki", payload, prepared.created_at);
-        job.key = Some(format!("wiki-ext-{anchor}"));
+        let consumer: SummaryConsumer =
+            consumer.parse().map_err(|source| SqliteError::Invalid {
+                message: format!("summary delivery consumer: {source}"),
+            })?;
+        let task = match consumer {
+            SummaryConsumer::Wiki => FixedJob::ExtractWiki,
+            SummaryConsumer::Entity => FixedJob::ExtractEntities,
+        };
+        let mut job = crate::queue::JobInsert::new(task.to_string(), payload, prepared.created_at);
+        job.key = Some(key);
         job.max_attempts = 2;
         job.priority = -10;
         crate::queue::enqueue_in(conn, &job)?;

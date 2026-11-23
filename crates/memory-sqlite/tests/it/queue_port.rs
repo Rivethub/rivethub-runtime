@@ -1,4 +1,5 @@
 use jiff::Timestamp;
+use kernel::flagged::FlaggedJobs as _;
 use kernel::queue::FixedJob;
 use kernel::queue::Job;
 use kernel::queue::JobId;
@@ -233,7 +234,7 @@ async fn complete_of_a_finished_claim_does_not_take_the_next_job() -> TestResult
 }
 
 #[tokio::test]
-async fn a_null_payload_is_dead_on_claim() -> TestResult {
+async fn a_null_payload_is_flagged_on_claim() -> TestResult {
     let opened = open()?;
     let store = &opened.store;
     store
@@ -266,10 +267,20 @@ async fn a_null_payload_is_dead_on_claim() -> TestResult {
         Some("alive")
     );
     let rows = jobs(store).await?;
-    let poison = row_with(&rows, "job_key", "poison")?;
-    assert_eq!(cell(poison, "state"), &Json::from("dead"));
+    assert_eq!(
+        rows.iter()
+            .find(|row| cell(row, "job_key") == &Json::from("poison")),
+        None
+    );
     let alive = row_with(&rows, "job_key", "embed-ros_messages-alive")?;
     assert_eq!(cell(alive, "state"), &Json::from("running"));
+    let flagged = store.flagged().await?;
+    assert_eq!(flagged.len(), 1);
+    let poison = flagged
+        .first()
+        .ok_or("the rejected payload left the ledger")?;
+    assert_eq!(poison.key.as_deref(), Some("poison"));
+    assert_eq!(store.flag_stuck().await?, 0);
     Ok(())
 }
 
@@ -354,11 +365,13 @@ async fn a_dead_job_is_named_by_the_conversation_it_worked_on() -> TestResult {
                 "INSERT INTO ros_conversations (id, session_key, agent, title, created_at, updated_at)
                  VALUES ('c1', 'claude-code:one', 'claude', 'Fix the flaky gate', '2026-10-30T10:00:00Z',
                          '2026-10-30T10:00:00Z');
-                 INSERT INTO ros_jobs (id, task, job_key, payload, run_at, attempts, state, created_at, updated_at)
-                 VALUES ('j1', 'compact-conversation', 'named', '{\"conversationId\":\"c1\"}',
-                         '2026-10-30T10:00:00Z', 5, 'dead', '2026-10-30T10:00:00Z', '2026-10-30T10:02:00Z'),
-                        ('j2', 'embed-target', 'bare', 'null', '2026-10-30T10:00:00Z', 5, 'dead',
-                         '2026-10-30T10:00:00Z', '2026-10-30T10:01:00Z');",
+                 INSERT INTO rh_flagged_jobs
+                     (task, job_key, payload, priority, max_attempts, failures, last_error,
+                      first_failed_at, last_failed_at, flagged_at)
+                 VALUES ('compact-conversation', 'named', '{\"conversationId\":\"c1\"}', 0, 5, 5, '',
+                         '2026-10-30T10:00:00Z', '2026-10-30T10:02:00Z', '2026-10-30T10:02:00Z'),
+                        ('embed-target', 'bare', 'null', 0, 5, 5, '',
+                         '2026-10-30T10:00:00Z', '2026-10-30T10:01:00Z', '2026-10-30T10:01:00Z');",
             ))
         })
         .await??;
@@ -378,5 +391,38 @@ async fn a_dead_job_is_named_by_the_conversation_it_worked_on() -> TestResult {
             (Some("bare".to_owned()), None)
         ]
     );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_write_waits_for_another_connection_that_holds_the_file() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("memory.sqlite");
+    migrate::sqlite(&path)?;
+    let store = SqliteStore::open(&path)?;
+    let other = rusqlite::Connection::open(&path)?;
+    other.execute_batch("BEGIN IMMEDIATE")?;
+    let (keep_holding, released) = std::sync::mpsc::channel::<()>();
+    let holding = std::thread::spawn(move || {
+        match released.recv_timeout(std::time::Duration::from_millis(400)) {
+            Ok(())
+            | Err(
+                std::sync::mpsc::RecvTimeoutError::Timeout
+                | std::sync::mpsc::RecvTimeoutError::Disconnected,
+            ) => other.execute_batch("COMMIT"),
+        }
+    });
+    let started = std::time::Instant::now();
+    store
+        .enqueue(job(
+            "11111111-1111-4111-8111-111111111111",
+            JobKeyMode::Replace,
+        )?)
+        .await?;
+    assert!(started.elapsed() >= std::time::Duration::from_millis(300));
+    drop(keep_holding);
+    holding
+        .join()
+        .map_err(|_| "the holding thread panicked")??;
     Ok(())
 }

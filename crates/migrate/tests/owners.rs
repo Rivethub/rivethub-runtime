@@ -133,6 +133,7 @@ fn every_row_of_a_file_takes_the_owner_of_its_store() -> TestResult {
     let path = dir.path().join("memory.sqlite");
     migrate::sqlite(&path)?;
     let conn = rusqlite::Connection::open(&path)?;
+    conn.execute_batch(include_str!("fixtures/pre_memory_transfer.txt"))?;
     conn.execute_batch(
         "INSERT INTO ros_conversations (id, session_key, agent, created_at, updated_at, owner_user_id)
            VALUES ('a1', 'cli:owned', 'rivet', '2026-10-30T00:00:00.000Z', '2026-10-30T00:00:00.000Z', 'alice'),

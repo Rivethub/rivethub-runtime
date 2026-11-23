@@ -7,7 +7,8 @@ use wire::time::TimestampFormat as _;
 use kernel::memory::summary_conversion::ConversionProgress;
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 
-use super::{TestResult, model_stub, provider_at, start, stop, write_state};
+use super::summary_index::{assert_vector_hit, config, index_key, indexed_session};
+use super::{REPLY, TestResult, model_stub, start, stop, write_state};
 
 async fn control<T: serde::de::DeserializeOwned>(home: &Path, args: &[&str]) -> TestResult<T> {
     let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_rh"))
@@ -16,6 +17,7 @@ async fn control<T: serde::de::DeserializeOwned>(home: &Path, args: &[&str]) -> 
         .arg("--json")
         .env_clear()
         .env("HOME", home)
+        .env("PATH", "/usr/bin:/bin")
         .env("TOKIO_WORKER_THREADS", "2")
         .output()
         .await?;
@@ -32,6 +34,7 @@ async fn first_watch_snapshot(home: &Path) -> TestResult<ConversionProgress> {
         .args(["memory", "resummarize", "status", "--watch", "--json"])
         .env_clear()
         .env("HOME", home)
+        .env("PATH", "/usr/bin:/bin")
         .env("TOKIO_WORKER_THREADS", "2")
         .stdout(Stdio::piped())
         .kill_on_drop(true)
@@ -50,16 +53,10 @@ async fn top_down_conversion_local_cli_and_worker() -> TestResult {
     let database = home.path().join(".rivethub/memory.sqlite");
     let stub = model_stub().await?;
     let port = testkit::ports::claim()?;
+    let endpoint = format!("http://{}", stub.addr);
     write_state(
         home.path(),
-        &provider_at(
-            home.path(),
-            &format!("http://{}", stub.addr),
-            &format!(
-                "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\n    workers: true\ngateway:\n  host: 127.0.0.1\n  port: {port}\n",
-                database.display()
-            ),
-        ),
+        &config(home.path(), &database, &endpoint, port.number()),
     )?;
     migrate::sqlite(&database)?;
     let conversation = uuid::Uuid::new_v4().to_string();
@@ -89,7 +86,14 @@ async fn top_down_conversion_local_cli_and_worker() -> TestResult {
         &["gateway listening on ", "worker running summarizer"],
     )
     .await?;
-    let result = exercise_running_conversion(home.path(), &database, &conversation).await;
+    let result = exercise_running_conversion(
+        home.path(),
+        &database,
+        &conversation,
+        port.number(),
+        index_key(&endpoint),
+    )
+    .await;
     stop(started).await?;
     stub.close().await?;
     result
@@ -110,6 +114,8 @@ async fn exercise_running_conversion(
     home: &Path,
     database: &Path,
     conversation: &str,
+    port: u16,
+    key: [u8; 32],
 ) -> TestResult {
     let started: ConversionProgress = control(home, &["start", "--rate", "300000"]).await?;
     assert!(started.enabled);
@@ -131,14 +137,11 @@ async fn exercise_running_conversion(
     .await??;
     assert_eq!(progress.complete, 1, "{progress:?}");
     assert!(progress.inventory_complete);
+    let summary =
+        indexed_session(database, conversation, key)?.ok_or("session passages were not indexed")?;
+    assert_eq!(summary.content, REPLY);
+    assert_vector_hit(home, port, &summary).await?;
     let conn = rusqlite::Connection::open(database)?;
-    let indexed: bool = conn.query_row(
-        "SELECT (embedding IS NOT NULL AND NOT index_needs_repair) FROM ros_summaries
-             WHERE conversation_id = ?1 AND kind = 'session'",
-        [conversation],
-        |row| row.get(0),
-    )?;
-    assert!(indexed);
     let recorded: i64 = conn.query_row(
         "SELECT count(*) FROM rh_model_calls WHERE session_key = 'conversion-local-fixture'
          AND request_kind = 'summary-conversion' AND outcome = 'completed'",
