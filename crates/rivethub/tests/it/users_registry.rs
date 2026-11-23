@@ -81,7 +81,7 @@ async fn a_sqlite_node_serves_one_person_and_refuses_a_users_file_for_more() -> 
             "bob has a token or a device",
         ),
         (
-            r#"{"ownerUserId":"alice","unmappedIsOwner":false,"users":{},"spaces":{"home":{"kind":"household","members":["alice","bob"]}}}"#.to_owned(),
+            r#"{"ownerUserId":"alice","unmappedIsOwner":false,"users":{},"spaces":{"home":{"kind":"device","members":["alice","bob"]}}}"#.to_owned(),
             false,
             "bob is a member of space home",
         ),

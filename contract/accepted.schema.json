@@ -9639,6 +9639,7 @@
     "SpaceKind": {
       "enum": [
         "household",
+        "device",
         "team",
         "compartment"
       ],

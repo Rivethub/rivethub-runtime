@@ -150,3 +150,18 @@ fn passage_search_fields_are_optional_on_old_hits() -> Result<(), Box<dyn std::e
     }
     Ok(())
 }
+
+#[test]
+fn both_device_kind_spellings_decode_to_the_same_wire_record()
+-> Result<(), Box<dyn std::error::Error>> {
+    use wire::gateway::tenancy::{SpaceKind, SpaceRecord};
+
+    let legacy = r#"{"id":"studio","kind":"household","name":"Studio"}"#;
+    let current = r#"{"id":"studio","kind":"device","name":"Studio"}"#;
+    for payload in [legacy, current] {
+        let record: SpaceRecord = serde_json::from_str(payload)?;
+        assert_eq!(record.kind, SpaceKind::Device);
+        assert_eq!(serde_json::to_string(&record)?, legacy);
+    }
+    Ok(())
+}

@@ -4,10 +4,26 @@ use serde_with::serde_as;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(schema_with = "space_kind_schema")]
 pub enum SpaceKind {
-    Household,
+    #[serde(rename = "household", alias = "device")]
+    Device,
     Team,
     Compartment,
+}
+
+fn space_kind_schema(generator: &schemars::SchemaGenerator) -> schemars::Schema {
+    if generator.contract().is_deserialize() {
+        schemars::json_schema!({
+            "type": "string",
+            "enum": ["household", "device", "team", "compartment"]
+        })
+    } else {
+        schemars::json_schema!({
+            "type": "string",
+            "enum": ["household", "team", "compartment"]
+        })
+    }
 }
 
 #[serde_with::skip_serializing_none]

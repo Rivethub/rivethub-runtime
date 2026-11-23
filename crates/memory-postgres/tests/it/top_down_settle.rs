@@ -232,7 +232,7 @@ async fn opening_is_visible_only_to_owner_and_maintenance(pool: PgPool) -> TestR
         .await?
         .conversation_id
         .parse()?;
-    let stranger = Scope::Viewer(Viewer::new(bob, vec![crate::visibility::household()?]));
+    let stranger = Scope::Viewer(Viewer::new(bob, vec![crate::visibility::shared_space()?]));
     assert!(
         stranger
             .clone()
@@ -240,7 +240,7 @@ async fn opening_is_visible_only_to_owner_and_maintenance(pool: PgPool) -> TestR
             .await?
             .is_none()
     );
-    sqlx::query("UPDATE rh_conversations SET visibility = 'household' WHERE id = $1")
+    sqlx::query("UPDATE rh_conversations SET visibility = 'shared' WHERE id = $1")
         .bind(id)
         .execute(&pool)
         .await?;

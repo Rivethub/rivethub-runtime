@@ -714,7 +714,7 @@ async fn hubs_list_the_serving_node_first_and_probe_the_others() -> TestResult {
     let closed = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?;
     let hubs = vec![
         HubEntry {
-            name: "Household Team".to_owned(),
+            name: "Studio Team".to_owned(),
             url: format!("http://{}", fake.stub.addr).parse()?,
             kind: HubKind::Team,
         },
@@ -736,7 +736,7 @@ async fn hubs_list_the_serving_node_first_and_probe_the_others() -> TestResult {
         summary,
         vec![
             ("this-node", HubKind::Local, true, true),
-            ("household-team", HubKind::Team, true, false),
+            ("studio-team", HubKind::Team, true, false),
             ("lab", HubKind::Team, false, false),
         ]
     );

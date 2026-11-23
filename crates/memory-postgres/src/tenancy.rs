@@ -3,9 +3,11 @@ use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 use kernel::owner::Owner;
+use kernel::tenancy::DEFAULT_SPACE;
 use kernel::tenancy::SessionVisibility;
 use kernel::tenancy::Space;
 use kernel::tenancy::SpaceId;
+use kernel::tenancy::SpaceKind;
 use kernel::tenancy::TenancyStore;
 use kernel::tenancy::TenancyStoreError;
 use kernel::tenancy::TopicVisibility;
@@ -82,17 +84,21 @@ SELECT k.key AS session, c.owner_user_id AS owner, m.visibility AS mark,
   FROM keys k LEFT JOIN convs c ON c.session_key = k.key LEFT JOIN marks m ON m.session_key = k.key AND m.owner_user_id = coalesce(c.owner_user_id, $2)
   LEFT JOIN placed p ON p.session_id = k.key LEFT JOIN topic_marks tm ON tm.topic_id = p.topic_id";
 
-type Catalog = std::collections::BTreeSet<(String, String, String, String)>;
+type Catalog = std::collections::BTreeSet<(String, SpaceKind, String, String)>;
 
-fn local_catalog(spaces: &[Space]) -> Catalog {
+fn local_catalog(spaces: &[Space], stored_default_name: Option<&str>) -> Catalog {
     spaces
         .iter()
         .flat_map(|space| {
-            space.members.iter().map(|member| {
+            space.members.iter().map(move |member| {
                 (
                     space.id.as_str().to_owned(),
-                    space.kind.as_str().to_owned(),
-                    space.name.clone(),
+                    space.kind,
+                    if space.is_default() {
+                        stored_default_name.unwrap_or(&space.name).to_owned()
+                    } else {
+                        space.name.clone()
+                    },
                     member.as_str().to_owned(),
                 )
             })
@@ -107,7 +113,47 @@ async fn catalog(conn: &mut sqlx::PgConnection) -> Result<Catalog, TenancyStoreE
     .fetch_all(conn)
     .await
     .map_err(failed("space sync"))?;
-    Ok(rows.into_iter().collect())
+    rows.into_iter()
+        .map(|(id, kind, name, member)| Ok((id, SpaceKind::parse(&kind)?, name, member)))
+        .collect()
+}
+
+async fn save_space(
+    conn: &mut sqlx::PgConnection,
+    space: &Space,
+    name: &str,
+) -> Result<(), TenancyStoreError> {
+    sqlx::query(
+        "INSERT INTO rh_spaces (id, kind, name) VALUES ($1, $2, $3)
+         ON CONFLICT (id) DO UPDATE SET kind = EXCLUDED.kind, name = EXCLUDED.name
+          WHERE (rh_spaces.kind, rh_spaces.name) IS DISTINCT FROM (EXCLUDED.kind, EXCLUDED.name)",
+    )
+    .bind(space.id.as_str())
+    .bind(space.kind.as_str())
+    .bind(name)
+    .execute(&mut *conn)
+    .await
+    .map_err(failed("space sync"))?;
+    let members: Vec<&str> = space.members.iter().map(Owner::as_str).collect();
+    sqlx::query(
+        "DELETE FROM rh_space_members WHERE space_id = $1 AND NOT (user_id = ANY ($2::text[]))",
+    )
+    .bind(space.id.as_str())
+    .bind(&members)
+    .execute(&mut *conn)
+    .await
+    .map_err(failed("space sync"))?;
+    sqlx::query(
+        "INSERT INTO rh_space_members (space_id, user_id)
+         SELECT $1, member FROM unnest($2::text[]) AS member
+         ON CONFLICT (space_id, user_id) DO NOTHING",
+    )
+    .bind(space.id.as_str())
+    .bind(&members)
+    .execute(&mut *conn)
+    .await
+    .map_err(failed("space sync"))?;
+    Ok(())
 }
 
 #[async_trait]
@@ -137,6 +183,14 @@ impl TenancyStore for PostgresTenancy {
                 .fetch_optional(&mut *tx)
                 .await
                 .map_err(failed("space sync"))?;
+        let stored_default_name = sqlx::query_scalar!(
+            "SELECT name FROM rh_spaces WHERE id = $1 FOR UPDATE",
+            DEFAULT_SPACE,
+        )
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(failed("space sync"))?;
+        let stored_default_name = stored_default_name.as_deref();
         match keeper {
             None => {
                 sqlx::query(
@@ -150,7 +204,20 @@ impl TenancyStore for PostgresTenancy {
             Some(keeper) if keeper == node => {}
             Some(keeper) => {
                 let stored = catalog(&mut tx).await?;
-                if stored == local_catalog(spaces) {
+                if stored == local_catalog(spaces, stored_default_name) {
+                    if let Some(stored_name) = stored_default_name
+                        && let Some(space) = spaces.iter().find(|space| space.is_default())
+                        && space.synced_name(stored_default_name) != stored_name
+                    {
+                        sqlx::query!(
+                            "UPDATE rh_spaces SET name = $1 WHERE id = $2",
+                            space.synced_name(stored_default_name),
+                            DEFAULT_SPACE,
+                        )
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(failed("space sync"))?;
+                    }
                     return tx.commit().await.map_err(failed("space sync"));
                 }
                 return Err(TenancyStoreError::CatalogConflict(format!(
@@ -165,36 +232,7 @@ impl TenancyStore for PostgresTenancy {
             .await
             .map_err(failed("space sync"))?;
         for space in spaces {
-            sqlx::query(
-                "INSERT INTO rh_spaces (id, kind, name) VALUES ($1, $2, $3)
-                 ON CONFLICT (id) DO UPDATE SET kind = EXCLUDED.kind, name = EXCLUDED.name
-                  WHERE (rh_spaces.kind, rh_spaces.name) IS DISTINCT FROM (EXCLUDED.kind, EXCLUDED.name)",
-            )
-            .bind(space.id.as_str())
-            .bind(space.kind.as_str())
-            .bind(&space.name)
-            .execute(&mut *tx)
-            .await
-            .map_err(failed("space sync"))?;
-            let members: Vec<&str> = space.members.iter().map(Owner::as_str).collect();
-            sqlx::query(
-                "DELETE FROM rh_space_members WHERE space_id = $1 AND NOT (user_id = ANY ($2::text[]))",
-            )
-            .bind(space.id.as_str())
-            .bind(&members)
-            .execute(&mut *tx)
-            .await
-            .map_err(failed("space sync"))?;
-            sqlx::query(
-                "INSERT INTO rh_space_members (space_id, user_id)
-                 SELECT $1, member FROM unnest($2::text[]) AS member
-                 ON CONFLICT (space_id, user_id) DO NOTHING",
-            )
-            .bind(space.id.as_str())
-            .bind(&members)
-            .execute(&mut *tx)
-            .await
-            .map_err(failed("space sync"))?;
+            save_space(&mut tx, space, space.synced_name(stored_default_name)).await?;
         }
         tx.commit().await.map_err(failed("space sync"))
     }
