@@ -44,8 +44,10 @@ pub fn sqlite_at(path: &Path, now: Timestamp) -> Result<Status, Error> {
     if from == CURRENT {
         return Ok(current());
     }
-    fold_write_ahead_log(path)?;
-    copy_original(path, from)?;
+    let still = crate::still::hold(path)?;
+    let copied = copy_original(path, from);
+    still.release();
+    copied?;
     let mut conn = open_writing(path)?;
     bring_through(&mut conn, from, now)?;
     Ok(current())
@@ -106,23 +108,6 @@ fn user_version_read_only(path: &Path) -> Result<i64, Error> {
             source,
         })?;
     user_version(&conn)
-}
-
-fn fold_write_ahead_log(path: &Path) -> Result<(), Error> {
-    let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)
-        .map_err(|source| Error::SqliteOpen {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    let blocked: i64 = conn
-        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
-        .map_err(Error::SqlitePragma)?;
-    if blocked != 0 {
-        return Err(Error::InUse {
-            path: path.to_path_buf(),
-        });
-    }
-    Ok(())
 }
 
 fn copy_original(path: &Path, from: SchemaVersion) -> Result<(), Error> {

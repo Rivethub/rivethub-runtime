@@ -53,6 +53,12 @@ pub enum Error {
         "{path} is in use, so its backup would miss recent changes — stop whatever has it open and try again"
     )]
     InUse { path: PathBuf },
+    #[error("{path} could not be prepared for its backup: {source}")]
+    BackupPrepare {
+        path: PathBuf,
+        #[source]
+        source: rusqlite::Error,
+    },
     #[error("a legacy summary kind has no depth mapping")]
     UnmappedSummaryKind,
     #[error("reading foreign schema objects failed: {0}")]
