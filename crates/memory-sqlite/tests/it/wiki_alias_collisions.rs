@@ -54,7 +54,7 @@ fn seeded(directory: &std::path::Path) -> TestResult<std::path::PathBuf> {
                 (slug, title, aliases, current_state, article, search_text, created_at, updated_at)
              VALUES (?1, ?1, ?2, 'Before.', 'Article.', ?1, '2026-10-10T12:00:00.000Z',
                      '2026-10-10T12:00:00.000Z')",
-            [slug, aliases],
+            rusqlite::params![slug, aliases],
         )?;
     }
     conn.execute(
