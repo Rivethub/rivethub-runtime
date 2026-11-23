@@ -441,33 +441,6 @@ async fn sqlite_pause_uses_the_file() {
     assert!(paused.stdout.contains("entity-builder running, 0 queued\n"));
 }
 
-#[tokio::test]
-async fn recompile_on_a_sqlite_node_needs_postgres() {
-    let (home, environment) = env(&[("RIVETHUB_PG_URL", "postgres://127.0.0.1:1/stray")]);
-    let database = home.path().join("memory.sqlite");
-    support::config(
-        &home,
-        &format!(
-            "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\n",
-            database.display()
-        ),
-    );
-    let wiki = home.path().join("wiki");
-    std::fs::create_dir_all(wiki.join("topics")).expect("wiki topics");
-    let environment = environment.with_override("WIKI_DIR", wiki.to_str().expect("utf-8 wiki"));
-    let report = run(
-        &[
-            "memory",
-            "recompile-wiki",
-            "--since",
-            "2026-10-01T00:00:00Z",
-        ],
-        &environment,
-    )
-    .await;
-    failure(&report, "recompile-wiki needs Postgres in this version");
-}
-
 fn dead_sqlite(path: &Path, key: &str, error: &str, at: &str) {
     let connection = rusqlite::Connection::open(path).expect("sqlite");
     connection

@@ -7,8 +7,7 @@ use kernel::wiki::builder::{WikiBuilderStore as _, WikiWriteError};
 use kernel::wiki::merge::{MergeInput, Merged, PageMerger};
 use kernel::wiki::page::bound::{ARCHIVED_TITLE, ARTICLE_BUDGET};
 use kernel::wiki::page::{
-    PagePatch, WikiAction, WikiHistoryEntry, WikiPage, WikiSlug, parse_wiki_page,
-    serialize_wiki_page,
+    PagePatch, WikiAction, WikiPage, WikiSlug, parse_wiki_page, serialize_wiki_page,
 };
 use kernel::wiki::recompile::{RecompileWiki, recompile};
 use memory_postgres::PostgresMemory;
@@ -68,14 +67,6 @@ async fn git(root: &Path, args: &[&str]) -> Result<String, Box<dyn std::error::E
         String::from_utf8_lossy(&output.stderr)
     );
     Ok(String::from_utf8(output.stdout)?)
-}
-
-fn entry(date: &str, title: &str, body: &str) -> Result<WikiHistoryEntry, jiff::Error> {
-    Ok(WikiHistoryEntry {
-        date: date.parse()?,
-        title: title.to_owned(),
-        body: body.to_owned(),
-    })
 }
 
 #[tokio::test]
@@ -210,61 +201,21 @@ async fn commit_page(root: &Path, page: &WikiPage, message: &str) -> TestResult 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn recompile_restores_pushed_out_history_and_archives_copies(pool: PgPool) -> TestResult {
     let directory = tempfile::tempdir()?;
-    let root = directory.path().join("wiki");
-    tokio::fs::create_dir_all(&root).await?;
-    git(&root, &["init", "-q", "-b", "main"]).await?;
-    let slug = WikiSlug::try_from("acmekit".to_owned())?;
-    let mut page = WikiPage::empty(slug.clone(), "AcmeKit".to_owned());
-    page.current_state = "AcmeKit ships on Fridays.".to_owned();
-    page.history = vec![
-        entry("2026-10-29", "Moved the build box", "Builds moved.")?,
-        entry("2026-10-28", "First release", "Shipped 1.0.")?,
-    ];
-    commit_page(&root, &page, "real history").await?;
-    page.history = (0..4)
-        .map(|index| entry("2026-10-30", "Superseded article", &format!("copy {index}")))
-        .collect::<Result<Vec<_>, _>>()?;
-    page.extra_sections = vec![kernel::wiki::page::ArticleSection {
-        heading: "Desktop".to_owned(),
-        body: (0..80)
-            .map(|index| format!("### Note {index}\n\n{index} {}", "y".repeat(120)))
-            .collect::<Vec<_>>()
-            .join("\n\n"),
-    }];
-    commit_page(&root, &page, "copies pushed the history out").await?;
-    let memory = PostgresMemory::new(pool.clone()).with_wiki_directory(root.clone());
-    let merger = RecordingMerger::default();
-    let job = RecompileWiki {
-        slug: slug.clone(),
-        since: "2026-10-01T00:00:00Z".parse()?,
-    };
-    let report = recompile(&memory, &merger, &job, now()?)
-        .await?
-        .ok_or("the page exists")?;
-    assert_eq!(report.restored, 2);
-    assert_eq!(report.merges, 2);
-    let stored =
-        parse_wiki_page(&tokio::fs::read_to_string(root.join("topics/acmekit.md")).await?)?;
-    let titles: Vec<&str> = stored
-        .history
-        .iter()
-        .map(|kept| kept.title.as_str())
-        .collect();
-    assert_eq!(
-        titles,
-        vec![ARCHIVED_TITLE, "Moved the build box", "First release"]
-    );
-    assert_eq!(stored.current_state, "AcmeKit ships on Fridays. Merged.");
-    let archive = tokio::fs::read_to_string(root.join("archive/acmekit/2026-10.1.md")).await?;
-    assert!(archive.contains("copy 3"));
-    assert!(archive.contains("### Note 16"));
-    assert!(archive.contains("### Note 79"));
-    let sha: String =
-        sqlx::query_scalar("SELECT git_sha FROM rh_wiki_topics WHERE slug = 'acmekit'")
-            .fetch_one(&pool)
-            .await?;
-    assert_eq!(sha, git(&root, &["rev-parse", "HEAD"]).await?.trim());
-    Ok(())
+    let root = std::fs::canonicalize(directory.path())?;
+    sqlx::query(
+        "INSERT INTO rh_conversations (id, session_key, agent, title, owner_user_id)
+         VALUES ($1, 'claude-code:recompile', 'rivet', 'Recompile', 'owner')",
+    )
+    .bind(uuid::Uuid::parse_str(testkit::wiki_files::CONVERSATION)?)
+    .execute(&pool)
+    .await?;
+    let store = PostgresMemory::new(pool).with_wiki_directory(root.clone());
+    kernel::tenancy::Scope::Maintenance
+        .run(async {
+            testkit::wiki_recompile::restores_history_and_archives_copies(&store, &root).await?;
+            testkit::wiki_recompile::validates_cited_summaries(&store, &root).await
+        })
+        .await
 }
 
 fn rotated(round: usize, sentences: &[&str]) -> String {

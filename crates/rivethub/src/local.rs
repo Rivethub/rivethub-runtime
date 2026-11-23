@@ -436,7 +436,9 @@ async fn build_runners(
             wiki: Arc::clone(store) as Arc<dyn WikiBuilderStore>,
             entity: Some(Arc::clone(store) as Arc<dyn kernel::wiki::entity_pass::EntityStore>),
             consolidate: Some(Arc::clone(store) as Arc<dyn WikiConsolidateStore>),
-            recompile: None,
+            recompile: Some(
+                Arc::clone(store) as Arc<dyn kernel::wiki::recompile::WikiRecompileStore>
+            ),
             topics: Arc::clone(store) as Arc<dyn TopicStore>,
             filing: Arc::clone(store) as Arc<dyn FilingStore>,
             pages: Arc::clone(store) as Arc<dyn TopicPageStore>,

@@ -317,13 +317,6 @@ async fn a_sqlite_node_ignores_an_environment_url_for_maintenance_commands() {
         if matches!(name, "queue-status" | "backfill-tool-synth") {
             assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
         }
-        if name == "recompile" {
-            assert!(
-                report.stderr.contains("needs Postgres in this version"),
-                "{name}: {}",
-                report.stderr
-            );
-        }
         if postgres_only(name) {
             assert!(report.stderr.contains(DATAHUB), "{name}: {}", report.stderr);
         }
@@ -459,70 +452,6 @@ fn sqlite_sidecar(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
     let mut name = path.file_name().expect("file name").to_os_string();
     name.push(suffix);
     path.with_file_name(name)
-}
-
-#[tokio::test]
-async fn recompile_on_a_sqlite_node_fails_before_scanning() {
-    let home = support::home();
-    let database = home.path().join("memory.sqlite");
-    support::config(
-        &home,
-        &format!(
-            "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\n",
-            database.display()
-        ),
-    );
-    let wiki = home.path().join("wiki");
-    std::fs::create_dir_all(wiki.join("topics")).expect("wiki");
-    let environment = support::environment(&home)
-        .with_override("WIKI_DIR", wiki.display().to_string())
-        .with_override("RIVETHUB_PG_URL", "postgres://127.0.0.1:1/closed");
-    let mut missed = String::new();
-    note_recompile(&mut missed, "dry-run", &recompile(&environment, true).await);
-    std::fs::remove_dir_all(&wiki).expect("remove wiki");
-    note_recompile(
-        &mut missed,
-        "missing-wiki",
-        &recompile(&environment, true).await,
-    );
-    std::fs::create_dir_all(wiki.join("topics")).expect("wiki");
-    std::fs::write(wiki.join("topics").join("acme.md"), "# Acme\n").expect("page");
-    let enqueue = recompile(&environment, false).await;
-    note_recompile(&mut missed, "enqueue", &enqueue);
-    if enqueue
-        .stderr
-        .contains("connection to the memory database failed")
-    {
-        missed.push_str("enqueue-connected\n");
-    }
-    assert_eq!(missed, "");
-}
-
-fn note_recompile(missed: &mut String, name: &str, report: &cli::Report) {
-    if report.exit != Exit::Failure || !report.stderr.contains("needs Postgres in this version") {
-        missed.push_str(name);
-        missed.push('\n');
-        missed.push_str(&report.stderr);
-        missed.push_str(&report.stdout);
-        missed.push('\n');
-    }
-}
-
-async fn recompile(environment: &config::Environment, dry_run: bool) -> cli::Report {
-    let mut args = vec![
-        "recompile-wiki".to_owned(),
-        "--since".to_owned(),
-        "2026-01-01T00:00:00Z".to_owned(),
-        "--slug".to_owned(),
-        "acme".to_owned(),
-        "--min-bytes".to_owned(),
-        "1".to_owned(),
-    ];
-    if dry_run {
-        args.push("--dry-run".to_owned());
-        args.push("--json".to_owned());
-    }
-    memory_args(&args, environment).await
 }
 
 async fn memory(parts: &[&str], environment: &config::Environment) -> cli::Report {
