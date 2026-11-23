@@ -173,10 +173,19 @@ impl TopicPageStore for PostgresMemory {
         let message = format!("wiki({}): removed after a tidy review", slug.as_ref());
         let removed = {
             let mut repository = self.repository().await?;
-            let removed = repository
-                .remove(&[slug.as_ref().to_owned()], &message)
+            let present = repository
+                .read(slug.as_ref())
                 .await
                 .map_err(WikiStoreError::from);
+            let removed = match present {
+                Ok(None) => Ok(()),
+                Ok(Some(_)) => repository
+                    .remove(&[slug.as_ref().to_owned()], &message)
+                    .await
+                    .map(|_| ())
+                    .map_err(WikiStoreError::from),
+                Err(error) => Err(error),
+            };
             settle(removed, repository.release().await)
         };
         removed?;

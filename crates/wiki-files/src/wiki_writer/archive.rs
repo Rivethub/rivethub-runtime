@@ -54,7 +54,7 @@ pub(super) async fn bound(
     Ok(vec![relative])
 }
 
-pub(crate) async fn archive_parts(
+pub async fn archive_parts(
     directory: &Path,
 ) -> Result<Vec<(ArchivePart, PathBuf)>, std::io::Error> {
     let mut entries = match tokio::fs::read_dir(directory).await {

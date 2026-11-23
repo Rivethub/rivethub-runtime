@@ -1,0 +1,815 @@
+SLUG acmekit-deploys
+TREE d13c31a8d4eb47a9b26c03b662efc8e53959909c
+COMMITS 1
+TIP yes
+MESSAGE
+wiki(acmekit-deploys): create from summary 00000000
+
+Provenance: summary 00000000-0000-4000-8000-0000000000d1
+Pipeline: wiki-v7
+
+BODY
+---
+title: AcmeKit deploys
+slug: acmekit-deploys
+aliases: []
+tags:
+  - ops
+entities: []
+related: []
+last_verified: 2026-10-10T12:00:00.000Z
+sources:
+  - kind: summary
+    ids:
+      - 00000000-0000-4000-8000-0000000000d1
+    conversationId: 00000000-0000-4000-8000-0000000000c1
+---
+
+## Summary
+
+AcmeKit deploys on Fridays.
+
+## Article
+
+Deploy notes.
+
+
+
+## History
+
+
+
+## Citations
+
+| Date | Kind | Summary | Note |
+|------|------|---------|------|
+| 2026-10-10 | leaf | `00000000-0000-4000-8000-0000000000d1` | AcmeKit deploys |
+
+
+SLUG acmekit-deploys
+TREE 0d2f9e24135664d41bec64a4c796a291f7a6206a
+COMMITS 2
+TIP yes
+MESSAGE
+wiki(acmekit-deploys): update from summary 00000000
+
+Provenance: summary 00000000-0000-4000-8000-0000000000d2
+Pipeline: wiki-v7
+
+BODY
+---
+title: AcmeKit deploys
+slug: acmekit-deploys
+aliases: []
+tags:
+  - ops
+entities: []
+related: []
+last_verified: 2026-10-10T13:00:00.000Z
+sources:
+  - kind: summary
+    ids:
+      - 00000000-0000-4000-8000-0000000000d2
+    conversationId: 00000000-0000-4000-8000-0000000000c1
+---
+
+## Summary
+
+AcmeKit deploys on Fridays.
+
+## Article
+
+Deploy notes.
+
+
+
+## History
+
+
+
+## Citations
+
+| Date | Kind | Summary | Note |
+|------|------|---------|------|
+| 2026-10-10 | leaf | `00000000-0000-4000-8000-0000000000d2` | AcmeKit deploys |
+
+
+SLUG label-printer
+TREE 6f3f1b3cfed0c5ed35cd98883cc476641f962675
+COMMITS 3
+TIP yes
+MESSAGE
+wiki(label-printer): create from summary 00000000
+
+Provenance: summary 00000000-0000-4000-8000-0000000000d3
+Pipeline: wiki-v7
+
+BODY
+---
+title: Label printer
+slug: label-printer
+aliases: []
+tags:
+  - ops
+entities: []
+related: []
+last_verified: 2026-10-10T14:00:00.000Z
+sources:
+  - kind: summary
+    ids:
+      - 00000000-0000-4000-8000-0000000000d3
+    conversationId: 00000000-0000-4000-8000-0000000000c1
+---
+
+## Summary
+
+The label printer jams on Mondays.
+
+
+
+## History
+
+
+
+## Citations
+
+| Date | Kind | Summary | Note |
+|------|------|---------|------|
+| 2026-10-10 | leaf | `00000000-0000-4000-8000-0000000000d3` | Label printer |
+
+
+SLUG acmekit-deploys
+TREE b814423e9a738cbe3a2051978583408b6fe2923d
+COMMITS 4
+TIP yes
+MESSAGE
+wiki(acmekit-deploys): consolidate label-printer
+
+Pipeline: wiki-v7
+
+BODY
+---
+title: AcmeKit deploys
+slug: acmekit-deploys
+aliases:
+  - label-printer
+tags:
+  - ops
+entities: []
+related: []
+last_verified: 2026-10-10T13:00:00.000Z
+sources: []
+---
+
+## Summary
+
+The label printer jams on Mondays.
+
+## Article
+
+Deploy notes.
+
+#### Superseded parent text
+
+**Displaced parent summary:**
+
+AcmeKit deploys on Fridays.
+
+#### Merged from label-printer
+
+**Label printer**
+
+
+
+## History
+
+
+
+
+SLUG field-notes
+TREE 047c28089465e9f99510f1aafb8918014e981626
+COMMITS 5
+TIP yes
+MESSAGE
+wiki(field-notes): sync topic page
+
+Pipeline: wiki-v7
+
+BODY
+---
+title: Field notes
+slug: field-notes
+aliases: []
+tags: []
+entities: []
+related: []
+sources: []
+---
+
+## Summary
+
+Notes from the bench.
+
+## Article
+
+The bench faces the window.
+
+
+
+## History
+
+
+
+
+SLUG field-notes
+TREE 31520f3c49fdfa75e62de9405436b8a0bab206e0
+COMMITS 6
+TIP yes
+MESSAGE
+wiki(field-notes): Edited in Memory
+
+Source: user
+
+BODY
+---
+title: Field notes
+slug: field-notes
+aliases: []
+tags: []
+entities: []
+related: []
+sources:
+  - kind: user
+    ids: []
+---
+
+## Summary
+
+Notes from the repaired bench.
+
+## Article
+
+The bench faces the window.
+
+
+
+## History
+
+### 2026-10-10 — Edited in Memory
+
+Edited by hand in RivetHub's Memory page.
+
+
+SLUG tinbox
+TREE 95bb008bc92f55526d878df91b995fd0f89753f0
+COMMITS 7
+TIP yes
+MESSAGE
+entity tinbox
+
+BODY
+---
+title: tinbox
+slug: tinbox
+aliases: []
+tags:
+  - tools
+  - Tools
+entities: []
+related: []
+last_verified: 2026-10-10T18:00:00.000Z
+sources:
+  - kind: summary
+    ids:
+      - 00000000-0000-4000-8000-0000000000e1
+    conversationId: 00000000-0000-4000-8000-0000000000c1
+---
+
+## Summary
+
+A tin box.
+
+## Article
+
+A tin box. Kept on the bench.
+
+### Current facts
+
+- **place**: bench (as of 2026-10-10)
+
+
+
+## History
+
+### 2026-10-10
+
+Noted tinbox.
+
+## Citations
+
+| Date | Kind | Summary | Note |
+|------|------|---------|------|
+| 2026-10-10 | leaf | `00000000-0000-4000-8000-0000000000e1` |  |
+
+
+SLUG outbox
+TREE a4360a41e3b434a1ef691681fa3b3e5be96942e7
+COMMITS 8
+TIP yes
+MESSAGE
+entity outbox
+
+BODY
+---
+title: outbox
+slug: outbox
+aliases: []
+tags:
+  - tools
+  - Tools
+entities: []
+related: []
+last_verified: 2026-10-10T19:00:00.000Z
+sources:
+  - kind: summary
+    ids:
+      - 00000000-0000-4000-8000-0000000000e2
+    conversationId: 00000000-0000-4000-8000-0000000000c1
+---
+
+## Summary
+
+An out box.
+
+## Article
+
+An out box. Kept on the bench.
+
+### Current facts
+
+- **place**: bench (as of 2026-10-10)
+
+
+
+## History
+
+### 2026-10-10
+
+Noted outbox.
+
+## Citations
+
+| Date | Kind | Summary | Note |
+|------|------|---------|------|
+| 2026-10-10 | leaf | `00000000-0000-4000-8000-0000000000e2` |  |
+
+
+SLUG outbox
+TREE 95bb008bc92f55526d878df91b995fd0f89753f0
+COMMITS 9
+TIP yes
+MESSAGE
+entity merge: remove outbox
+
+BODY
+<removed>
+
+SLUG zeta-shelf
+TREE 20fa9c53982943f83e114fdf1bf2995cf38fa602
+COMMITS 11
+TIP no
+MESSAGE
+wiki(zeta-shelf): create from summary 00000000
+
+Provenance: summary 00000000-0000-4000-8000-0000000000d4
+Pipeline: wiki-v7
+
+BODY
+---
+title: Zeta shelf
+slug: zeta-shelf
+aliases: []
+tags:
+  - ops
+entities: []
+related: []
+last_verified: 2026-10-10T21:00:00.000Z
+sources:
+  - kind: summary
+    ids:
+      - 00000000-0000-4000-8000-0000000000d4
+    conversationId: 00000000-0000-4000-8000-0000000000c1
+---
+
+## Summary
+
+Zeta shelf holds the jars.
+
+
+
+## History
+
+
+
+## Citations
+
+| Date | Kind | Summary | Note |
+|------|------|---------|------|
+| 2026-10-10 | leaf | `00000000-0000-4000-8000-0000000000d4` | Zeta shelf |
+
+
+SLUG alpha-shelf
+TREE 20fa9c53982943f83e114fdf1bf2995cf38fa602
+COMMITS 11
+TIP yes
+MESSAGE
+wiki(alpha-shelf): create from summary 00000000
+
+Provenance: summary 00000000-0000-4000-8000-0000000000d4
+Pipeline: wiki-v7
+
+BODY
+---
+title: Alpha shelf
+slug: alpha-shelf
+aliases: []
+tags:
+  - ops
+entities: []
+related: []
+last_verified: 2026-10-10T21:00:00.000Z
+sources:
+  - kind: summary
+    ids:
+      - 00000000-0000-4000-8000-0000000000d4
+    conversationId: 00000000-0000-4000-8000-0000000000c1
+---
+
+## Summary
+
+Alpha shelf holds the tins.
+
+
+
+## History
+
+
+
+## Citations
+
+| Date | Kind | Summary | Note |
+|------|------|---------|------|
+| 2026-10-10 | leaf | `00000000-0000-4000-8000-0000000000d4` | Alpha shelf |
+
+
+SLUG field-notes
+TREE 959bb54905f25be8e33e8520118cd6be2c8860e3
+COMMITS 12
+TIP yes
+MESSAGE
+wiki(field-notes): sync topic page
+
+Pipeline: wiki-v7
+
+BODY
+---
+title: Field notes
+slug: field-notes
+aliases: []
+tags: []
+entities: []
+related: []
+sources:
+  - kind: user
+    ids: []
+---
+
+## Summary
+
+Notes from the late bench.
+
+## Article
+
+The bench faces the window.
+
+
+
+## History
+
+### 2026-10-10 — Edited in Memory
+
+Edited by hand in RivetHub's Memory page.
+
+
+SLUG field-notes
+TREE 453895681f012b2bb88488ca5123d48fce101e61
+COMMITS 13
+TIP yes
+MESSAGE
+wiki(field-notes): removed after a tidy review
+
+BODY
+<removed>
+
+SLUG tinbox
+TREE <embeds-commit>
+COMMITS 14
+TIP yes
+MESSAGE
+entity tinbox
+
+BODY
+---
+title: tinbox
+slug: tinbox
+aliases:
+  - outbox
+tags:
+  - tools
+  - Tools
+entities: []
+related: []
+last_verified: 2026-10-10T18:00:00.000Z
+sources:
+  - kind: summary
+    ids:
+      - 00000000-0000-4000-8000-0000000000e1
+      - 00000000-0000-4000-8000-0000000000e2
+    conversationId: 00000000-0000-4000-8000-0000000000c1
+---
+
+## Summary
+
+Direct summary.
+
+## Article
+
+Direct article.
+
+### Current facts
+
+- **place**: bench (as of 2026-10-10)
+
+
+
+## History
+
+### 2026-10-10 — Archived
+
+Moved 29 B to [the archive](/wiki/tinbox/archive/2026-10#a-20261010T220000000Z): Article. Last inline at `<commit>`.
+
+### 2026-10-10
+
+Noted outbox.
+
+### 2026-10-10
+
+Noted tinbox.
+
+## Citations
+
+| Date | Kind | Summary | Note |
+|------|------|---------|------|
+| 2026-10-10 | leaf | `00000000-0000-4000-8000-0000000000e2` |  |
+| 2026-10-10 | leaf | `00000000-0000-4000-8000-0000000000e1` |  |
+
+
+SLUG tinbox
+TREE <embeds-commit>
+COMMITS 15
+TIP yes
+MESSAGE
+entity tinbox
+
+BODY
+---
+title: tinbox
+slug: tinbox
+aliases:
+  - outbox
+tags:
+  - tools
+  - Tools
+entities: []
+related: []
+last_verified: 2026-10-10T18:00:00.000Z
+sources:
+  - kind: summary
+    ids:
+      - 00000000-0000-4000-8000-0000000000e1
+      - 00000000-0000-4000-8000-0000000000e2
+      - 00000000-0000-4000-8000-0000000000e7
+    conversationId: 00000000-0000-4000-8000-0000000000c1
+---
+
+## Summary
+
+Direct summary.
+
+## Article
+
+Direct article.
+
+### Current facts
+
+- **place**: bench (as of 2026-10-10)
+
+
+
+## History
+
+### 2026-10-10
+
+Mentioned after publication.
+
+### 2026-10-10
+
+Noted outbox.
+
+### 2026-10-10
+
+Noted tinbox.
+
+## Citations
+
+| Date | Kind | Summary | Note |
+|------|------|---------|------|
+| 2026-10-10 | leaf | `00000000-0000-4000-8000-0000000000e7` |  |
+| 2026-10-10 | leaf | `00000000-0000-4000-8000-0000000000e2` |  |
+| 2026-10-10 | leaf | `00000000-0000-4000-8000-0000000000e1` |  |
+
+
+SLUG crowded-shelf
+TREE <embeds-commit>
+COMMITS 16
+TIP yes
+MESSAGE
+wiki(crowded-shelf): create from summary 00000000
+
+Provenance: summary 00000000-0000-4000-8000-0000000000d6
+Pipeline: wiki-v7
+
+BODY
+---
+title: Crowded shelf
+slug: crowded-shelf
+aliases: []
+tags:
+  - ops
+entities:
+  - entity-02
+  - entity-03
+  - entity-04
+  - entity-05
+  - entity-06
+  - entity-07
+  - entity-08
+  - entity-09
+  - entity-10
+  - entity-11
+  - entity-12
+  - entity-13
+  - entity-14
+  - entity-15
+  - entity-16
+  - entity-17
+  - entity-18
+  - entity-19
+  - entity-20
+  - entity-21
+  - entity-22
+  - entity-23
+  - entity-24
+  - entity-25
+  - entity-26
+  - entity-27
+  - entity-28
+  - entity-29
+  - entity-30
+  - entity-31
+  - entity-32
+  - entity-33
+  - entity-34
+  - entity-35
+  - entity-36
+  - entity-37
+  - entity-38
+  - entity-39
+  - entity-40
+  - entity-41
+  - entity-42
+  - entity-43
+  - entity-44
+  - entity-45
+  - entity-46
+  - entity-47
+  - entity-48
+  - entity-49
+  - entity-50
+  - entity-51
+  - entity-52
+  - entity-53
+  - entity-54
+  - entity-55
+  - entity-56
+  - entity-57
+  - entity-58
+  - entity-59
+  - entity-60
+  - entity-61
+  - entity-62
+  - entity-63
+  - entity-64
+  - entity-65
+related: []
+last_verified: 2026-10-11T00:00:00.000Z
+sources:
+  - kind: summary
+    ids:
+      - 00000000-0000-4000-8000-0000000000d6
+    conversationId: 00000000-0000-4000-8000-0000000000c1
+---
+
+## Summary
+
+Every jar has a label.
+
+## Article
+
+The labels face out.
+
+
+
+## History
+
+
+
+## Citations
+
+| Date | Kind | Summary | Note |
+|------|------|---------|------|
+| 2026-10-11 | leaf | `00000000-0000-4000-8000-0000000000d6` | Crowded shelf |
+
+ARCHIVE
+# Archive: Crowded shelf, 2026-10
+
+Text moved out of [[crowded-shelf]] in 2026-10 when a rewrite removed it or it went over its size budget, oldest first.
+
+<a id="a-20261011T000000000Z"></a>
+
+## 2026-10-11 00:00 UTC (last inline at <commit>)
+
+### Entities
+
+entity-01
+
+SLUG bench
+TREE <embeds-commit>
+COMMITS 18
+TIP yes
+MESSAGE
+wiki(bench): update from summary 00000000
+
+Provenance: summary 00000000-0000-4000-8000-0000000000d7
+Pipeline: wiki-v7
+
+BODY
+---
+title: Bench
+slug: bench
+aliases: []
+tags:
+  - ops
+entities: []
+related: []
+last_verified: 2026-10-11T01:00:00.000Z
+sources:
+  - kind: summary
+    ids:
+      - 00000000-0000-4000-8000-0000000000d7
+    conversationId: 00000000-0000-4000-8000-0000000000c1
+---
+
+## Summary
+
+Bench one.
+
+## Article
+
+Second cut.
+
+
+
+## History
+
+### 2026-10-11 — Archived
+
+Moved 10 B to [the archive](/wiki/bench/archive/2026-10#a-20261011T010000000Z): Article. Last inline at `<commit>`.
+
+## Citations
+
+| Date | Kind | Summary | Note |
+|------|------|---------|------|
+| 2026-10-11 | leaf | `00000000-0000-4000-8000-0000000000d7` | Bench |
+
+

@@ -314,6 +314,7 @@ fn claim_message(error: &SqliteError) -> Option<String> {
         | SqliteError::Invalid { .. }
         | SqliteError::Width { .. }
         | SqliteError::EmbedModel { .. }
+        | SqliteError::WikiIo(_)
         | SqliteError::SummaryReference(_) => None,
     }
 }

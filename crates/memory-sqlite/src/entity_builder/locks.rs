@@ -57,7 +57,7 @@ impl Key {
         Ok(changed == 1)
     }
 
-    fn renew(self, tx: &Transaction<'_>) -> Result<bool, EntityStoreError> {
+    pub(super) fn renew(self, tx: &Transaction<'_>) -> Result<bool, EntityStoreError> {
         let changed = tx
             .execute(
                 "UPDATE rh_entity_leases SET expires_at = unixepoch() + ?3

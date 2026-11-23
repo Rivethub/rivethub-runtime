@@ -166,7 +166,10 @@ async fn run(
     crate::identity::announce_resolved("mcp", &config, env).map_err(StartupError::from)?;
     let (memory, backend): (Arc<dyn MemoryStore>, SessionStore) = if config.sqlite_selected() {
         let store = sqlite(&config, env, &shutdown, activities).await?;
-        (Arc::new(store.clone()), SessionStore::Sqlite(store))
+        (
+            Arc::new(store.clone()),
+            SessionStore::Sqlite(Box::new(store)),
+        )
     } else {
         let store =
             Arc::new(postgres(&config, env, &shutdown, activities, Pooling::OnDemand).await?);
@@ -300,7 +303,9 @@ async fn sqlite(
         }
         None => store,
     };
-    let store = store.with_language_available(config.memory_models_available());
+    let store = store
+        .with_language_available(config.memory_models_available())
+        .with_wiki_directory(config.wiki_directory(env));
     Ok(match model {
         Some(model) => store.with_embed_model(&model),
         None => store,

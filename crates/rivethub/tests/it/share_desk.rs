@@ -54,7 +54,7 @@ fn desk(node: &Node, block: bool) -> TestResult<NodeDesk> {
         &config,
         &env,
         node.owner.clone(),
-        cli::memory::SessionStore::Sqlite(store.clone()),
+        cli::memory::SessionStore::Sqlite(Box::new(store.clone())),
         Arc::new(store),
     )?)
 }

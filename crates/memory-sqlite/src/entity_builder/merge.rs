@@ -25,17 +25,29 @@ struct StoredSide {
     created: String,
 }
 
+pub(super) struct MergeWork {
+    pub(super) outcome: Option<EntityMerge>,
+    pub(super) drop_slug: Option<String>,
+}
+
 pub(super) fn pair(
     conn: &Connection,
     left: Uuid,
     right: Uuid,
     now: Timestamp,
-) -> Result<Option<EntityMerge>, EntityStoreError> {
+) -> Result<MergeWork, EntityStoreError> {
     match (load(conn, left)?, load(conn, right)?) {
         (Some(left), Some(right)) => both(conn, left, right, now),
-        (Some(found), None) => Ok(already(found, right)),
-        (None, Some(found)) => Ok(already(found, left)),
-        (None, None) => Ok(None),
+        (Some(found), None) => Ok(kept(already(found, right))),
+        (None, Some(found)) => Ok(kept(already(found, left))),
+        (None, None) => Ok(kept(None)),
+    }
+}
+
+fn kept(outcome: Option<EntityMerge>) -> MergeWork {
+    MergeWork {
+        outcome,
+        drop_slug: None,
     }
 }
 
@@ -89,12 +101,12 @@ fn both(
     left: Side,
     right: Side,
     now: Timestamp,
-) -> Result<Option<EntityMerge>, EntityStoreError> {
+) -> Result<MergeWork, EntityStoreError> {
     if left.kind != "entity"
         || right.kind != "entity"
         || host_party_mismatch(&left.type_name, &right.type_name)
     {
-        return Ok(None);
+        return Ok(kept(None));
     }
     let (survivor, absorbed) = if (left.created, left.id) <= (right.created, right.id) {
         (left, right)
@@ -111,16 +123,19 @@ fn both(
     )
     .map_err(query)?;
     identity::add_alias(conn, survivor.id, &absorbed.name)?;
-    redirect_wiki(conn, &survivor, &absorbed, now)?;
+    let drop_slug = redirect_wiki(conn, &survivor, &absorbed, now)?;
     repoint(conn, &keep, &drop, absorbed.parent.as_deref())?;
     retire(conn, &survivor, &absorbed, now)?;
-    Ok(Some(EntityMerge {
-        survivor: survivor.id,
-        absorbed: absorbed.id,
-        survivor_name: survivor.name,
-        absorbed_name: absorbed.name,
-        performed: true,
-    }))
+    Ok(MergeWork {
+        outcome: Some(EntityMerge {
+            survivor: survivor.id,
+            absorbed: absorbed.id,
+            survivor_name: survivor.name,
+            absorbed_name: absorbed.name,
+            performed: true,
+        }),
+        drop_slug,
+    })
 }
 
 fn move_facts(conn: &Connection, keep: &str, drop: &str) -> Result<(), EntityStoreError> {
@@ -210,9 +225,9 @@ fn redirect_wiki(
     keep: &Side,
     drop: &Side,
     now: Timestamp,
-) -> Result<(), EntityStoreError> {
+) -> Result<Option<String>, EntityStoreError> {
     if keep.slug == drop.slug {
-        return Ok(());
+        return Ok(None);
     }
     let time = stamp(now);
     conn.execute(
@@ -247,7 +262,7 @@ fn redirect_wiki(
          ON CONFLICT (from_slug) DO UPDATE SET to_slug = excluded.to_slug, created_at = excluded.created_at",
         params![keep.slug, drop.slug, time],
     ).map_err(query)?;
-    Ok(())
+    Ok(Some(drop.slug.clone()))
 }
 
 fn repoint(

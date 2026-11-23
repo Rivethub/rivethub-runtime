@@ -67,6 +67,14 @@ impl MemoryStore for SqliteStore {
         self.read_wiki_page(slug).await
     }
 
+    async fn wiki_archive(
+        &self,
+        slug: &WikiSlug,
+        month: Option<&str>,
+    ) -> Result<Option<String>, MemoryStoreError> {
+        self.read_wiki_archive(slug.as_ref(), month).await
+    }
+
     async fn wiki_gaps(&self, limit: u32) -> Result<WikiGapsResponse, MemoryStoreError> {
         self.read_wiki_gaps(limit).await
     }

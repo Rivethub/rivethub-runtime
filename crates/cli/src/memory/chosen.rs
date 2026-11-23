@@ -150,7 +150,7 @@ pub(super) async fn load(store: Store, env: &Environment) -> Result<Chosen, Erro
         Target::Postgres(url) => {
             SessionStore::Postgres(Arc::new(PostgresMemory::connect(&url).await?))
         }
-        Target::Sqlite(path) => SessionStore::Sqlite(open_sqlite(&path).await?),
+        Target::Sqlite(path) => SessionStore::Sqlite(Box::new(open_sqlite(&path).await?)),
     };
     let chosen = sessions.chosen(&author, &owner, &store.choices).await?;
     Ok(capture::share::chosen(author, chosen, Timestamp::now())?)

@@ -14,6 +14,7 @@ mod local;
 mod local_ensure;
 mod mcp_memory;
 mod mcp_sqlite;
+mod memory_import;
 mod node_name;
 mod owner;
 mod pgdb;

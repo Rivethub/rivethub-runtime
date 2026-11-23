@@ -31,6 +31,14 @@ struct Existing {
     related: String,
 }
 
+pub(crate) fn canonical(
+    conn: &Connection,
+    patch: &WikiPatch,
+    page: Option<&WikiSlug>,
+) -> Result<String, WikiStoreError> {
+    resolve(conn, patch, page)
+}
+
 pub(crate) fn apply(
     conn: &Connection,
     summary: &WikiSummary,
@@ -38,7 +46,7 @@ pub(crate) fn apply(
     page: Option<&WikiSlug>,
     now: Timestamp,
 ) -> Result<Option<String>, WikiStoreError> {
-    let slug = canonical(conn, patch, page)?;
+    let slug = resolve(conn, patch, page)?;
     let aliases = alias_list(patch, &slug);
     let at = time::stamp(now);
     let existing = load(conn, &slug)?;
@@ -277,7 +285,7 @@ fn load(conn: &Connection, slug: &str) -> Result<Option<Existing>, WikiStoreErro
     .map_err(query)
 }
 
-fn canonical(
+fn resolve(
     conn: &Connection,
     patch: &WikiPatch,
     page: Option<&WikiSlug>,
@@ -372,7 +380,7 @@ fn matches(conn: &Connection, candidate: &str) -> Result<Vec<(String, bool)>, Wi
     Ok(slugs)
 }
 
-fn redirects(
+pub(crate) fn redirects(
     conn: &Connection,
     slug: &str,
     aliases: &[String],
@@ -405,7 +413,7 @@ fn redirects(
     Ok(())
 }
 
-fn provenance(
+pub(crate) fn provenance(
     conn: &Connection,
     slug: &str,
     summary: &WikiSummary,

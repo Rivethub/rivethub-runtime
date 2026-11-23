@@ -147,7 +147,7 @@
       "article": "# Deploy\nquartz",
       "search_text": "quartz deploy",
       "history_count": 2,
-      "git_sha": "0123456789abcdef",
+      "git_sha": null,
       "last_verified_at": "2026-10-10T12:03:00.000Z",
       "created_at": "2026-10-10T12:02:00.000Z",
       "updated_at": "2026-10-10T12:03:00.000Z",
@@ -165,7 +165,7 @@
       "source_kind": "summary",
       "source_id": "00000000-0000-4000-8000-200000000003",
       "conversation_id": "00000000-0000-4000-8000-200000000001",
-      "git_sha": "0123456789abcdef",
+      "git_sha": null,
       "created_at": "2026-10-10T12:03:00.000Z"
     }
   ],
@@ -177,7 +177,7 @@
       "topics_touched": [
         "acmekit"
       ],
-      "git_sha": "0123456789abcdef",
+      "git_sha": null,
       "error": null,
       "extracted_at": "2026-10-10T12:03:00.000Z"
     }

@@ -21,7 +21,7 @@ pub(super) fn clear(page: &mut WikiPage) -> bool {
     had_citations || source_count != page.meta.sources.len()
 }
 
-pub(crate) fn archive(markdown: String) -> Result<String, WikiPageError> {
+pub fn archive(markdown: String) -> Result<String, WikiPageError> {
     #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let projected = match parse_wiki_page(&markdown) {
         Ok(page) => project_page(markdown, page, &[], &[])?,
@@ -32,7 +32,7 @@ pub(crate) fn archive(markdown: String) -> Result<String, WikiPageError> {
     ))
 }
 
-pub(crate) fn project(
+pub fn project(
     markdown: String,
     citations: &[WikiCitation],
     sources: &[WikiSource],

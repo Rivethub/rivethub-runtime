@@ -68,7 +68,7 @@ mod wiki;
 mod wiki_builder;
 mod wiki_citations;
 mod wiki_scope;
-pub mod wiki_writer;
+pub use wiki_files::wiki_writer;
 mod worker_pauses;
 
 #[cfg(test)]
