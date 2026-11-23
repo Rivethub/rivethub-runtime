@@ -140,6 +140,30 @@ async fn reports_all_missing_type_slugs_before_writing_either_destination(
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn an_unowned_hub_redirect_takes_the_owner_that_arrives(pool: PgPool) -> TestResult {
+    sqlx::raw_sql(
+        "INSERT INTO rh_wiki_topics (slug, title, owner_user_id) VALUES
+            ('alice-page', 'A', 'alice'), ('bob-page', 'B', 'bob');
+         INSERT INTO rh_wiki_redirects (from_slug, to_slug, created_at, owner_user_id)
+            VALUES ('legacy', 'alice-page', now(), NULL), ('legacy-bob', 'bob-page', now(), NULL)",
+    )
+    .execute(&pool)
+    .await?;
+    let directory = tempfile::tempdir()?;
+    let local = store(&directory, "local")?;
+    copy(&pool, &local, "alice", Direction::ToSqlite).await?;
+    copy(&pool, &local, "alice", Direction::ToPostgres).await?;
+    let owners: Vec<String> = sqlx::query_scalar(
+        "SELECT from_slug || ':' || coalesce(owner_user_id, '') FROM rh_wiki_redirects
+         ORDER BY from_slug",
+    )
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(owners, vec!["legacy:alice", "legacy-bob:"]);
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn exports_redirects_by_creator_and_target(pool: PgPool) -> TestResult {
     sqlx::raw_sql(
         "INSERT INTO rh_wiki_topics (slug, title, owner_user_id) VALUES
