@@ -95,8 +95,6 @@ pub(super) fn vectors(
           AND (?4 IS NULL OR s.index_key = ?4)"
     );
     let key = plan.summary_index_key.as_ref().map(<[_; 32]>::as_slice);
-    let query: Vec<_> = query.iter().map(|value| half_precision(*value)).collect();
-    let norm = query.iter().map(|value| value * value).sum::<f64>();
     load(
         conn,
         plan,
@@ -105,12 +103,18 @@ pub(super) fn vectors(
         |row| {
             let vector = row.get_ref(8).map_err(SqliteError::query(OPERATION))?;
             let bytes = vector.as_blob().map_err(|_| SqliteError::StoredEmbedding)?;
-            cosine(bytes, &query, norm)
+            score_bytes(bytes, query)
         },
     )
 }
 
-fn half_precision(value: f32) -> f64 {
+pub(super) fn score_bytes(bytes: &[u8], vector: &[f32]) -> Result<f64, SqliteError> {
+    let query: Vec<f64> = vector.iter().copied().map(half_precision).collect();
+    let norm = query.iter().map(|value| value * value).sum::<f64>();
+    cosine(bytes, &query, norm)
+}
+
+pub(super) fn half_precision(value: f32) -> f64 {
     f64::from(f16::from_f32(value).to_f32())
 }
 
@@ -191,6 +195,7 @@ fn candidate(row: &Row<'_>, plan: &Plan) -> rusqlite::Result<(String, u32, Candi
             content: row.get(3)?,
             created_at: plan.now,
             rank: 0.0,
+            chunk: None,
             kind: Kind::Summary {
                 session_id: Some(kernel::filing::session_key(Some(&channel), &key)),
             },

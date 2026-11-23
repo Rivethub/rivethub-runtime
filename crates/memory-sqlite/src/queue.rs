@@ -373,26 +373,26 @@ fn fail_one(
     }
     let attempts = u32::try_from(attempts).map_err(SqliteError::Count)?;
     let max_attempts = u32::try_from(max_attempts).map_err(SqliteError::Count)?;
-    let (outcome, state) = if attempts >= max_attempts.min(kernel::flagged::FLAG_AFTER_FAILURES) {
-        (FailOutcome::Dead, JobState::Dead)
-    } else {
-        (FailOutcome::Retry, JobState::Queued)
-    };
-    let run_at = later(now, attempts)?;
     let clipped: String = error.chars().take(ERROR_CHARS).collect();
-    tx.execute(
-        "UPDATE ros_jobs
-            SET state = ?2, run_at = ?3, last_error = ?4, locked_at = NULL, updated_at = ?5
-          WHERE id = ?1",
-        params![
-            id,
-            state.to_string(),
-            time::stamp(run_at),
-            clipped,
-            time::stamp(now)
-        ],
-    )
-    .map_err(SqliteError::query("job fail"))?;
+    let failures = crate::flagged::record_failure(&tx, id, now)?;
+    let open = crate::flagged::key_is_flagged(&tx, id)?;
+    let outcome = if attempts >= max_attempts
+        || failures >= i64::from(kernel::flagged::FLAG_AFTER_FAILURES)
+        || open
+    {
+        crate::flagged::archive_job(&tx, id, &clipped, now)?;
+        FailOutcome::Dead
+    } else {
+        let run_at = later(now, attempts)?;
+        tx.execute(
+            "UPDATE ros_jobs
+                SET state = 'queued', run_at = ?2, last_error = ?3, locked_at = NULL, updated_at = ?4
+              WHERE id = ?1",
+            params![id, time::stamp(run_at), clipped, time::stamp(now)],
+        )
+        .map_err(SqliteError::query("job fail"))?;
+        FailOutcome::Retry
+    };
     tx.commit().map_err(SqliteError::query("job fail commit"))?;
     Ok(outcome)
 }
@@ -414,15 +414,23 @@ fn delete_job(conn: &mut Connection, id: &str, now: Timestamp) -> Result<(), Sql
     let tx = conn
         .transaction()
         .map_err(SqliteError::query("job complete"))?;
-    let task: Option<String> = tx
+    let finished: Option<(String, Option<String>)> = tx
         .query_row(
-            "DELETE FROM ros_jobs WHERE id = ?1 RETURNING task",
+            "DELETE FROM ros_jobs WHERE id = ?1 RETURNING task, job_key",
             [id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
         .map_err(SqliteError::query("job complete"))?;
-    let task = task.ok_or_else(|| SqliteError::MissingJob { id: id.to_owned() })?;
+    let Some((task, key)) = finished else {
+        return Err(SqliteError::MissingJob { id: id.to_owned() });
+    };
+    if let Some(key) = key {
+        tx.execute("DELETE FROM rh_job_failures WHERE job_key = ?1", [&key])
+            .map_err(SqliteError::query("job complete"))?;
+        tx.execute("DELETE FROM rh_flagged_jobs WHERE job_key = ?1", [&key])
+            .map_err(SqliteError::query("job complete"))?;
+    }
     tx.execute(
         "INSERT INTO rh_worker_runs (task, finished_at) VALUES (?1, ?2)
          ON CONFLICT (task) DO UPDATE SET finished_at = excluded.finished_at",
@@ -463,7 +471,7 @@ pub(crate) fn arm(conn: &Connection, key: &str, job: &JobInsert) -> Result<bool,
         .optional()
         .map_err(SqliteError::query("job arm"))?;
     let Some((id, priority)) = waiting else {
-        replace(conn, key, job)?;
+        retarget(conn, key, job)?;
         return Ok(true);
     };
     if i64::from(job.priority) < priority {
@@ -477,7 +485,7 @@ pub(crate) fn arm(conn: &Connection, key: &str, job: &JobInsert) -> Result<bool,
     Ok(false)
 }
 
-pub(crate) fn replace(conn: &Connection, key: &str, job: &JobInsert) -> Result<(), SqliteError> {
+pub(crate) fn retarget(conn: &Connection, key: &str, job: &JobInsert) -> Result<(), SqliteError> {
     let changed = conn
         .execute(
             "UPDATE ros_jobs
@@ -501,6 +509,76 @@ pub(crate) fn replace(conn: &Connection, key: &str, job: &JobInsert) -> Result<(
     } else {
         rank_key(conn, key, job.priority)
     }
+}
+
+pub(crate) fn replace(conn: &Connection, key: &str, job: &JobInsert) -> Result<(), SqliteError> {
+    let existing = conn
+        .query_row(
+            "SELECT id, state, locked_at, max_attempts FROM ros_jobs WHERE job_key = ?1",
+            [key],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(SqliteError::query("job replace"))?;
+    let Some((id, state, locked_at, max_attempts)) = existing else {
+        return Err(SqliteError::MissingJob { id: key.to_owned() });
+    };
+    if fresh_lock(&state, locked_at.as_deref(), job.now)? {
+        detach(conn, &id, max_attempts, job.now)?;
+        return inserted(insert_job(conn, job)?.as_ref());
+    }
+    rewrite(conn, &id, job)
+}
+
+fn fresh_lock(state: &str, locked_at: Option<&str>, now: Timestamp) -> Result<bool, SqliteError> {
+    if state != "running" {
+        return Ok(false);
+    }
+    let Some(locked_at) = locked_at else {
+        return Ok(false);
+    };
+    Ok(time::stored(locked_at, "locked_at")? >= time::unlock_before(now)?)
+}
+
+fn detach(conn: &Connection, id: &str, attempts: i64, now: Timestamp) -> Result<(), SqliteError> {
+    conn.execute(
+        "UPDATE ros_jobs SET job_key = NULL, attempts = ?2, updated_at = ?3 WHERE id = ?1",
+        params![id, attempts, time::stamp(now)],
+    )
+    .map(|_| ())
+    .map_err(SqliteError::query("job replace"))
+}
+
+fn inserted(id: Option<&String>) -> Result<(), SqliteError> {
+    match id {
+        Some(_) => Ok(()),
+        None => Err(SqliteError::InsertRejected),
+    }
+}
+
+fn rewrite(conn: &Connection, id: &str, job: &JobInsert) -> Result<(), SqliteError> {
+    conn.execute(
+        "UPDATE ros_jobs
+            SET payload = ?2, run_at = ?3, updated_at = ?4, attempts = 0, max_attempts = ?5,
+                last_error = NULL, state = 'queued', locked_at = NULL
+          WHERE id = ?1",
+        params![
+            id,
+            job.payload,
+            time::stamp(job.run_at),
+            time::stamp(job.now),
+            i64::from(job.max_attempts)
+        ],
+    )
+    .map_err(SqliteError::query("job replace"))?;
+    rank(conn, id, job.priority)
 }
 
 fn duplicate_key(error: &rusqlite::Error) -> bool {

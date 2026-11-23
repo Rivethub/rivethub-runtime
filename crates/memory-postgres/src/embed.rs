@@ -18,7 +18,7 @@ const EMBED_TIMEOUT_MAX_MS: u64 = 60_000;
 const EMBED_CACHE_TTL: Duration = Duration::from_mins(10);
 const EMBED_CACHE_CAPACITY: usize = 256;
 const WARN_THROTTLE: Duration = Duration::from_secs(60);
-const HNSW_EF_SEARCH_DEFAULT: u32 = 100;
+pub(crate) const HNSW_EF_SEARCH_DEFAULT: u32 = 100;
 const HNSW_EF_SEARCH_MIN: u32 = 10;
 const HNSW_EF_SEARCH_MAX: u32 = 1000;
 

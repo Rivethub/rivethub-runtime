@@ -116,9 +116,12 @@ fn due_sql(count: usize, due: Due) -> String {
             "",
         ),
     };
+    let threshold = kernel::flagged::FLAG_AFTER_FAILURES;
     format!(
         "SELECT j.id, j.task, j.job_key, j.payload, j.max_attempts, {rank} FROM {from} \
          WHERE j.state = 'queued' AND j.run_at <= ?1 AND j.task IN ({slots}) \
+         AND j.attempts < j.max_attempts \
+         AND j.attempts < {threshold} \
          AND (?{pin} IS NULL OR j.id = ?{pin}){unranked} \
          ORDER BY {order}j.run_at, j.rowid LIMIT 1"
     )

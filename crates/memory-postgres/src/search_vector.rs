@@ -12,19 +12,14 @@ use crate::search_sql::recency_columns;
 use crate::search_sql::semantic_floor;
 use crate::search_sql::{ArmSqlRow, SearchTable};
 use kernel::memory::MemoryScope;
+use kernel::memory::SearchMode;
+use kernel::memory_core::chunk_pool;
 use kernel::memory_core::hybrid_pool;
 use pgvector::HalfVector;
 use sqlx::QueryBuilder;
 use std::collections::BTreeMap;
 use strum::IntoEnumIterator as _;
 use wire::message::Role;
-
-const CHUNK_POOL_MULTIPLIER: i64 = 4;
-const CHUNK_POOL_MAX: i64 = 400;
-
-fn chunk_pool(limit: u32) -> i64 {
-    (hybrid_pool(limit) * CHUNK_POOL_MULTIPLIER).min(CHUNK_POOL_MAX)
-}
 
 fn said_only(options: &SearchOptions) -> bool {
     Role::iter()
@@ -83,50 +78,107 @@ impl SearchRead<'_> {
         context: &ArmContext<'_>,
         vector: &HalfVector,
     ) -> Result<Vec<ArmRow>, Error> {
-        use SearchTable::Message;
-        let mut query = QueryBuilder::new("");
-        push_select_prefix(&mut query, Message, true);
-        query.push(format!(
-            "NULL::timestamptz AS newest, coalesce(1.0 - c.distance, 0.0)::float8 AS score, \
-             coalesce(1.0 - c.distance, {})::float8 AS semantic, {} \
-             FROM (SELECT DISTINCT ON (top.message_id) top.* FROM (\
-             SELECT c.message_id, c.idx, c.char_start, c.char_end, c.content, c.embedding <=> ",
-            semantic_floor("m"),
-            recency_columns(Message)
-        ));
-        query.push_bind(vector.clone());
-        query.push(
-            " AS distance FROM rh_message_chunks c \
-             JOIN rh_messages m ON m.id = c.message_id WHERE c.embedding IS NOT NULL",
-        );
-        if said_only(context.options)
+        let said = said_only(context.options)
             && self
                 .memory
                 .backfills
                 .done(&mut *self.tx, Backfill::ChunkSaid)
-                .await?
-        {
-            query.push(" AND c.said");
-        }
-        if let Some(filter) = context.tag_filter {
-            query.push(" AND ");
-            filter.push_condition(&mut query, true);
-        }
-        push_time_conditions(&mut query, context.options, Message);
-        push_scope_conditions(&mut query, context.options, true);
-        query.push(" ORDER BY c.embedding <=> ");
-        query.push_bind(vector.clone());
-        query.push(format!(
-            " LIMIT {}) top ORDER BY top.message_id, top.distance) c \
-             JOIN rh_messages m ON m.id = c.message_id",
-            chunk_pool(context.options.limit)
-        ));
+                .await?;
+        let mut query = QueryBuilder::new("");
+        push_chunk_arm(&mut query, context, vector, said);
         let fetched = query
             .build_query_as::<ArmSqlRow>()
             .fetch_all(&mut *self.tx)
             .await
             .map_err(|source| Error::operation("chunk search", source))?;
         fetched.into_iter().map(|row| row.into_arm(true)).collect()
+    }
+}
+
+fn push_chunk_arm(
+    query: &mut QueryBuilder<sqlx::Postgres>,
+    context: &ArmContext<'_>,
+    vector: &HalfVector,
+    said: bool,
+) {
+    push_select_prefix(query, SearchTable::Message, true);
+    query.push(format!(
+        "NULL::timestamptz AS newest, coalesce(1.0 - c.distance, 0.0)::float8 AS score, \
+         coalesce(1.0 - c.distance, {})::float8 AS semantic, {} \
+         FROM (SELECT DISTINCT ON (top.message_id) top.* FROM (\
+         SELECT c.message_id, c.idx, c.char_start, c.char_end, c.content, c.embedding <=> ",
+        semantic_floor("m"),
+        recency_columns(SearchTable::Message)
+    ));
+    query.push_bind(vector.clone());
+    query.push(
+        " AS distance FROM rh_message_chunks c \
+         JOIN rh_messages m ON m.id = c.message_id WHERE c.embedding IS NOT NULL",
+    );
+    if said {
+        query.push(" AND c.said");
+    }
+    if let Some(filter) = context.tag_filter {
+        query.push(" AND ");
+        filter.push_condition(query, true);
+    }
+    push_time_conditions(query, context.options, SearchTable::Message);
+    push_scope_conditions(query, context.options, true);
+    query.push(" ORDER BY c.embedding <=> ");
+    query.push_bind(vector.clone());
+    query.push(format!(
+        " LIMIT {}) top ORDER BY top.message_id, top.distance, top.idx) c \
+         JOIN rh_messages m ON m.id = c.message_id",
+        chunk_pool(context.options.limit)
+    ));
+}
+
+#[doc(hidden)]
+pub async fn explain_chunk_arm_without_full_sorts(
+    pool: &sqlx::PgPool,
+    vector: &[f32],
+    limit: u32,
+) -> Result<String, Error> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|source| Error::operation("chunk search", source))?;
+    crate::search::tune_hnsw(&mut tx, u64::from(crate::embed::HNSW_EF_SEARCH_DEFAULT)).await?;
+    sqlx::query("SET LOCAL enable_sort = off")
+        .execute(&mut *tx)
+        .await
+        .map_err(|source| Error::operation("chunk search", source))?;
+    let options = probe_options(limit);
+    let context = ArmContext {
+        options: &options,
+        tag_filter: None,
+        patience: crate::search_literal::Patience::Asked,
+    };
+    let half = HalfVector::from_f32_slice(vector);
+    let mut query = QueryBuilder::new("EXPLAIN (COSTS OFF) ");
+    push_chunk_arm(&mut query, &context, &half, false);
+    let lines: Vec<String> = query
+        .build_query_scalar()
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|source| Error::operation("chunk search", source))?;
+    Ok(lines.join("\n"))
+}
+
+fn probe_options(limit: u32) -> SearchOptions {
+    SearchOptions {
+        since: None,
+        summary_index_key: None,
+        before: None,
+        text: String::new(),
+        mode: SearchMode::Vector,
+        scope: MemoryScope::Messages,
+        limit,
+        agent: None,
+        role: None,
+        exclude_roles: Vec::new(),
+        tool_name: None,
+        tag: None,
     }
 }
 

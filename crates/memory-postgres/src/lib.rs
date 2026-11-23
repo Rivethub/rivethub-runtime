@@ -36,6 +36,8 @@ mod search_literal;
 mod search_recent;
 mod search_sql;
 mod search_vector;
+#[doc(hidden)]
+pub use search_vector::explain_chunk_arm_without_full_sorts;
 mod session_activity;
 mod session_catalog;
 mod session_marks;

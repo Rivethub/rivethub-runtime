@@ -507,3 +507,118 @@ async fn entity_embeddings_have_no_approximate_index(pool: PgPool) -> TestResult
     assert_eq!(indexed, Vec::<String>::new());
     Ok(())
 }
+
+#[test]
+fn dead_jobs_move_into_the_flagged_ledger_and_the_step_can_run_again() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("memory.sqlite");
+    plant_pre_ledger_jobs(&path)?;
+    migrate::sqlite(&path)?;
+    let current = rusqlite::Connection::open(&path)?;
+    assert_eq!(flagged_rows(&current)?, expected_flagged());
+    let definition: String = current.query_row(
+        "SELECT sql FROM sqlite_master WHERE name = 'rh_flagged_jobs'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert!(definition.contains("AUTOINCREMENT"), "{definition}");
+    assert_eq!(ledger_counts(&current)?, (0, 1, 1));
+    drop(current);
+    rewind_past_the_ledger(&path)?;
+    migrate::sqlite(&path)?;
+    let repeated = rusqlite::Connection::open(&path)?;
+    let rows: i64 =
+        repeated.query_row("SELECT count(*) FROM rh_flagged_jobs", [], |row| row.get(0))?;
+    let still_dead: i64 = repeated.query_row(
+        "SELECT count(*) FROM ros_jobs WHERE state = 'dead'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!((rows, still_dead), (2, 0));
+    Ok(())
+}
+
+fn plant_pre_ledger_jobs(path: &std::path::Path) -> TestResult {
+    migrate::sqlite(path)?;
+    let old = rusqlite::Connection::open(path)?;
+    old.execute_batch(
+        "DROP TABLE rh_flagged_jobs;
+         INSERT INTO ros_jobs
+            (id, task, job_key, payload, run_at, attempts, max_attempts, state, last_error,
+             created_at, updated_at)
+         VALUES
+            ('dead-keyed', 'embed-target', 'keyed', '{}', '2026-01-01T00:00:00.000Z', 2, 2, 'dead',
+             'boom', '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z'),
+            ('dead-plain', 'embed-target', NULL, '{}', '2026-01-01T00:00:00.000Z', 0, 5, 'dead',
+             NULL, '2026-01-01T00:00:00.000Z', '2026-01-03T00:00:00.000Z'),
+            ('still-queued', 'embed-target', 'queued', '{}', '2026-01-01T00:00:00.000Z', 0, 5,
+             'queued', NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+         PRAGMA user_version = 45;",
+    )?;
+    Ok(())
+}
+
+fn rewind_past_the_ledger(path: &std::path::Path) -> TestResult {
+    let again = rusqlite::Connection::open(path)?;
+    again.execute_batch("PRAGMA user_version = 45;")?;
+    drop(again);
+    let mut backup = path.as_os_str().to_os_string();
+    backup.push(".v45.bak");
+    std::fs::remove_file(backup)?;
+    Ok(())
+}
+
+type FlaggedRow = (Option<String>, i64, String, String);
+
+fn flagged_rows(conn: &rusqlite::Connection) -> rusqlite::Result<Vec<FlaggedRow>> {
+    let mut statement = conn.prepare(
+        "SELECT job_key, failures, last_error, first_failed_at
+           FROM rh_flagged_jobs ORDER BY job_key",
+    )?;
+    statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?
+        .collect()
+}
+
+fn expected_flagged() -> [FlaggedRow; 2] {
+    [
+        (
+            None,
+            1,
+            String::new(),
+            "2026-01-03T00:00:00.000Z".to_owned(),
+        ),
+        (
+            Some("keyed".to_owned()),
+            2,
+            "boom".to_owned(),
+            "2026-01-02T00:00:00.000Z".to_owned(),
+        ),
+    ]
+}
+
+fn ledger_counts(conn: &rusqlite::Connection) -> rusqlite::Result<(i64, i64, i64)> {
+    let dead: i64 = conn.query_row(
+        "SELECT count(*) FROM ros_jobs WHERE state = 'dead'",
+        [],
+        |row| row.get(0),
+    )?;
+    let queued: i64 = conn.query_row(
+        "SELECT count(*) FROM ros_jobs WHERE job_key = 'queued'",
+        [],
+        |row| row.get(0),
+    )?;
+    let counted: i64 = conn.query_row(
+        "SELECT count(*) FROM rh_job_failures WHERE job_key = 'keyed'",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok((dead, queued, counted))
+}

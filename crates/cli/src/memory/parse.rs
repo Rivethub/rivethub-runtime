@@ -38,6 +38,7 @@ pub(super) enum MemoryCommand {
         limit: Option<u32>,
         dry_run: bool,
         json: bool,
+        sqlite: Option<PathBuf>,
     },
     Export {
         out: Option<PathBuf>,
@@ -328,6 +329,7 @@ fn tool_synth(args: &[String]) -> Result<MemoryCommand, Error> {
     let mut limit = None;
     let mut dry_run = false;
     let mut json = false;
+    let mut sqlite = None;
     while scan.current().is_some() {
         match scan.option("--limit", None) {
             Taken::Value(value) => {
@@ -335,6 +337,14 @@ fn tool_synth(args: &[String]) -> Result<MemoryCommand, Error> {
                 continue;
             }
             Taken::Missing => return Err(Error::LimitInteger),
+            Taken::Absent => {}
+        }
+        match scan.option("--sqlite", None) {
+            Taken::Value(value) => {
+                sqlite = Some(nonempty(&value, Error::SqliteRequired)?);
+                continue;
+            }
+            Taken::Missing => return Err(Error::SqliteRequired),
             Taken::Absent => {}
         }
         if scan.flag("--dry-run") {
@@ -351,6 +361,7 @@ fn tool_synth(args: &[String]) -> Result<MemoryCommand, Error> {
         limit,
         dry_run,
         json,
+        sqlite,
     })
 }
 

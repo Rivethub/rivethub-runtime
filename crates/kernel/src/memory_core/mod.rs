@@ -8,6 +8,7 @@ pub use fusion::Fused;
 pub use fusion::FusionItem;
 pub use fusion::HYBRID_MIN_CONTENT_LEN;
 pub use fusion::HYBRID_RRF_K;
+pub use fusion::chunk_pool;
 pub use fusion::fusion_score;
 pub use fusion::hybrid_pool;
 pub use fusion::literal_scan;

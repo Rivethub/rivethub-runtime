@@ -2,6 +2,7 @@ use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use std::collections::BTreeSet;
 
+use kernel::memory::MemoryChunkMatch;
 use kernel::memory::MemoryDegraded;
 use kernel::memory::MemoryHitSource;
 use kernel::memory::MemoryScope;
@@ -20,6 +21,7 @@ use crate::SqliteStore;
 use crate::error::SqliteError;
 use crate::time;
 
+mod chunks;
 pub(crate) mod embed;
 mod fts;
 pub(crate) mod functions;
@@ -123,6 +125,7 @@ struct Candidate {
     created_at: Timestamp,
     rank: f64,
     kind: Kind,
+    chunk: Option<MemoryChunkMatch>,
 }
 
 impl SqliteStore {
@@ -427,6 +430,7 @@ impl Candidate {
                 conversation_id: row.conversation_id,
                 session_id: row.session_id,
             },
+            chunk: None,
         })
     }
 
@@ -440,6 +444,7 @@ impl Candidate {
             kind: Kind::Summary {
                 session_id: row.session_id,
             },
+            chunk: None,
         })
     }
 
@@ -461,7 +466,7 @@ impl Candidate {
                 session_id,
                 ..
             } => MemorySearchResult {
-                chunk: None,
+                chunk: self.chunk,
                 passage: None,
                 id: self.id,
                 source: MemoryHitSource::Message,

@@ -20,7 +20,10 @@ impl UnembeddedStore for SqliteStore {
         limit: u32,
     ) -> Result<Vec<EmbedTarget>, MemoryJobError> {
         let Some(selection) = selection(table) else {
-            return Ok(Vec::new());
+            return self
+                .with_conn(move |conn| pending_chunks(conn, limit))
+                .await
+                .map_err(|error| MemoryJobError::Query(Box::new(error)));
         };
         self.with_conn(move |conn| unembedded_rows(conn, table, &selection, limit))
             .await
@@ -77,5 +80,30 @@ fn unembedded_rows(
     Ok(ids
         .into_iter()
         .map(|id| EmbedTarget { table, id })
+        .collect())
+}
+
+fn pending_chunks(
+    conn: &rusqlite::Connection,
+    limit: u32,
+) -> Result<Vec<EmbedTarget>, SqliteError> {
+    let mut statement = conn
+        .prepare(
+            "SELECT id FROM rh_message_chunks \
+              WHERE embedding IS NULL AND embed_status IS NULL AND trim(content) <> '' \
+              ORDER BY created_at DESC LIMIT ?1",
+        )
+        .map_err(SqliteError::query("select unembedded chunks"))?;
+    let ids = statement
+        .query_map([i64::from(limit)], |row| row.get::<_, String>(0))
+        .map_err(SqliteError::query("select unembedded chunks"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(SqliteError::query("select unembedded chunks"))?;
+    Ok(ids
+        .into_iter()
+        .map(|id| EmbedTarget {
+            table: EmbedTable::MessageChunks,
+            id,
+        })
         .collect())
 }

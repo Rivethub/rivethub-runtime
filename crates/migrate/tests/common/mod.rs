@@ -60,7 +60,7 @@ pub(crate) fn read_pragmas(conn: &Connection) -> TestResult<Pragmas> {
 
 pub(crate) fn read_legacy_master_entries(conn: &Connection) -> TestResult<Vec<MasterEntry>> {
     let mut statement =
-        conn.prepare("SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT GLOB 'rh_*' AND tbl_name NOT GLOB 'rh_*' AND tbl_name <> 'ros_summary_deliveries'          AND name NOT GLOB 'ros_summary_passages*' AND tbl_name NOT GLOB 'ros_summary_passages*'          AND name <> 'ros_summary_records_indexed' ORDER BY rowid")?;
+        conn.prepare("SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT GLOB 'rh_*' AND tbl_name NOT GLOB 'rh_*' AND tbl_name <> 'ros_summary_deliveries'          AND name NOT GLOB 'ros_summary_passages*' AND tbl_name NOT GLOB 'ros_summary_passages*'          AND name <> 'ros_summary_records_indexed' AND name <> 'sqlite_sequence' ORDER BY rowid")?;
     let mut rows = statement.query([])?;
     let mut out = Vec::new();
     while let Some(row) = rows.next()? {

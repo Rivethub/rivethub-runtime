@@ -82,7 +82,7 @@ Commands:\n\
   resume categorizer|wiki-builder|entity-builder [--json]\n\
   retry-failed --task <identifier> [--task <identifier>] [--error <substring>] [--limit <n>] [--dry-run] [--json]\n\
   requeue --task <identifier> [--limit <n>] [--dry-run] [--json]\n\
-  backfill-tool-synth [--limit <n>] [--dry-run] [--json]\n\
+  backfill-tool-synth [--limit <n>] [--dry-run] [--json] [--sqlite <file>]\n\
   export [--out <file>] [--since <iso>] [--sqlite <file>]\n\
   bundle --out <file> [--session <conversation id>]... [--sqlite <file>]\n\
   sanitize <file> --out <file> [--mapping <file>] [--decide [--block]]\n\

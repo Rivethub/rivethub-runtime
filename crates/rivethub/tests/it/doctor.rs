@@ -71,7 +71,7 @@ async fn sqlite_doctor_checks_current_and_behind_without_migrating() {
     assert_eq!(
         memory(&report).message,
         format!(
-            "Schema 0 is not current; required {required}, pending 44. Run rivethub-migrate explicitly."
+            "Schema 0 is not current; required {required}, pending 46. Run rivethub-migrate explicitly."
         )
     );
     assert!(!path.exists(), "doctor must not create missing stores");

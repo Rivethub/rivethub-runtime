@@ -153,7 +153,7 @@ async fn a_sqlite_node_keeps_postgres_commands_off_a_stray_database_url() {
             database.display()
         ),
     );
-    for command in ["queue-status", "consolidate-wiki", "backfill-tool-synth"] {
+    for command in ["queue-status", "consolidate-wiki"] {
         let report = run(&["memory", command], &environment).await;
         failure(&report, "This command needs a datahub (Postgres).");
         assert!(
@@ -246,6 +246,74 @@ async fn sqlite_reembed_clears_imported_vectors_and_requeues_every_row() {
         &run(&["memory", "reembed"], &postgres).await,
         "reembed runs on a SQLite memory file; pass --sqlite <file>",
     );
+}
+
+#[tokio::test]
+async fn sqlite_tool_synth_enqueues_each_empty_assistant_once() {
+    let directory = tempfile::tempdir().expect("directory");
+    let database = migrated(directory.path());
+    let path = database.to_string_lossy().to_string();
+    let message = seed_sqlite_tool(&database);
+    let (_home, environment) = env(&[]);
+    let first = run(
+        &["memory", "backfill-tool-synth", "--sqlite", &path],
+        &environment,
+    )
+    .await;
+    assert_eq!(first.exit, Exit::Ok, "{}", first.stderr);
+    assert_eq!(first.stdout, "enqueued 1 synthesize-tool-call job(s)\n");
+    assert_eq!(
+        scalar(
+            &database,
+            &format!("SELECT count(*) FROM ros_jobs WHERE job_key = 'tool-synth-{message}'")
+        ),
+        1
+    );
+    let second = run(
+        &["memory", "backfill-tool-synth", "--sqlite", &path, "--json"],
+        &environment,
+    )
+    .await;
+    assert_eq!(second.stdout, "{\"enqueued\":0,\"dry_run\":false}\n");
+}
+
+fn seed_sqlite_tool(path: &Path) -> Uuid {
+    let message = Uuid::new_v4();
+    let conversation = Uuid::new_v4();
+    let connection = rusqlite::Connection::open(path).expect("sqlite");
+    connection
+        .execute(
+            "INSERT INTO ros_conversations \
+                (id, session_key, agent, channel, settings, active, created_at, updated_at) \
+             VALUES (?1, 'cli:synth', 'rivet', 'cli', '{}', 1, ?2, ?2)",
+            rusqlite::params![conversation.to_string(), "2026-06-01T00:00:00Z"],
+        )
+        .expect("conversation");
+    connection
+        .execute(
+            "INSERT INTO ros_messages \
+                (id, conversation_id, agent, channel, role, content, tool_name, metadata, created_at) \
+             VALUES (?1, ?2, 'rivet', 'cli', 'assistant', '   ', 'Bash', '{}', ?3)",
+            rusqlite::params![
+                message.to_string(),
+                conversation.to_string(),
+                "2026-06-01T00:00:00Z"
+            ],
+        )
+        .expect("blank");
+    connection
+        .execute(
+            "INSERT INTO ros_messages \
+                (id, conversation_id, agent, channel, role, content, tool_name, metadata, created_at) \
+             VALUES (?1, ?2, 'rivet', 'cli', 'assistant', 'hello', 'Bash', '{}', ?3)",
+            rusqlite::params![
+                Uuid::new_v4().to_string(),
+                conversation.to_string(),
+                "2026-06-01T00:00:01Z"
+            ],
+        )
+        .expect("filled");
+    message
 }
 
 fn vectors(path: &Path) -> i64 {

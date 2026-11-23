@@ -5,6 +5,7 @@ use common::fresh_store;
 use kernel::memory::EmbedTable;
 use kernel::memory::EmbedTarget;
 use kernel::memory::EmbeddingStore;
+use kernel::memory::MemoryStore;
 use kernel::memory::StoredEmbedding;
 use kernel::memory::Unembeddable;
 use memory_sqlite::ReembedReport;
@@ -159,6 +160,161 @@ async fn seed(store: &SqliteStore) -> TestResult {
         })
         .await?;
     Ok(())
+}
+
+#[tokio::test]
+async fn reembed_drops_chunk_vectors_so_a_new_width_can_search() -> TestResult {
+    let fresh = fresh_store()?;
+    seed(&fresh.store).await?;
+    let old = fresh.store.clone().with_embed_model("embed-a");
+    old.write(chunked(EMBEDDED)).await?;
+    fresh.store.reembed(true).await?;
+    let chunk = chunk_id(&fresh.store).await?;
+    assert_eq!(
+        scalar_text(
+            &fresh.store,
+            "SELECT CAST(count(*) AS TEXT) FROM rh_message_chunks WHERE embedding IS NOT NULL",
+        )
+        .await?,
+        "0"
+    );
+    let queued = scalar_text(
+        &fresh.store,
+        &format!(
+            "SELECT CAST(count(*) AS TEXT) FROM ros_jobs WHERE job_key = 'embed-ros_message_chunks-{chunk}'"
+        ),
+    )
+    .await?;
+    assert_eq!(queued, "1");
+    let provider: std::sync::Arc<dyn kernel::model::ModelProvider> =
+        std::sync::Arc::new(testkit::FakeProvider::new(vec![testkit::Script::Embed(
+            vec![kernel::model::Embedding {
+                vector: testkit::memory_jobs::query_vector(),
+            }],
+        )]));
+    let store = fresh
+        .store
+        .clone()
+        .with_query_embed(memory_sqlite::QueryEmbed::new(
+            provider,
+            kernel::memory_core::DEFAULT_EMBED_QUERY_INSTRUCTION.to_owned(),
+            std::time::Duration::from_secs(5),
+            tokio_util::sync::CancellationToken::new(),
+        ));
+    let outcome = store
+        .search(kernel::memory::SearchQuery {
+            text: "zzzzqqqx".to_owned(),
+            mode: kernel::memory::SearchMode::Vector,
+            scope: kernel::memory::MemoryScope::Messages,
+            agent: None,
+            role: None,
+            exclude_roles: Vec::new(),
+            tool_name: None,
+            tag: None,
+            limit: kernel::memory::Limit::clamped(Some(10), 10, 1..=50),
+            since: None,
+            before: None,
+            window: None,
+            expand: None,
+            synthesize: None,
+        })
+        .await?;
+    assert_eq!(outcome.degraded, None);
+    assert_eq!(outcome.results, Vec::new());
+    Ok(())
+}
+
+async fn chunk_id(store: &SqliteStore) -> TestResult<String> {
+    scalar_text(
+        store,
+        &format!("SELECT id FROM rh_message_chunks WHERE message_id = '{EMBEDDED}'"),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn reembed_clears_an_unembeddable_chunk_vector_without_requeueing_it() -> TestResult {
+    let fresh = fresh_store()?;
+    seed(&fresh.store).await?;
+    let old = fresh.store.clone().with_embed_model("embed-a");
+    old.write(chunked(EMBEDDED)).await?;
+    let chunk = chunk_id(&fresh.store).await?;
+    common::execute(
+        &fresh.store,
+        "UPDATE rh_message_chunks SET embed_status = 'unembeddable' WHERE embedding IS NOT NULL",
+    )
+    .await?;
+    fresh.store.reembed(true).await?;
+    assert_eq!(
+        scalar_text(
+            &fresh.store,
+            "SELECT CAST(count(*) AS TEXT) FROM rh_message_chunks WHERE embedding IS NOT NULL",
+        )
+        .await?,
+        "0"
+    );
+    assert_eq!(
+        scalar_text(
+            &fresh.store,
+            &format!(
+                "SELECT CAST(count(*) AS TEXT) FROM ros_jobs WHERE job_key = 'embed-ros_message_chunks-{chunk}'"
+            ),
+        )
+        .await?,
+        "0"
+    );
+    let provider: std::sync::Arc<dyn kernel::model::ModelProvider> =
+        std::sync::Arc::new(testkit::FakeProvider::new(vec![testkit::Script::Embed(
+            vec![kernel::model::Embedding {
+                vector: vec![0.6, 0.8],
+            }],
+        )]));
+    let store = fresh
+        .store
+        .clone()
+        .with_query_embed(memory_sqlite::QueryEmbed::new(
+            provider,
+            kernel::memory_core::DEFAULT_EMBED_QUERY_INSTRUCTION.to_owned(),
+            std::time::Duration::from_secs(5),
+            tokio_util::sync::CancellationToken::new(),
+        ));
+    let outcome = store.search(vector_query()).await?;
+    assert_eq!(outcome.results, Vec::new());
+    Ok(())
+}
+
+fn vector_query() -> kernel::memory::SearchQuery {
+    kernel::memory::SearchQuery {
+        text: "zzzzqqqx".to_owned(),
+        mode: kernel::memory::SearchMode::Vector,
+        scope: kernel::memory::MemoryScope::Messages,
+        agent: None,
+        role: None,
+        exclude_roles: Vec::new(),
+        tool_name: None,
+        tag: None,
+        limit: kernel::memory::Limit::clamped(Some(10), 10, 1..=50),
+        since: None,
+        before: None,
+        window: None,
+        expand: None,
+        synthesize: None,
+    }
+}
+
+fn chunked(id: &str) -> StoredEmbedding {
+    StoredEmbedding {
+        target: target(id),
+        vector: vec![0.6, 0.8],
+        content_hash: "ignored".to_owned(),
+        chunks: vec![kernel::memory::StoredChunk {
+            index: 0,
+            char_start: 0,
+            char_end: 4,
+            content: "note".to_owned(),
+            vector: Some(vec![0.6, 0.8]),
+        }],
+    }
 }
 
 fn stored(id: &str) -> StoredEmbedding {
