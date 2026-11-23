@@ -7,7 +7,7 @@ use kernel::wiki::recompile::RecompileWiki;
 use memory_postgres::PostgresMemory;
 
 use super::run::open_sqlite;
-use super::target::{Kind, Target, load, resolve};
+use super::target::{Kind, Target, load_for, resolve};
 use crate::Error;
 use crate::Report;
 use crate::argv::{Scan, Taken};
@@ -22,6 +22,7 @@ pub(super) struct RecompileArgs {
     slugs: Vec<WikiSlug>,
     dry_run: bool,
     json: bool,
+    sqlite: Option<std::path::PathBuf>,
 }
 
 #[derive(serde::Serialize)]
@@ -46,6 +47,7 @@ pub(super) fn parse(args: &[String]) -> Result<RecompileArgs, Error> {
         slugs: Vec::new(),
         dry_run: false,
         json: false,
+        sqlite: None,
     };
     let mut since = None;
     while scan.current().is_some() {
@@ -80,6 +82,14 @@ pub(super) fn parse(args: &[String]) -> Result<RecompileArgs, Error> {
             Taken::Missing => return Err(Error::RecompileSlug(String::new())),
             Taken::Absent => {}
         }
+        match scan.option("--sqlite", None) {
+            Taken::Value(value) => {
+                parsed.sqlite = Some(std::path::PathBuf::from(value));
+                continue;
+            }
+            Taken::Missing => return Err(Error::UnknownOption("--sqlite".to_owned())),
+            Taken::Absent => {}
+        }
         if scan.flag("--dry-run") {
             parsed.dry_run = true;
             continue;
@@ -99,8 +109,9 @@ pub(super) fn parse(args: &[String]) -> Result<RecompileArgs, Error> {
 }
 
 pub(super) async fn run(args: RecompileArgs, env: &Environment) -> Result<Report, Error> {
-    let config = load(env)?;
-    let target = resolve(env, None, Kind::Either);
+    let named = args.sqlite.is_some();
+    let target = resolve(env, args.sqlite.clone(), Kind::Either);
+    let config = load_for(env, named)?;
     let directory = config
         .filter(|_| matches!(&target, Ok(Target::Sqlite(_))))
         .unwrap_or_default()
