@@ -455,7 +455,8 @@ async fn build_runners(
             .runner
             .with_memory_jobs(Arc::clone(store) as Arc<dyn MemoryJobStore>)
             .with_job_settings(settings)
-            .with_session_deletion(Arc::clone(store) as Arc<dyn SessionDeletion>);
+            .with_session_deletion(Arc::clone(store) as Arc<dyn SessionDeletion>)
+            .with_pauses(Arc::clone(store) as Arc<dyn kernel::queue::pause::WorkerPauses>);
         if matches!(
             role,
             ProcessRole::Embedder

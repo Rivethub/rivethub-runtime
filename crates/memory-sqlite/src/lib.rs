@@ -13,6 +13,7 @@ mod facts;
 mod flagged;
 pub mod import;
 mod insert;
+mod job_notify;
 mod job_rank;
 mod memory_jobs;
 mod memory_port;
@@ -29,6 +30,8 @@ mod session_catalog;
 mod session_marks;
 mod session_messages;
 pub use search::embed::QueryEmbed;
+mod cleanup;
+mod queue_admin;
 mod settlement;
 mod stats;
 mod summary_backend;
@@ -56,8 +59,10 @@ mod wiki_builder;
 mod wiki_citations;
 mod wiki_consolidate;
 mod wiki_held;
+mod wiki_history;
 mod wiki_read;
 mod wiki_topics;
+mod worker_pauses;
 
 use jiff::Timestamp;
 use std::collections::BTreeMap;
@@ -102,7 +107,7 @@ impl SharedClock {
     }
 }
 
-pub const SCHEMA_VERSION: i64 = 46;
+pub const SCHEMA_VERSION: i64 = 47;
 
 mod entity_builder;
 
@@ -127,6 +132,7 @@ pub struct SqliteStore {
     embed_model: Option<String>,
     summary_index_key: Option<[u8; 32]>,
     notifications: tokio::sync::watch::Sender<()>,
+    pause_watch: Arc<job_notify::PauseWatch>,
     summaries_written: tokio::sync::broadcast::Sender<kernel::memory::WrittenSummary>,
 }
 
@@ -134,25 +140,11 @@ const SUMMARY_WRITTEN_BUFFER: usize = 256;
 
 impl SqliteStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, SqliteError> {
-        let path = path.as_ref();
-        if !path.exists() {
-            return Err(SqliteError::NotInitialised {
-                path: path.to_path_buf(),
-            });
-        }
-        let found = read_user_version(path)?;
-        verify(path, found)?;
-        let conn = Connection::open(path).map_err(|source| SqliteError::Open {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        conn.execute_batch(FILE_PRAGMAS)
-            .map_err(SqliteError::Pragma)?;
-        search::functions::register(&conn)?;
-        session_catalog::register(&conn)?;
-        time::register(&conn)?;
-        entity_builder::register(&conn)?;
-        Ok(from_conn(conn, SharedClock::new(Timestamp::now)))
+        opened(path.as_ref(), false)
+    }
+
+    pub fn open_read_only(path: impl AsRef<Path>) -> Result<Self, SqliteError> {
+        opened(path.as_ref(), true)
     }
 
     #[must_use]
@@ -267,6 +259,45 @@ impl ClaimIds {
     }
 }
 
+fn opened(path: &Path, read_only: bool) -> Result<SqliteStore, SqliteError> {
+    if !path.exists() {
+        return Err(SqliteError::NotInitialised {
+            path: path.to_path_buf(),
+        });
+    }
+    let found = read_user_version(path)?;
+    verify(path, found)?;
+    let conn = open_file(path, read_only)?;
+    let pragmas = if read_only {
+        "PRAGMA foreign_keys = ON;"
+    } else {
+        FILE_PRAGMAS
+    };
+    conn.execute_batch(pragmas).map_err(SqliteError::Pragma)?;
+    register(&conn)?;
+    Ok(from_conn(conn, SharedClock::new(Timestamp::now)))
+}
+
+fn open_file(path: &Path, read_only: bool) -> Result<Connection, SqliteError> {
+    let opened = if read_only {
+        Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+    } else {
+        Connection::open(path)
+    };
+    opened.map_err(|source| SqliteError::Open {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn register(conn: &Connection) -> Result<(), SqliteError> {
+    search::functions::register(conn)?;
+    session_catalog::register(conn)?;
+    time::register(conn)?;
+    entity_builder::register(conn)?;
+    Ok(())
+}
+
 fn from_conn(conn: Connection, clock: SharedClock) -> SqliteStore {
     SqliteStore {
         conn: Arc::new(Mutex::new(conn)),
@@ -280,6 +311,7 @@ fn from_conn(conn: Connection, clock: SharedClock) -> SqliteStore {
         embed_model: None,
         summary_index_key: None,
         notifications: tokio::sync::watch::channel(()).0,
+        pause_watch: Arc::new(job_notify::PauseWatch::new()),
         summaries_written: tokio::sync::broadcast::channel(SUMMARY_WRITTEN_BUFFER).0,
     }
 }

@@ -80,7 +80,9 @@ pub(crate) fn read_legacy_master_entries(conn: &Connection) -> TestResult<Vec<Ma
                 sql.replace_range(start..end, "");
             }
             if name == "ros_wiki_topics"
-                && let Some(start) = sql.find(", visibility TEXT")
+                && let Some(start) = sql
+                    .find(", visibility TEXT")
+                    .or_else(|| sql.find(", history TEXT"))
                 && let Some(end) = sql.rfind(')')
             {
                 sql.replace_range(start..end, "");
@@ -149,7 +151,10 @@ fn legacy_column(table: &str, column: &str) -> bool {
         (table, column),
         ("ros_summary_sources", "render_key")
             | ("ros_conversations", "title_from_capture")
-            | ("ros_wiki_topics", "visibility" | "scope" | "local_slug")
+            | (
+                "ros_wiki_topics",
+                "visibility" | "scope" | "local_slug" | "history"
+            )
             | ("ros_tag_taxonomy", "owner_user_id" | "globally_shared")
             | ("ros_wiki_redirects", "owner_user_id")
             | (

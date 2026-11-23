@@ -78,7 +78,8 @@ fn step(conn: &mut Connection, to: SchemaVersion, now: Timestamp) -> Result<(), 
         | SchemaVersion::V42
         | SchemaVersion::V43
         | SchemaVersion::V45
-        | SchemaVersion::V46 => late_step(conn, to),
+        | SchemaVersion::V46
+        | SchemaVersion::V47 => late_step(conn, to),
         SchemaVersion::V44 => in_transaction(conn, to, add_memory_transfer),
     }
 }
@@ -128,6 +129,7 @@ fn late_step(conn: &mut Connection, to: SchemaVersion) -> Result<(), Error> {
         SchemaVersion::V43 => in_transaction(conn, to, add_summary_passages),
         SchemaVersion::V45 => in_transaction(conn, to, add_message_chunks),
         SchemaVersion::V46 => in_transaction(conn, to, add_flagged_jobs),
+        SchemaVersion::V47 => in_transaction(conn, to, add_wiki_maintenance),
         SchemaVersion::V37 => in_transaction(conn, to, add_opening_work),
         SchemaVersion::V35 => in_transaction(conn, to, |tx| {
             tx.execute_batch(include_str!("schema/model_calls_v35.sql"))
@@ -186,6 +188,20 @@ pub(crate) fn add_message_chunks(tx: &Transaction<'_>) -> rusqlite::Result<()> {
 
 pub(crate) fn add_flagged_jobs(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     tx.execute_batch(include_str!("schema/flagged_jobs_v46.sql"))
+}
+
+pub(crate) fn add_wiki_maintenance(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    if !column_present(tx, "ros_wiki_topics", "history")? {
+        tx.execute_batch(
+            "ALTER TABLE ros_wiki_topics ADD COLUMN history TEXT NOT NULL DEFAULT '[]'",
+        )?;
+    }
+    if column_present(tx, "rh_tasks_archive", "id")?
+        && !column_present(tx, "rh_tasks_archive", "origin")?
+    {
+        tx.execute_batch("ALTER TABLE rh_tasks_archive ADD COLUMN origin TEXT")?;
+    }
+    tx.execute_batch(include_str!("schema/maintenance_v47.sql"))
 }
 
 pub(crate) fn add_opening_checked_user_count(tx: &Transaction<'_>) -> rusqlite::Result<()> {

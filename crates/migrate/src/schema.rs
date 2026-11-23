@@ -9,7 +9,7 @@ use crate::error::Error;
 use crate::upgrade;
 use crate::version::SchemaVersion;
 
-const CURRENT: SchemaVersion = SchemaVersion::V46;
+const CURRENT: SchemaVersion = SchemaVersion::V47;
 
 const SCHEMA_SQL: &str = include_str!("schema/schema_v7.sql");
 
@@ -231,6 +231,7 @@ fn create_fresh(conn: &mut Connection) -> Result<(), Error> {
     upgrade::add_memory_transfer(&tx).map_err(Error::SqliteCreate)?;
     upgrade::add_message_chunks(&tx).map_err(Error::SqliteCreate)?;
     upgrade::add_flagged_jobs(&tx).map_err(Error::SqliteCreate)?;
+    upgrade::add_wiki_maintenance(&tx).map_err(Error::SqliteCreate)?;
     apply_tail_indexes(&tx)?;
     stamp_current(&tx)?;
     tx.commit().map_err(Error::SqliteCreate)
@@ -240,11 +241,7 @@ fn bring_through(conn: &mut Connection, from: SchemaVersion, now: Timestamp) -> 
     let tx = begin(conn)?;
     apply_schema(&tx)?;
     tx.commit().map_err(Error::SqliteCreate)?;
-    upgrade::ladder(conn, from, now)?;
-    let tx = begin(conn)?;
-    apply_tail_indexes(&tx)?;
-    stamp_current(&tx)?;
-    tx.commit().map_err(Error::SqliteCreate)
+    upgrade::ladder(conn, from, now)
 }
 
 fn stamp_current(tx: &rusqlite::Transaction<'_>) -> Result<(), Error> {
@@ -268,4 +265,48 @@ fn apply_schema(tx: &rusqlite::Transaction<'_>) -> Result<(), Error> {
 fn apply_tail_indexes(tx: &rusqlite::Transaction<'_>) -> Result<(), Error> {
     tx.execute_batch(TAIL_INDEXES_SQL)
         .map_err(Error::SqliteCreate)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sqlite_status;
+    use crate::SchemaVersion;
+
+    #[test]
+    fn pending_versions_follow_the_ladder() {
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let path = dir.path().join("memory.sqlite");
+        let conn = rusqlite::Connection::open(&path).expect("memory file");
+        conn.pragma_update(None, "user_version", SchemaVersion::V41.number())
+            .expect("schema stamp");
+        drop(conn);
+        let status = sqlite_status(&path).expect("schema status");
+        assert_eq!(status.current, SchemaVersion::V41.number());
+        assert_eq!(status.required, memory_sqlite::SCHEMA_VERSION);
+        assert_eq!(status.pending, steps_after(SchemaVersion::V41));
+        let missing = dir.path().join("missing.sqlite");
+        let fresh = sqlite_status(&missing).expect("missing file status");
+        assert_eq!(fresh.current, 0);
+        assert_eq!(fresh.pending, steps_from(SchemaVersion::V1));
+    }
+
+    fn steps_after(start: SchemaVersion) -> usize {
+        let mut version = start;
+        let mut count = 0usize;
+        while let Some(next) = version.next() {
+            count += 1;
+            version = next;
+        }
+        count
+    }
+
+    fn steps_from(start: SchemaVersion) -> usize {
+        let mut count = 1usize;
+        let mut version = start;
+        while let Some(next) = version.next() {
+            count += 1;
+            version = next;
+        }
+        count
+    }
 }

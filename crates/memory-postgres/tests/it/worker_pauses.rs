@@ -12,38 +12,23 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 async fn pausing_twice_keeps_the_first_pause_and_resuming_twice_is_harmless(
     pool: PgPool,
 ) -> TestResult {
-    let store = PostgresMemory::new(pool.clone());
-    assert_eq!(store.paused().await?, Vec::new());
+    let store = PostgresMemory::new(pool);
+    testkit::maintenance::pausing_twice_keeps_the_first_and_resume_is_harmless(&store).await
+}
 
-    let first = store.pause(PausableRole::EntityBuilder, "owner").await?;
-    let again = store
-        .pause(PausableRole::EntityBuilder, "someone-else")
-        .await?;
-    assert_eq!(again, first);
-    assert_eq!(first.paused_by.as_deref(), Some("owner"));
-    store.pause(PausableRole::Categorizer, "owner").await?;
-    let roles: Vec<_> = store
-        .paused()
-        .await?
-        .into_iter()
-        .map(|pause| pause.role)
-        .collect();
-    assert_eq!(
-        roles,
-        [PausableRole::Categorizer, PausableRole::EntityBuilder]
-    );
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn another_connection_sees_pause_and_resume(pool: PgPool) -> TestResult {
+    let reader = PostgresMemory::new(pool.clone());
+    let writer = PostgresMemory::new(pool);
+    testkit::maintenance::another_connection_sees_pause_and_resume(&reader, &writer).await
+}
 
-    store.resume(PausableRole::EntityBuilder).await?;
-    store.resume(PausableRole::EntityBuilder).await?;
-    store.resume(PausableRole::WikiBuilder).await?;
-    let roles: Vec<_> = store
-        .paused()
-        .await?
-        .into_iter()
-        .map(|pause| pause.role)
-        .collect();
-    assert_eq!(roles, [PausableRole::Categorizer]);
-    Ok(())
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn resume_from_another_connection_wakes_the_subscriber(pool: PgPool) -> TestResult {
+    let listening = PostgresMemory::new(pool.clone());
+    let writer = PostgresMemory::new(pool);
+    let queue = listening.queue().await?;
+    testkit::maintenance::resume_from_another_connection_wakes(&queue, &writer).await
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]

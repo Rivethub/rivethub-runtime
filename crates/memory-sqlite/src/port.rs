@@ -34,7 +34,9 @@ impl JobQueue for SqliteStore {
     }
 
     async fn subscribe(&self) -> Result<Box<dyn kernel::queue::JobNotifications>, JobQueueError> {
-        Ok(Box::new(self.notifications.subscribe()))
+        Ok(Box::new(
+            crate::job_notify::StoreNotifications::open(self).await?,
+        ))
     }
 
     async fn enqueue(&self, job: Job) -> Result<JobId, JobQueueError> {

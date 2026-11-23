@@ -40,10 +40,11 @@ async fn step_44_preserves_rows_and_converges_after_interruption()
         })
         .await?;
     drop(store);
+    let required = memory_sqlite::SCHEMA_VERSION;
     let pending = migrate::sqlite_status(&path)?;
     assert_eq!(
         (pending.current, pending.required, pending.pending),
-        (43, memory_sqlite::SCHEMA_VERSION, 3)
+        (43, required, usize::try_from(required - 43)?)
     );
     let upgraded = migrate::sqlite(&path)?;
     assert_eq!(

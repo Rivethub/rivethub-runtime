@@ -18,6 +18,7 @@ mod process;
 mod roots;
 pub mod service;
 pub mod share_server;
+mod sqlite_path;
 mod status;
 pub mod supervise;
 pub mod tree;

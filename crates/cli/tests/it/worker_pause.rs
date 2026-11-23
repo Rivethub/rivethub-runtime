@@ -9,7 +9,7 @@ use sqlx::PgPool;
 use testkit::FakeProvider;
 use tokio_util::sync::CancellationToken;
 use wire::JsonObject;
-use workers::entity_builder::{EntityBuilderDeps, MatcherSettings};
+use workers::entity_builder::{EntityBuilderDeps, MatcherSettings, RewriteLimit};
 use workers::wiki_builder::WikiBuilderDeps;
 use workers::{EmbedSettings, ProcessRole, Runner, RunnerConfig, SummarySettings, WorkerDeps};
 
@@ -94,7 +94,7 @@ fn runner(
         provider: model,
         model: "fake-chat".to_owned(),
         settings: MatcherSettings::default(),
-        rewrite: workers::entity_builder::RewriteLimit::default(),
+        rewrite: RewriteLimit::default(),
     })
     .with_pauses(store.clone()))
 }

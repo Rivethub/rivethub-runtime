@@ -95,23 +95,7 @@ async fn replay(dump: &str, expectation: &str, summaries: i64) -> Result {
                 .iter()
                 .filter(|(column, _)| !expected.contains_key(*column));
             for (column, value) in defaults {
-                match (table, column.as_str()) {
-                    (ImportTable::Summaries, "quality_flags" | "index_needs_repair")
-                    | (ImportTable::Conversations, "title_from_capture") => {
-                        assert_eq!(value, &Json::from(0), "{table}.{column}");
-                    }
-                    (ImportTable::WikiTopics, "visibility") => {
-                        assert_eq!(value.as_str(), Some("private"), "{table}.{column}");
-                    }
-                    (ImportTable::Summaries, _)
-                    | (ImportTable::SummarySources, "render_key")
-                    | (ImportTable::WikiTopics, "scope" | "local_slug")
-                    | (ImportTable::TagTaxonomy, "owner_user_id" | "globally_shared")
-                    | (ImportTable::WikiRedirects, "owner_user_id") => {
-                        assert!(value.is_null(), "{table}.{column}");
-                    }
-                    _ => return Err(format!("unrecorded {table}.{column}").into()),
-                }
+                assert_import_default(table, column, value)?;
             }
             for (column, expected) in expected {
                 let actual = actual.get(&column).ok_or("missing column")?;
@@ -143,6 +127,30 @@ async fn replay(dump: &str, expectation: &str, summaries: i64) -> Result {
             })
             .await??;
         assert_eq!(found, count, "{table}");
+    }
+    Ok(())
+}
+
+fn assert_import_default(table: ImportTable, column: &str, value: &Json) -> Result {
+    match (table, column) {
+        (ImportTable::Summaries, "quality_flags" | "index_needs_repair")
+        | (ImportTable::Conversations, "title_from_capture") => {
+            assert_eq!(value, &Json::from(0), "{table}.{column}");
+        }
+        (ImportTable::WikiTopics, "history") => {
+            assert_eq!(value, &Json::from("[]"), "{table}.{column}");
+        }
+        (ImportTable::WikiTopics, "visibility") => {
+            assert_eq!(value.as_str(), Some("private"), "{table}.{column}");
+        }
+        (ImportTable::Summaries, _)
+        | (ImportTable::SummarySources, "render_key")
+        | (ImportTable::WikiTopics, "scope" | "local_slug")
+        | (ImportTable::TagTaxonomy, "owner_user_id" | "globally_shared")
+        | (ImportTable::WikiRedirects, "owner_user_id") => {
+            assert!(value.is_null(), "{table}.{column}");
+        }
+        _ => return Err(format!("unrecorded {table}.{column}").into()),
     }
     Ok(())
 }

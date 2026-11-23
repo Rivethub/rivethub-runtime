@@ -62,9 +62,7 @@ async fn sqlite_doctor_checks_current_and_behind_without_migrating() {
         "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\n",
         path.display()
     ));
-    let required = migrate::sqlite_status(&path)
-        .expect("schema status")
-        .required;
+    let required = memory_sqlite::SCHEMA_VERSION;
     let (exit, report) = doctor(&env).await;
     assert_eq!(exit, Exit::Failure);
     assert_eq!(memory(&report).status, CheckStatus::Fail);
@@ -98,14 +96,14 @@ async fn sqlite_doctor_checks_current_and_behind_without_migrating() {
         .expect("fixture version");
     drop(connection);
     let before = std::fs::read(&path).expect("before old schema");
+    let pending = required - 6;
     let (exit, report) = doctor(&env).await;
     assert_eq!(exit, Exit::Failure);
     assert_eq!(memory(&report).status, CheckStatus::Fail);
     assert_eq!(
         memory(&report).message,
         format!(
-            "Schema 6 is not current; required {required}, pending {}. Run rivethub-migrate explicitly.",
-            required - 6
+            "Schema 6 is not current; required {required}, pending {pending}. Run rivethub-migrate explicitly."
         )
     );
     assert_eq!(std::fs::read(&path).expect("after old schema"), before);

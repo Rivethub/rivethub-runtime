@@ -206,19 +206,21 @@ fn write_page(conn: &Connection, page: &WikiPage, now: Timestamp) -> Result<(), 
         indexed.meta.related = serde_json::from_str(&related).map_err(error)?;
     }
     let search = build_wiki_search_text(&indexed);
+    let history = serde_json::to_string(&page.history).map_err(error)?;
     conn.execute(
-        "INSERT INTO ros_wiki_topics (slug, title, aliases, tags, current_state, article,
+        "INSERT INTO ros_wiki_topics (slug, title, aliases, tags, current_state, article, history,
                                      search_text, history_count, last_verified_at, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?9)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?10)
          ON CONFLICT (slug) DO UPDATE SET title = excluded.title, aliases = excluded.aliases,
             tags = excluded.tags, current_state = excluded.current_state, article = excluded.article,
+            history = excluded.history,
             git_sha = NULL,
             search_text = excluded.search_text, history_count = excluded.history_count,
             last_verified_at = excluded.last_verified_at, updated_at = excluded.updated_at,
             embedding = NULL, embed_status = NULL, embed_failures = 0, embed_error = NULL",
         params![meta.slug.as_ref(), meta.title, serde_json::to_string(&meta.aliases).map_err(error)?,
-            serde_json::to_string(&meta.tags).map_err(error)?, page.current_state, page.article, search,
-            i64::try_from(page.history.len()).map_err(error)?, stamp(now)],
+            serde_json::to_string(&meta.tags).map_err(error)?, page.current_state, page.article, history,
+            search, i64::try_from(page.history.len()).map_err(error)?, stamp(now)],
     ).map_err(query)?;
     Ok(())
 }
