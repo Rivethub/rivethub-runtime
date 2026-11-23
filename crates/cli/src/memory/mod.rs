@@ -98,7 +98,7 @@ Commands:\n\
   backfill-titles [--dry-run] [--json] [--sqlite <file>] [--model <name> --model-url <url> [--concurrency <n>]]\n\
   reembed [--dry-run] [--sqlite <file>]\n\
   consolidate-wiki [--limit <n>] [--dry-run] [--sqlite <file>] [--json]\n\
-  recompile-wiki --since <iso> [--min-bytes <n>] [--slug <slug>]... [--dry-run] [--json]\n\
+  recompile-wiki --since <iso> [--min-bytes <n>] [--slug <slug>]... [--dry-run] [--sqlite <file>] [--json]\n\
   cleanup (--dry-run [--database <url> | --sqlite <file>] | --propose (--database <url> | --sqlite <file>)) --out <dir> --model-url <url> --model <name> [--batch <n>] [--concurrency <n>] [--timeout <seconds>]\n\
   merge-store --from <url> --owner <user> [--into <url>] [--moves <file>] [--dry-run] [--json]\n\
   merge-store --from-sqlite <file> --owner <user> [--into <url>] [--sqlite-owner <user>] [--destination-index-key <hex>] [--dry-run] [--json]\n\
