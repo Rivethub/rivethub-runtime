@@ -259,7 +259,7 @@ impl Composition {
             ports: Some(StorePorts::of(store, store.clone())),
             sessions: Some(SessionStore::Sqlite(SqliteStore::clone(store))),
             reports: None,
-            pauses: None,
+            pauses: Some(store.clone() as Arc<dyn kernel::queue::pause::WorkerPauses>),
         };
         let factory =
             crate::models::ModelFactory::without_harnesses(env).with_activities(activities.clone());

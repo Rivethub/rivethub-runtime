@@ -1,5 +1,4 @@
 use jiff::Timestamp;
-use kernel::cleanup::CleanupSource as _;
 use kernel::filing::FilingStore as _;
 use kernel::memory::SummaryStore as _;
 use kernel::owner::Owner;
@@ -119,15 +118,7 @@ async fn cleanup_reads_the_same_opening_while_the_conversation_has_no_leaf(
                 .options([("default_transaction_read_only", "on")]),
         )
         .await?;
-    let snapshot = PostgresMemory::new(readonly).snapshot().await?;
-    let row = snapshot
-        .conversations
-        .iter()
-        .find(|row| row.head.id == id)
-        .expect("projected row");
-    assert_eq!(row.opening.as_deref(), Some(FIRST));
-    assert_eq!(row.summary.as_deref(), Some(FIRST));
-    Ok(())
+    testkit::maintenance::cleanup_reads_the_opening(&PostgresMemory::new(readonly), id, FIRST).await
 }
 
 fn positioned(

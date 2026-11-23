@@ -135,9 +135,16 @@ fn id(text: &str) -> Result<Uuid, Error> {
     Uuid::parse_str(text.trim()).map_err(|_| Error::ConversationId(text.to_owned()))
 }
 
+impl Store {
+    pub(super) fn explicit_sqlite(&self) -> bool {
+        self.sqlite.is_some()
+    }
+}
+
 pub(super) async fn load(store: Store, env: &Environment) -> Result<Chosen, Error> {
+    let explicit = store.sqlite.is_some();
     let target = resolve(env, store.sqlite, Kind::Either)?;
-    let author = super::bundle::exporter(env).await?;
+    let author = super::bundle::exporter_from(env, explicit).await?;
     let owner = Owner::new(author.user.clone())?;
     let sessions = match target {
         Target::Postgres(url) => {

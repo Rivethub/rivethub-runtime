@@ -1,3 +1,4 @@
+ALTER TABLE ros_wiki_topics DROP COLUMN history;
 DROP INDEX rh_wiki_topics_scope_local;
 ALTER TABLE ros_wiki_topics DROP COLUMN scope;
 ALTER TABLE ros_wiki_topics DROP COLUMN visibility;

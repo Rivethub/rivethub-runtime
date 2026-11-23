@@ -11,6 +11,7 @@ use kernel::wiki::WikiRedLink;
 use kernel::wiki::WikiSource;
 use kernel::wiki::WikiTopic;
 use kernel::wiki::WikiTopicList;
+use kernel::wiki::page::WikiHistoryEntry;
 use kernel::wiki::page::WikiSlug;
 use kernel::wiki::page::WikiSourceKind;
 use rusqlite::Connection;
@@ -137,80 +138,92 @@ fn page(conn: &Connection, slug: &str) -> Result<WikiLookup, SqliteError> {
     let found = conn
         .query_row(
             "SELECT slug, title, aliases, tags, entities, current_state, article, related, \
-                    git_sha, last_verified_at, updated_at, \
+                    git_sha, last_verified_at, updated_at, history, \
                     (SELECT topic_id FROM rh_topic_pages WHERE page_slug = ros_wiki_topics.slug), \
                     (SELECT sections FROM rh_topic_pages WHERE page_slug = ros_wiki_topics.slug) \
                FROM ros_wiki_topics WHERE slug = ?1",
             params_from_iter([Value::Text(slug.to_owned())]),
             |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, String>(5)?,
-                    row.get::<_, String>(6)?,
-                    row.get::<_, String>(7)?,
-                    row.get::<_, Option<String>>(8)?,
-                    row.get::<_, Option<String>>(9)?,
-                    row.get::<_, String>(10)?,
-                    row.get::<_, Option<String>>(11)?,
-                    row.get::<_, Option<String>>(12)?,
-                ))
+                Ok(PageRow {
+                    slug: row.get(0)?,
+                    title: row.get(1)?,
+                    aliases: row.get(2)?,
+                    tags: row.get(3)?,
+                    entities: row.get(4)?,
+                    state: row.get(5)?,
+                    article: row.get(6)?,
+                    related: row.get(7)?,
+                    git_sha: row.get(8)?,
+                    verified: row.get(9)?,
+                    updated: row.get(10)?,
+                    history: row.get(11)?,
+                    topic_id: row.get(12)?,
+                    sections: row.get(13)?,
+                })
             },
         )
         .optional()
         .map_err(SqliteError::query("wiki page"))?;
-    let Some((
-        slug,
-        title,
-        aliases,
-        tags,
-        entities,
-        state,
-        article,
-        related,
-        git_sha,
-        verified,
-        updated,
-        topic_id,
-        sections,
-    )) = found
-    else {
+    let Some(row) = found else {
         return redirect(conn, slug);
     };
-    let article_text = (!article.is_empty()).then_some(article);
-    let sections = sections_markdown(sections.as_deref())?;
+    assemble(conn, row)
+}
+
+struct PageRow {
+    slug: String,
+    title: String,
+    aliases: String,
+    tags: String,
+    entities: String,
+    state: String,
+    article: String,
+    related: String,
+    git_sha: Option<String>,
+    verified: Option<String>,
+    updated: String,
+    history: String,
+    topic_id: Option<String>,
+    sections: Option<String>,
+}
+
+fn assemble(conn: &Connection, row: PageRow) -> Result<WikiLookup, SqliteError> {
+    let article_text = if row.article.is_empty() {
+        None
+    } else {
+        Some(row.article)
+    };
+    let sections = sections_markdown(row.sections.as_deref())?;
     let markdown = page_markdown(
         conn,
-        &title,
-        &state,
+        &row.title,
+        &row.state,
         article_text.as_deref(),
         &sections,
-        topic_id.as_deref(),
+        row.topic_id.as_deref(),
     )?;
     Ok(WikiLookup::Page(Box::new(WikiPageResponse {
-        slug: slug.clone(),
-        title,
-        aliases: json_list(&aliases, "aliases")?,
-        tags: json_list(&tags, "tags")?,
-        entities: json_list(&entities, "entities")?,
-        current_state: state,
+        slug: row.slug.clone(),
+        title: row.title,
+        aliases: json_list(&row.aliases, "aliases")?,
+        tags: json_list(&row.tags, "tags")?,
+        entities: json_list(&row.entities, "entities")?,
+        current_state: row.state,
         article: article_text,
         see_also: None,
-        history: Vec::new(),
-        citations: crate::wiki_citations::citations(conn, &slug)?,
+        history: history_entries(&row.history)?,
+        citations: crate::wiki_citations::citations(conn, &row.slug)?,
         markdown,
-        sources: sources(conn, &slug)?,
-        git_sha,
-        last_verified: verified
+        sources: sources(conn, &row.slug)?,
+        git_sha: row.git_sha,
+        last_verified: row
+            .verified
             .as_deref()
             .map(|text| time::stored(text, "last_verified_at"))
             .transpose()?,
-        updated_at: time::stored(&updated, "updated_at")?,
-        related: Some(json_list(&related, "related")?),
-        topic_id,
+        updated_at: time::stored(&row.updated, "updated_at")?,
+        related: Some(json_list(&row.related, "related")?),
+        topic_id: row.topic_id,
     })))
 }
 
@@ -434,6 +447,13 @@ fn sections_markdown(sections: Option<&str>) -> Result<String, SqliteError> {
             rusqlite::types::Type::Text,
             Box::new(source),
         ),
+    })
+}
+
+fn history_entries(text: &str) -> Result<Vec<WikiHistoryEntry>, SqliteError> {
+    serde_json::from_str(text).map_err(|source| SqliteError::StoredJson {
+        column: "history",
+        source,
     })
 }
 

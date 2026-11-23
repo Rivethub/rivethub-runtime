@@ -6,6 +6,7 @@ mod pool;
 mod propose;
 mod render;
 mod report;
+mod stamp;
 mod tree;
 
 use std::collections::BTreeMap;
@@ -43,6 +44,7 @@ const ATTEMPTS: u32 = 3;
 pub(in crate::memory) struct CleanupArgs {
     mode: Mode,
     database: Option<String>,
+    sqlite: Option<PathBuf>,
     out: PathBuf,
     model_url: String,
     model: String,
@@ -79,6 +81,7 @@ pub(in crate::memory) fn parse(args: &[String]) -> Result<CleanupArgs, Error> {
     let mut scan = Scan::new(args);
     let (mut dry_run, mut propose) = (false, false);
     let (mut out, mut model_url, mut model, mut database) = (None, None, None, None);
+    let mut sqlite = None;
     let mut settings = Settings {
         concurrency: DEFAULT_CONCURRENCY,
         batch: DEFAULT_BATCH,
@@ -96,6 +99,8 @@ pub(in crate::memory) fn parse(args: &[String]) -> Result<CleanupArgs, Error> {
         }
         if let Some(value) = text(&mut scan, "--database")? {
             database = Some(value);
+        } else if let Some(value) = text(&mut scan, "--sqlite")? {
+            sqlite = Some(PathBuf::from(value));
         } else if let Some(value) = text(&mut scan, "--out")? {
             out = Some(PathBuf::from(value));
         } else if let Some(value) = text(&mut scan, "--model-url")? {
@@ -117,15 +122,19 @@ pub(in crate::memory) fn parse(args: &[String]) -> Result<CleanupArgs, Error> {
             return Err(Error::Unexpected(token));
         }
     }
+    if database.is_some() && sqlite.is_some() {
+        return Err(Error::Unexpected("--sqlite".to_owned()));
+    }
     let mode = match (dry_run, propose) {
         (true, false) => Mode::DryRun,
-        (false, true) if database.is_some() => Mode::Propose,
+        (false, true) if database.is_some() || sqlite.is_some() => Mode::Propose,
         (false, true) => return Err(Error::CleanupDatabase),
         (true, true) | (false, false) => return Err(Error::CleanupMode),
     };
     Ok(CleanupArgs {
         mode,
         database,
+        sqlite,
         out: out.ok_or(Error::CleanupOut)?,
         model_url: model_url.ok_or(Error::CleanupModel)?,
         model: model.ok_or(Error::CleanupModel)?,
@@ -138,17 +147,13 @@ pub(in crate::memory) async fn run(
     env: &Environment,
     shutdown: &CancellationToken,
 ) -> Result<Report, Error> {
-    let target = match &args.database {
-        Some(url) => url.clone(),
-        None => super::run::postgres_url(env)?,
-    };
-    let live = match args.mode {
-        Mode::Propose => Some(propose::refuse_live(&target, env).await?),
-        Mode::DryRun => None,
-    };
+    let backend = backend(&args, env)?;
+    propose::guard_live(args.mode, &backend, env).await?;
+    let stamp = stamp::verify(&backend).await?;
     let book = Book::open(args.out.clone()).await?;
+    stamp::accept(&book, &stamp).await?;
     let mut timings: Timings = book.read(TIMINGS).await?.unwrap_or_default();
-    let snapshot = snapshot(&book, &target, env, &mut timings).await?;
+    let snapshot = snapshot(&book, &backend, env, &mut timings).await?;
     let provider = providers::OpenAiCompatible::build(
         config::ProviderType::Vllm,
         &config::provider::OpenaiProvider {
@@ -197,10 +202,13 @@ pub(in crate::memory) async fn run(
     book.write(TIMINGS, &timings).await?;
     let folds = folds?;
     let summary = report::write(&stage, &filed, &folds, &timings).await?;
-    let proposed = match &live {
-        None => String::new(),
-        Some(live) => propose::write(&stage, &filed, &folds, &target, live).await?,
+    let proposal = propose::Proposal {
+        mode: &args.mode,
+        backend: &backend,
+        env,
+        stamp: &stamp,
     };
+    let proposed = propose::commit(&stage, &filed, &folds, &proposal).await?;
     Ok(Report::success(format!(
         "{summary}\nwrote {}\n{proposed}",
         book.path(report::REPORT).display()
@@ -228,9 +236,27 @@ impl Stage<'_> {
     }
 }
 
+enum Backend {
+    Postgres(String),
+    Sqlite(PathBuf),
+}
+
+fn backend(args: &CleanupArgs, env: &Environment) -> Result<Backend, Error> {
+    if let Some(path) = &args.sqlite {
+        return Ok(Backend::Sqlite(path.clone()));
+    }
+    if let Some(url) = &args.database {
+        return Ok(Backend::Postgres(url.clone()));
+    }
+    match super::target::resolve(env, None, super::target::Kind::Either)? {
+        super::target::Target::Postgres(url) => Ok(Backend::Postgres(url)),
+        super::target::Target::Sqlite(path) => Ok(Backend::Sqlite(path)),
+    }
+}
+
 async fn snapshot(
     book: &Book,
-    target: &str,
+    backend: &Backend,
     env: &Environment,
     timings: &mut Timings,
 ) -> Result<Snapshot, Error> {
@@ -238,7 +264,10 @@ async fn snapshot(
     let snapshot = if let Some(snapshot) = book.read::<Snapshot>(SNAPSHOT).await? {
         snapshot
     } else {
-        let mut snapshot = gather(target.to_owned(), env).await?;
+        let mut snapshot = match backend {
+            Backend::Postgres(url) => gather(url.clone(), env).await?,
+            Backend::Sqlite(path) => gather_sqlite(path).await?,
+        };
         let children = lineage::enrich(&mut snapshot, env).await?;
         book.note(&format!("lineage: {children} child session(s)"))
             .await?;
@@ -273,14 +302,31 @@ fn name_guard(snapshot: &Snapshot) -> NameGuard {
     )
 }
 
+async fn gather_sqlite(path: &std::path::Path) -> Result<Snapshot, Error> {
+    let store = super::run::open_sqlite_read_only(path).await?;
+    Ok(store.snapshot().await?)
+}
+
 async fn gather(url: String, env: &Environment) -> Result<Snapshot, Error> {
-    let (_, loaded) = crate::configuration::load(env).await?;
-    let memory = PostgresMemory::connect_read_only(&url)
-        .await?
-        .with_wiki_directory(loaded.config.wiki_directory(env));
+    let memory = PostgresMemory::connect_read_only(&url).await?;
+    let wiki = match wiki_dir(env) {
+        Ok(path) => path,
+        Err(error) => {
+            memory.pool().close().await;
+            return Err(error);
+        }
+    };
+    let memory = memory.with_wiki_directory(wiki);
     let snapshot = memory.snapshot().await;
     memory.pool().close().await;
     Ok(snapshot?)
+}
+
+fn wiki_dir(env: &Environment) -> Result<std::path::PathBuf, Error> {
+    Ok(match super::target::load_present(env)? {
+        Some(config) => config.wiki_directory(env),
+        None => config::Config::default().wiki_directory(env),
+    })
 }
 
 fn text(scan: &mut Scan<'_>, flag: &'static str) -> Result<Option<String>, Error> {

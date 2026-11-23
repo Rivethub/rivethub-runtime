@@ -98,6 +98,9 @@ pub(super) fn parse(args: &[String]) -> Result<RecompileArgs, Error> {
 }
 
 pub(super) async fn run(args: RecompileArgs, env: &Environment) -> Result<Report, Error> {
+    if super::target::load(env)?.is_some_and(|config| config.sqlite_selected()) {
+        return Err(Error::RecompileNeedsPostgres);
+    }
     let directory = config::Config::default().wiki_directory(env);
     let pages = planned(&directory.join("topics"), &args).await?;
     if !args.dry_run {

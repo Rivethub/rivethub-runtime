@@ -170,7 +170,7 @@ fn sqlite_file(config: &Config, env: &Environment) -> Result<PathBuf, Error> {
     if path.as_os_str().is_empty() || path == Path::new(":memory:") {
         return Err(Error::LocalDatabase);
     }
-    Ok(path)
+    crate::sqlite_path::service_sqlite_path(path, env)
 }
 
 fn bind_host(env: &Environment, no_lan: bool) -> Result<&'static str, Error> {

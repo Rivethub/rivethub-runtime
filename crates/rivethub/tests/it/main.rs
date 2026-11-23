@@ -21,6 +21,7 @@ mod roots;
 mod sessions;
 mod share_desk;
 mod share_receive;
+mod sqlite_worker_pause;
 mod startup;
 mod store_roots;
 mod store_routes;

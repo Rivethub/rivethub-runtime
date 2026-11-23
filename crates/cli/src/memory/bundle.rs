@@ -274,8 +274,9 @@ pub(super) async fn share(
     {
         return Err(Error::BundleOutDirectory(out.display().to_string()));
     }
+    let explicit = sqlite.is_some();
     let target = resolve(env, sqlite, Kind::Either)?;
-    let author = exporter(env).await?;
+    let author = exporter_from(env, explicit).await?;
     let named = (!wanted.is_empty()).then_some(wanted);
     let sessions = match target {
         Target::Postgres(url) => {
@@ -335,8 +336,11 @@ fn refuse_missing(wanted: &[String], sessions: &[BundledSession]) -> Result<(), 
     }
 }
 
-pub(super) async fn exporter(env: &Environment) -> Result<BundleAuthor, Error> {
-    let config = super::target::load(env)?.unwrap_or_default();
+pub(super) async fn exporter_from(
+    env: &Environment,
+    explicit: bool,
+) -> Result<BundleAuthor, Error> {
+    let config = super::target::load_for(env, explicit)?.unwrap_or_default();
     let hostname = nix::unistd::gethostname()
         .map_err(|_| Error::HostName)?
         .into_string()

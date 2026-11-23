@@ -8,6 +8,7 @@ use kernel::wiki::consolidate::WikiFold;
 use kernel::wiki::consolidate::WikiTopicStats;
 use kernel::wiki::page::FoldMark;
 use kernel::wiki::page::FoldedTopic;
+use kernel::wiki::page::WikiHistoryEntry;
 use kernel::wiki::page::fold_text;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension as _;
@@ -27,6 +28,7 @@ struct Topic {
     related: Vec<String>,
     current_state: String,
     article: String,
+    history: Vec<WikiHistoryEntry>,
     history_count: i64,
 }
 
@@ -132,6 +134,7 @@ fn absorb(parent: &mut Topic, child: Topic, mark: FoldMark) {
         .collect();
     merge_unique(&mut parent.related, related);
     parent.history_count += child.history_count;
+    crate::wiki_history::merge(&mut parent.history, child.history);
     fold_text(
         &mut parent.current_state,
         &mut parent.article,
@@ -157,7 +160,7 @@ fn load(conn: &Connection, slug: &str) -> Result<Option<Topic>, WikiStoreError> 
     let row = conn
         .query_row(
             "SELECT slug, title, aliases, tags, entities, related, current_state, article,
-                    history_count
+                    history, history_count
                FROM ros_wiki_topics WHERE slug = ?1",
             params![slug],
             |row| {
@@ -172,14 +175,22 @@ fn load(conn: &Connection, slug: &str) -> Result<Option<Topic>, WikiStoreError> 
                     ],
                     row.get::<_, String>(6)?,
                     row.get::<_, String>(7)?,
-                    row.get::<_, i64>(8)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, i64>(9)?,
                 ))
             },
         )
         .optional()
         .map_err(query)?;
-    let Some((slug, title, [aliases, tags, entities, related], current_state, article, history)) =
-        row
+    let Some((
+        slug,
+        title,
+        [aliases, tags, entities, related],
+        current_state,
+        article,
+        history,
+        history_count,
+    )) = row
     else {
         return Ok(None);
     };
@@ -192,7 +203,9 @@ fn load(conn: &Connection, slug: &str) -> Result<Option<Topic>, WikiStoreError> 
         related: list(&related)?,
         current_state,
         article,
-        history_count: history,
+        history: serde_json::from_str(&history)
+            .map_err(|source| WikiStoreError::Query(Box::new(source)))?,
+        history_count,
     }))
 }
 
@@ -206,10 +219,12 @@ fn store_parent(conn: &Connection, topic: &Topic, at: &str) -> Result<(), WikiSt
         topic.entities.join(" "),
         topic.article
     );
+    let mut kept = topic.history.clone();
+    crate::wiki_history::cap(&mut kept);
     conn.execute(
         "UPDATE ros_wiki_topics SET aliases = ?2, tags = ?3, entities = ?4, related = ?5,
-            current_state = ?6, article = ?7, search_text = ?8, history_count = ?9,
-            updated_at = ?10, embedding = NULL, embed_status = NULL, embed_failures = 0,
+            current_state = ?6, article = ?7, history = ?8, search_text = ?9, history_count = ?10,
+            updated_at = ?11, embedding = NULL, embed_status = NULL, embed_failures = 0,
             embed_error = NULL
          WHERE slug = ?1",
         params![
@@ -220,6 +235,7 @@ fn store_parent(conn: &Connection, topic: &Topic, at: &str) -> Result<(), WikiSt
             json(&topic.related)?,
             topic.current_state,
             topic.article,
+            crate::wiki_history::encode(&kept)?,
             search,
             topic.history_count,
             at

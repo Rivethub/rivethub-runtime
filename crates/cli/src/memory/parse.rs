@@ -10,8 +10,26 @@ use crate::argv::Taken;
 
 const ALLOWED_TASKS: &str =
     "extract-wiki, compact-conversation, embed-target, synthesize-tool-call, file-conversation";
-const REQUEUE_DEFAULT: u32 = 200;
+pub(super) const REQUEUE_DEFAULT: u32 = 200;
 const REQUEUE_CAP: u32 = 1000;
+
+pub(super) struct RetryCommand {
+    pub(super) tasks: Vec<String>,
+    pub(super) error: Option<String>,
+    pub(super) limit: Option<u32>,
+    pub(super) dry_run: bool,
+    pub(super) json: bool,
+    pub(super) sqlite: Option<PathBuf>,
+}
+
+pub(super) struct RequeueCommand {
+    pub(super) task: JobName,
+    pub(super) limit: u32,
+    pub(super) clamped: bool,
+    pub(super) dry_run: bool,
+    pub(super) json: bool,
+    pub(super) sqlite: Option<PathBuf>,
+}
 
 pub(super) enum MemoryCommand {
     Settle(super::settle::Args),
@@ -19,21 +37,10 @@ pub(super) enum MemoryCommand {
     Pause(super::pause::Args),
     QueueStatus {
         json: bool,
+        sqlite: Option<PathBuf>,
     },
-    Retry {
-        tasks: Vec<String>,
-        error: Option<String>,
-        limit: Option<u32>,
-        dry_run: bool,
-        json: bool,
-    },
-    Requeue {
-        task: JobName,
-        limit: u32,
-        clamped: bool,
-        dry_run: bool,
-        json: bool,
-    },
+    Retry(RetryCommand),
+    Requeue(RequeueCommand),
     ToolSynth {
         limit: Option<u32>,
         dry_run: bool,
@@ -64,6 +71,7 @@ pub(super) enum MemoryCommand {
         limit: Option<u32>,
         dry_run: bool,
         json: bool,
+        sqlite: Option<PathBuf>,
     },
     RecompileWiki(super::recompile::RecompileArgs),
     Cleanup(super::cleanup::CleanupArgs),
@@ -170,15 +178,15 @@ pub(super) fn parse(args: &[String]) -> Result<Option<MemoryCommand>, Error> {
         Verb::Resume => super::pause::parse_resume(rest)
             .map(MemoryCommand::Pause)
             .map(Some),
-        Verb::QueueStatus => queue_status(rest).map(Some),
-        Verb::RetryFailed => retry(rest).map(Some),
-        Verb::Requeue => requeue(rest).map(Some),
+        Verb::QueueStatus => super::maintain::queue_status(rest).map(Some),
+        Verb::RetryFailed => super::maintain::retry(rest).map(Some),
+        Verb::Requeue => super::maintain::requeue(rest).map(Some),
         Verb::ToolSynth => tool_synth(rest).map(Some),
         Verb::Export => export(rest).map(Some),
         Verb::Import => import(rest).map(Some),
         Verb::Titles => titles(rest).map(Some),
         Verb::Reembed => reembed(rest).map(Some),
-        Verb::ConsolidateWiki => consolidate_wiki(rest).map(Some),
+        Verb::ConsolidateWiki => super::maintain::consolidate_wiki(rest).map(Some),
         Verb::RecompileWiki => super::recompile::parse(rest)
             .map(MemoryCommand::RecompileWiki)
             .map(Some),
@@ -200,128 +208,6 @@ pub(super) fn parse(args: &[String]) -> Result<Option<MemoryCommand>, Error> {
 
 fn is_help(arg: &String) -> bool {
     arg == "--help" || arg == "-h"
-}
-
-fn queue_status(args: &[String]) -> Result<MemoryCommand, Error> {
-    let mut scan = Scan::new(args);
-    let mut json = false;
-    while scan.current().is_some() {
-        if scan.flag("--json") {
-            json = true;
-            continue;
-        }
-        return Err(reject(&scan));
-    }
-    Ok(MemoryCommand::QueueStatus { json })
-}
-
-fn retry(args: &[String]) -> Result<MemoryCommand, Error> {
-    let mut scan = Scan::new(args);
-    let mut tasks = Vec::new();
-    let mut error = None;
-    let mut limit = None;
-    let mut dry_run = false;
-    let mut json = false;
-    while scan.current().is_some() {
-        match scan.option("--task", None) {
-            Taken::Value(value) => {
-                tasks.push(value);
-                continue;
-            }
-            Taken::Missing => return Err(Error::TaskRequired),
-            Taken::Absent => {}
-        }
-        match scan.option("--error", None) {
-            Taken::Value(value) => {
-                error = Some(value);
-                continue;
-            }
-            Taken::Missing => return Err(Error::ErrorSubstringRequired),
-            Taken::Absent => {}
-        }
-        match scan.option("--limit", None) {
-            Taken::Value(value) => {
-                limit = unbounded(&value)?;
-                continue;
-            }
-            Taken::Missing => return Err(Error::LimitInteger),
-            Taken::Absent => {}
-        }
-        if scan.flag("--dry-run") {
-            dry_run = true;
-            continue;
-        }
-        if scan.flag("--json") {
-            json = true;
-            continue;
-        }
-        return Err(reject(&scan));
-    }
-    if tasks.is_empty() {
-        return Err(Error::RetryTaskFilter);
-    }
-    Ok(MemoryCommand::Retry {
-        tasks,
-        error,
-        limit,
-        dry_run,
-        json,
-    })
-}
-
-fn requeue(args: &[String]) -> Result<MemoryCommand, Error> {
-    let mut scan = Scan::new(args);
-    let mut task = None;
-    let mut limit = None;
-    let mut clamped = false;
-    let mut dry_run = false;
-    let mut json = false;
-    while scan.current().is_some() {
-        match scan.option("--task", None) {
-            Taken::Value(value) => {
-                if task.is_some() {
-                    return Err(Error::OneTask);
-                }
-                task = Some(allowed_task(&value)?);
-                continue;
-            }
-            Taken::Missing => return Err(Error::TaskRequired),
-            Taken::Absent => {}
-        }
-        match scan.option("--limit", None) {
-            Taken::Value(value) => {
-                let (parsed, hit_cap) = positive_limit(&value)?;
-                limit = Some(parsed);
-                clamped = hit_cap;
-                continue;
-            }
-            Taken::Missing => return Err(Error::LimitInteger),
-            Taken::Absent => {}
-        }
-        if scan.flag("--dry-run") {
-            dry_run = true;
-            continue;
-        }
-        if scan.flag("--json") {
-            json = true;
-            continue;
-        }
-        return Err(reject(&scan));
-    }
-    let Some(task) = task else {
-        return Err(Error::RequeueTaskFilter);
-    };
-    let limit = match limit {
-        Some(limit) => limit,
-        None => REQUEUE_DEFAULT,
-    };
-    Ok(MemoryCommand::Requeue {
-        task,
-        limit,
-        clamped,
-        dry_run,
-        json,
-    })
 }
 
 fn tool_synth(args: &[String]) -> Result<MemoryCommand, Error> {
@@ -524,37 +410,6 @@ fn reembed(args: &[String]) -> Result<MemoryCommand, Error> {
     Ok(MemoryCommand::Reembed { dry_run, sqlite })
 }
 
-fn consolidate_wiki(args: &[String]) -> Result<MemoryCommand, Error> {
-    let mut scan = Scan::new(args);
-    let mut limit = None;
-    let mut dry_run = false;
-    let mut json = false;
-    while scan.current().is_some() {
-        match scan.option("--limit", None) {
-            Taken::Value(value) => {
-                limit = Some(positive_limit(&value)?.0);
-                continue;
-            }
-            Taken::Missing => return Err(Error::LimitInteger),
-            Taken::Absent => {}
-        }
-        if scan.flag("--dry-run") {
-            dry_run = true;
-            continue;
-        }
-        if scan.flag("--json") {
-            json = true;
-            continue;
-        }
-        return Err(reject(&scan));
-    }
-    Ok(MemoryCommand::ConsolidateWiki {
-        limit,
-        dry_run,
-        json,
-    })
-}
-
 pub(super) fn reject(scan: &Scan<'_>) -> Error {
     match scan.current() {
         Some(token) if token.starts_with('-') => Error::UnknownOption(token.to_owned()),
@@ -563,7 +418,7 @@ pub(super) fn reject(scan: &Scan<'_>) -> Error {
     }
 }
 
-fn allowed_task(text: &str) -> Result<JobName, Error> {
+pub(super) fn allowed_task(text: &str) -> Result<JobName, Error> {
     let task = match text {
         "extract-wiki" => FixedJob::ExtractWiki,
         "compact-conversation" => FixedJob::SummarizeConversation,
@@ -580,7 +435,7 @@ fn allowed_task(text: &str) -> Result<JobName, Error> {
     Ok(JobName::Fixed(task))
 }
 
-fn unbounded(text: &str) -> Result<Option<u32>, Error> {
+pub(super) fn unbounded(text: &str) -> Result<Option<u32>, Error> {
     let parsed = text.parse::<i64>().map_err(|_| Error::LimitInteger)?;
     if parsed <= 0 {
         return Ok(None);
@@ -590,7 +445,7 @@ fn unbounded(text: &str) -> Result<Option<u32>, Error> {
         .map_err(|_| Error::LimitInteger)
 }
 
-fn positive_limit(text: &str) -> Result<(u32, bool), Error> {
+pub(super) fn positive_limit(text: &str) -> Result<(u32, bool), Error> {
     let parsed = text.parse::<i64>().map_err(|_| Error::LimitInteger)?;
     if parsed <= 0 {
         return Err(Error::LimitPositive);

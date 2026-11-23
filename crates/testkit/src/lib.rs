@@ -12,6 +12,7 @@ pub mod graphile_schema;
 pub mod http;
 pub mod json;
 pub mod logs;
+pub mod maintenance;
 pub mod mcp_text;
 pub mod memory;
 pub mod memory_jobs;
