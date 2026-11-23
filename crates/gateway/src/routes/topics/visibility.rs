@@ -76,7 +76,7 @@ fn wanted(text: Option<&str>) -> Result<Option<Visibility>, ApiError> {
 
 const fn kind(kind: SpaceKind) -> wire::gateway::tenancy::SpaceKind {
     match kind {
-        SpaceKind::Household => wire::gateway::tenancy::SpaceKind::Household,
+        SpaceKind::Device => wire::gateway::tenancy::SpaceKind::Device,
         SpaceKind::Team => wire::gateway::tenancy::SpaceKind::Team,
         SpaceKind::Compartment => wire::gateway::tenancy::SpaceKind::Compartment,
     }

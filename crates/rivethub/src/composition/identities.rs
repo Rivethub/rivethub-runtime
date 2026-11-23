@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gateway::tenancy::{Tenancy, UserId};
+use kernel::tenancy::DEFAULT_SPACE;
 use kernel::tenancy::Scope;
 use kernel::tenancy::Space;
 use kernel::tenancy::SpaceId;
@@ -13,8 +14,6 @@ use wire::gateway::users::UsersRegistry;
 
 use super::ComposeError;
 
-const HOUSEHOLD: &str = "household";
-const HOUSEHOLD_NAME: &str = "Household";
 const SPACE_SYNC_RETRY: Duration = Duration::from_secs(30);
 
 #[derive(Debug)]
@@ -83,7 +82,7 @@ fn one_person(users: &UsersRegistry) -> Result<(), ComposeError> {
 
 const fn space_kind(kind: wire::gateway::tenancy::SpaceKind) -> SpaceKind {
     match kind {
-        wire::gateway::tenancy::SpaceKind::Household => SpaceKind::Household,
+        wire::gateway::tenancy::SpaceKind::Device => SpaceKind::Device,
         wire::gateway::tenancy::SpaceKind::Team => SpaceKind::Team,
         wire::gateway::tenancy::SpaceKind::Compartment => SpaceKind::Compartment,
     }
@@ -103,9 +102,14 @@ fn spaces(users: &UsersRegistry, owner: &UserId) -> Result<Vec<Space>, ComposeEr
             }
         }
         return Ok(vec![Space {
-            id: SpaceId::new(HOUSEHOLD.to_owned()).map_err(invalid)?,
-            kind: SpaceKind::Household,
-            name: HOUSEHOLD_NAME.to_owned(),
+            id: SpaceId::new(DEFAULT_SPACE.to_owned()).map_err(invalid)?,
+            kind: SpaceKind::Device,
+            name: if members.len() == 1 {
+                kernel::tenancy::ONE_MEMBER_SPACE_NAME
+            } else {
+                kernel::tenancy::SHARED_SPACE_NAME
+            }
+            .to_owned(),
             members,
         }]);
     };
@@ -182,3 +186,6 @@ async fn sync_spaces(
     stop.cancelled().await;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

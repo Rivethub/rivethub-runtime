@@ -8,7 +8,7 @@ fn document(text: &str) -> Result<serde_yaml_ng::Value, serde_yaml_ng::Error> {
 #[test]
 fn hubs_telemetry_and_cloud_are_typed_sections() -> Result<(), Box<dyn std::error::Error>> {
     let yaml = document(
-        "memory:\n  backend: sqlite\nhubs:\n  - name: household\n    url: https://team.example.com/\n  - name: desk\n    url: http://127.0.0.1:5174\n    kind: local\ntelemetry:\n  disabled: true\ncloud:\n  url: http://127.0.0.1:8080\n  update_key: AAAA\n",
+        "memory:\n  backend: sqlite\nhubs:\n  - name: office\n    url: https://team.example.com/\n  - name: desk\n    url: http://127.0.0.1:5174\n    kind: local\ntelemetry:\n  disabled: true\ncloud:\n  url: http://127.0.0.1:8080\n  update_key: AAAA\n",
     )?;
     let result = validate_document(&yaml);
     assert!(result.errors.is_empty(), "{:?}", result.errors);
@@ -19,7 +19,7 @@ fn hubs_telemetry_and_cloud_are_typed_sections() -> Result<(), Box<dyn std::erro
         hubs.iter()
             .map(|hub| (hub.name.as_str(), hub.kind))
             .collect::<Vec<_>>(),
-        vec![("household", HubKind::Team), ("desk", HubKind::Local)]
+        vec![("office", HubKind::Team), ("desk", HubKind::Local)]
     );
     assert!(typed.telemetry.is_some_and(|section| section.disabled));
     assert_eq!(

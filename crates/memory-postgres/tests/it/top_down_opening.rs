@@ -13,7 +13,7 @@ use wire::{
 
 use crate::{
     common::probe,
-    visibility::{batch, household, seed, viewer},
+    visibility::{batch, seed, shared_space, viewer},
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -78,7 +78,7 @@ async fn the_opening_uses_transcript_order_and_a_shared_reader_cannot_access_it(
         .run(tenancy.mark_session(
             &alice,
             &SessionKey::from(&session),
-            Some(&Visibility::Space(household()?)),
+            Some(&Visibility::Space(shared_space()?)),
             Timestamp::now(),
         ))
         .await?;

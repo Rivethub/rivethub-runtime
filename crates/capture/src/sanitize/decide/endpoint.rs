@@ -11,7 +11,7 @@ use thiserror::Error;
 
 use super::chunks::Chunk;
 
-const QUESTION: &str = "This line comes from an AI coding session that will be shared outside the author's household. Should it be redacted before sharing?";
+const QUESTION: &str = "This line comes from an AI coding session that will be shared with people other than its author. Should it be redacted before sharing?";
 const ANSWER_CAP: usize = 1 << 20;
 const CALL_TIMEOUT: Duration = Duration::from_secs(120);
 const SHOWN_CHARS: usize = 200;

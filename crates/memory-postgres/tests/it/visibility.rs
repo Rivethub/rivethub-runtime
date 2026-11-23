@@ -72,14 +72,14 @@ pub(crate) fn batch(session: &str, text: &str) -> CaptureBatchRequest {
     }
 }
 
-pub(crate) fn household() -> Result<SpaceId, Box<dyn std::error::Error>> {
-    Ok(SpaceId::new("household".to_owned())?)
+pub(crate) fn shared_space() -> Result<SpaceId, Box<dyn std::error::Error>> {
+    Ok(SpaceId::new("shared".to_owned())?)
 }
 
 pub(crate) fn viewer(name: &str) -> Result<Viewer, Box<dyn std::error::Error>> {
     Ok(Viewer::new(
         Owner::new(name.to_owned())?,
-        vec![household()?],
+        vec![shared_space()?],
     ))
 }
 
@@ -98,9 +98,9 @@ pub(crate) async fn seed(
         .sync_spaces(
             "node-a",
             &[Space {
-                id: household()?,
-                kind: SpaceKind::Household,
-                name: "Household".to_owned(),
+                id: shared_space()?,
+                kind: SpaceKind::Device,
+                name: "Shared".to_owned(),
                 members: vec![alice, Owner::new("bob".to_owned())?],
             }],
         )
@@ -155,7 +155,7 @@ async fn a_shared_session_shows_to_the_space_and_a_private_one_does_not(
 
     let tenancy = PostgresTenancy::new(probe.clone());
     let second = SessionId::try_from(SECOND.to_owned())?;
-    let shared = Visibility::Space(household()?);
+    let shared = Visibility::Space(shared_space()?);
     let marked = owners
         .clone()
         .run(tenancy.mark_session(
@@ -276,7 +276,7 @@ async fn a_session_follows_its_topic_unless_it_is_marked(pool: PgPool) -> TestRe
             .await?;
     }
     let tenancy = PostgresTenancy::new(probe.clone());
-    let shared = Visibility::Space(household()?);
+    let shared = Visibility::Space(shared_space()?);
     let owners = Scope::Viewer(alice.clone());
     let marked = owners
         .clone()
@@ -374,7 +374,7 @@ async fn a_shared_default_applies_to_sessions_started_after_it(pool: PgPool) -> 
             .fetch_one(&pool)
             .await?;
     let alice = Owner::new("alice".to_owned())?;
-    let shared = Visibility::Space(household()?);
+    let shared = Visibility::Space(shared_space()?);
     tenancy
         .set_default_visibility(
             &alice,
@@ -397,7 +397,7 @@ async fn a_shared_default_applies_to_sessions_started_after_it(pool: PgPool) -> 
         vec![
             (FIRST.to_owned(), "private".to_owned()),
             (SECOND.to_owned(), "private".to_owned()),
-            (LATER.to_owned(), "household".to_owned()),
+            (LATER.to_owned(), "shared".to_owned()),
         ]
     );
     Ok(())
@@ -464,7 +464,7 @@ async fn the_filing_listing_reads_each_session_as_the_visibility_store_does(
     }
     let tenancy = PostgresTenancy::new(probe.clone());
     let owners = Scope::Viewer(alice.clone());
-    let shared = Visibility::Space(household()?);
+    let shared = Visibility::Space(shared_space()?);
     owners
         .clone()
         .run(tenancy.mark_topic(&alice, topic.id, Some(&shared)))
@@ -681,13 +681,13 @@ async fn a_pinned_login_keeps_its_person_whatever_it_sets(pool: PgPool) -> TestR
         .mark_session(
             &alice,
             &SessionKey::try_from(FIRST.to_owned())?,
-            Some(&Visibility::Space(household()?)),
+            Some(&Visibility::Space(shared_space()?)),
             Timestamp::now(),
         )
         .await?;
     store
         .capture_batch(
-            &batch(THIRD, "a session outside the household"),
+            &batch(THIRD, "a session outside the shared space"),
             &CaptureOptions::owned_by(&Owner::new("carol".to_owned())?),
         )
         .await?;
@@ -853,7 +853,7 @@ async fn a_pinned_login_sees_its_own_session_state_and_no_one_elses(pool: PgPool
     let kitchen = work_topic(&store, &alice, "Kitchen").await?;
     let pantry = work_topic(&store, &alice, "Pantry").await?;
     Scope::Viewer(alice.clone())
-        .run(tenancy.mark_topic(&alice, kitchen, Some(&Visibility::Space(household()?))))
+        .run(tenancy.mark_topic(&alice, kitchen, Some(&Visibility::Space(shared_space()?))))
         .await?;
     let hers: Uuid = sqlx::query_scalar("SELECT id FROM rh_conversations WHERE session_key = $1")
         .bind(FIRST)
@@ -867,7 +867,7 @@ async fn a_pinned_login_sees_its_own_session_state_and_no_one_elses(pool: PgPool
         .run(
             sqlx::query(
                 "INSERT INTO rh_agent_presets (id, name, node, directory, system_prompt)
-                 VALUES ('helper', 'Helper', 'node-a', '/srv/helper', 'the household helper')",
+                 VALUES ('helper', 'Helper', 'node-a', '/srv/helper', 'the shared-space helper')",
             )
             .execute(&probe),
         )
@@ -1339,7 +1339,7 @@ async fn a_pinned_login_cannot_write_the_shared_ledgers(pool: PgPool) -> TestRes
     assert_eq!(
         (rejected.rows_affected(), removed.rows_affected()),
         (0, 0),
-        "a pinned login changed the household vocabulary"
+        "a pinned login changed the shared vocabulary"
     );
     let rewritten = sqlx::query(
         "INSERT INTO rh_tag_taxonomy (key, value, display) VALUES ('project', 'house', 'Hut')
@@ -1349,7 +1349,7 @@ async fn a_pinned_login_cannot_write_the_shared_ledgers(pool: PgPool) -> TestRes
     .await;
     assert!(
         rewritten.is_err(),
-        "a pinned login rewrote a household vocabulary entry"
+        "a pinned login rewrote a shared vocabulary entry"
     );
     assert_eq!(
         unscoped(
@@ -1401,7 +1401,7 @@ async fn a_pinned_login_writes_wiki_pages_only_in_its_own_scopes(pool: PgPool) -
         "INSERT INTO rh_wiki_scopes (scope, owner_user_id, visibility, key_prefix, directory) VALUES
              ('alice', 'alice', 'private', 'alice-', 'users/alice'),
              ('bob', 'bob', 'private', 'bob-', 'users/bob'),
-             ('household', 'household', 'household', 'household-', 'spaces/household');
+             ('shared', 'shared', 'shared', 'shared-', 'spaces/shared');
          INSERT INTO rh_wiki_topics (slug, title, scope, local_slug, owner_user_id, visibility)
              VALUES ('alice-oncology', 'Oncology', 'alice', 'oncology', 'alice', 'private')",
     )
@@ -1426,7 +1426,7 @@ async fn a_pinned_login_writes_wiki_pages_only_in_its_own_scopes(pool: PgPool) -
     }
     for row in [
         "('bob-notes', 'Notes', 'bob', 'notes', 'bob', 'private')",
-        "('household-dinner', 'Dinner', 'household', 'dinner', 'household', 'household')",
+        "('shared-dinner', 'Dinner', 'shared', 'dinner', 'shared', 'shared')",
     ] {
         sqlx::query(sqlx::AssertSqlSafe(format!("{page}{row}")))
             .execute(&pinned)
@@ -1528,7 +1528,7 @@ async fn a_fact_claim_shows_only_with_its_entity_and_its_session(pool: PgPool) -
     );
 
     let tenancy = PostgresTenancy::new(probe.clone());
-    let shared = Visibility::Space(household()?);
+    let shared = Visibility::Space(shared_space()?);
     owners
         .clone()
         .run(tenancy.mark_topic(&alice, host.id, Some(&shared)))
@@ -1698,7 +1698,7 @@ async fn team_recall_groups_owners_limits_each_and_obeys_the_window(pool: PgPool
         .sync_spaces(
             "node-a",
             &[Space {
-                id: household()?,
+                id: shared_space()?,
                 kind: SpaceKind::Team,
                 name: "Team".into(),
                 members: vec![
@@ -1721,7 +1721,7 @@ async fn team_recall_groups_owners_limits_each_and_obeys_the_window(pool: PgPool
             &CaptureOptions::owned_by(&carol),
         )
         .await?;
-    let space = Visibility::Space(household()?);
+    let space = Visibility::Space(shared_space()?);
     for (who, key) in [
         (&alice, SECOND),
         (&alice, LATER),
@@ -1781,7 +1781,7 @@ async fn members_read_co_memberships_but_no_other_spaces_even_when_pinned(
             "node-a",
             &[
                 Space {
-                    id: household()?,
+                    id: shared_space()?,
                     kind: SpaceKind::Team,
                     name: "Team".into(),
                     members: vec![Owner::new("alice".into())?, Owner::new("bob".into())?],
@@ -1806,11 +1806,11 @@ async fn members_read_co_memberships_but_no_other_spaces_even_when_pinned(
     assert_eq!(
         members,
         vec![
-            ("household".into(), "alice".into()),
-            ("household".into(), "bob".into())
+            ("shared".into(), "alice".into()),
+            ("shared".into(), "bob".into())
         ]
     );
-    let nobody = Viewer::new(Owner::new("nobody".into())?, vec![household()?]);
+    let nobody = Viewer::new(Owner::new("nobody".into())?, vec![shared_space()?]);
     let count: i64 = Scope::Viewer(nobody)
         .run(sqlx::query_scalar("SELECT count(*) FROM rh_space_members").fetch_one(&reader))
         .await?;
@@ -1844,7 +1844,7 @@ async fn members_read_co_memberships_but_no_other_spaces_even_when_pinned(
     let spaces: Vec<String> = sqlx::query_scalar("SELECT rh_member_spaces()")
         .fetch_one(&mut *conn)
         .await?;
-    assert_eq!(spaces, vec!["household"]);
+    assert_eq!(spaces, vec!["shared"]);
     let maintenance: String = sqlx::query_scalar("SELECT current_setting('rh.maintenance')")
         .fetch_one(&mut *conn)
         .await?;
@@ -1878,7 +1878,7 @@ async fn memory_team_omits_a_shared_session_trashed_by_its_owner(pool: PgPool) -
         .mark_session(
             &alice,
             &SECOND.parse()?,
-            Some(&Visibility::Space(household()?)),
+            Some(&Visibility::Space(shared_space()?)),
             Timestamp::now(),
         )
         .await?;
@@ -1984,7 +1984,7 @@ END $$;
     let tenancy = PostgresTenancy::new(pool.clone());
     let spaces = [
         ("slot-team", SpaceKind::Team),
-        ("slot-shared", SpaceKind::Household),
+        ("slot-shared", SpaceKind::Device),
     ]
     .into_iter()
     .map(|(id, kind)| -> Result<_, Box<dyn std::error::Error>> {
