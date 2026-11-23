@@ -45,6 +45,7 @@ mod top_down_opening;
 mod top_down_settle;
 mod topics;
 mod unembedded_sweep;
+mod wiki_alias_collisions;
 mod wiki_consolidate;
 mod wiki_files;
 mod wiki_imports;

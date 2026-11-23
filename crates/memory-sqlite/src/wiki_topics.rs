@@ -47,7 +47,7 @@ pub(crate) fn apply(
     now: Timestamp,
 ) -> Result<Option<String>, WikiStoreError> {
     let slug = resolve(conn, patch, page)?;
-    let aliases = alias_list(patch, &slug);
+    let aliases = claimable_aliases(conn, &slug, alias_list(patch, &slug))?;
     let at = time::stamp(now);
     let existing = load(conn, &slug)?;
     if let Some(row) = existing.as_ref().filter(|_| slug != patch.slug.as_ref()) {
@@ -299,12 +299,20 @@ fn resolve(
     let mut found = BTreeSet::new();
     let mut blocked = false;
     for (index, candidate) in candidates.iter().enumerate() {
-        for (slug, explicit) in matches(conn, candidate)? {
+        let hits = matches(conn, candidate)?;
+        let settled = index == 0 && hits.iter().any(|(_, explicit)| *explicit);
+        for (slug, explicit) in hits {
+            if settled && !explicit {
+                continue;
+            }
             if (index == 0 && explicit) || open(conn, &slug, page)? {
                 found.insert(slug);
             } else {
                 blocked = true;
             }
+        }
+        if settled {
+            break;
         }
     }
     if found.is_empty()
@@ -387,30 +395,44 @@ pub(crate) fn redirects(
     at: &str,
 ) -> Result<(), WikiStoreError> {
     for alias in aliases {
-        let occupied: i64 = conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM ros_wiki_topics WHERE slug = ?1)",
-                params![alias],
-                |row| row.get(0),
-            )
-            .map_err(query)?;
-        if occupied != 0 {
-            return Err(WikiStoreError::SlugConflict(alias.clone()));
+        if !claimable(conn, slug, alias)? {
+            continue;
         }
-        let written = conn
-            .execute(
-                "INSERT INTO ros_wiki_redirects (from_slug, to_slug, created_at)
-                 VALUES (?1, ?2, ?3)
-                 ON CONFLICT(from_slug) DO UPDATE SET to_slug = excluded.to_slug
-                 WHERE ros_wiki_redirects.to_slug = excluded.to_slug",
-                params![alias, slug, at],
-            )
-            .map_err(query)?;
-        if written != 1 {
-            return Err(WikiStoreError::SlugConflict(alias.clone()));
-        }
+        conn.execute(
+            "INSERT INTO ros_wiki_redirects (from_slug, to_slug, created_at)
+             VALUES (?1, ?2, ?3) ON CONFLICT(from_slug) DO NOTHING",
+            params![alias, slug, at],
+        )
+        .map_err(query)?;
     }
     Ok(())
+}
+
+pub(crate) fn claimable_aliases(
+    conn: &Connection,
+    holder: &str,
+    aliases: Vec<String>,
+) -> Result<Vec<String>, WikiStoreError> {
+    let mut kept = Vec::with_capacity(aliases.len());
+    for alias in aliases {
+        if claimable(conn, holder, &alias)? {
+            kept.push(alias);
+        }
+    }
+    Ok(kept)
+}
+
+fn claimable(conn: &Connection, holder: &str, alias: &str) -> Result<bool, WikiStoreError> {
+    let taken: i64 = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM ros_wiki_topics WHERE slug = ?1 AND slug <> ?2)
+                 OR EXISTS(SELECT 1 FROM ros_wiki_redirects
+                            WHERE from_slug = ?1 AND to_slug <> ?2)",
+            params![alias, holder],
+            |row| row.get(0),
+        )
+        .map_err(query)?;
+    Ok(taken == 0)
 }
 
 pub(crate) fn provenance(
@@ -498,7 +520,7 @@ fn note(
 ) -> Result<(), WikiStoreError> {
     let proposed = patch.slug.as_ref().to_owned();
     let mut aliases = list(&row.aliases)?;
-    if !aliases.contains(&proposed) {
+    if !aliases.contains(&proposed) && claimable(conn, slug, &proposed)? {
         aliases.push(proposed.clone());
     }
     let search = search_text(
