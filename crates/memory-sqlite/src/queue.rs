@@ -566,15 +566,16 @@ fn inserted(id: Option<&String>) -> Result<(), SqliteError> {
 fn rewrite(conn: &Connection, id: &str, job: &JobInsert) -> Result<(), SqliteError> {
     conn.execute(
         "UPDATE ros_jobs
-            SET payload = ?2, run_at = ?3, updated_at = ?4, attempts = 0, max_attempts = ?5,
-                last_error = NULL, state = 'queued', locked_at = NULL
+            SET task = ?6, payload = ?2, run_at = ?3, updated_at = ?4, attempts = 0,
+                max_attempts = ?5, last_error = NULL, state = 'queued', locked_at = NULL
           WHERE id = ?1",
         params![
             id,
             job.payload,
             time::stamp(job.run_at),
             time::stamp(job.now),
-            i64::from(job.max_attempts)
+            i64::from(job.max_attempts),
+            job.task
         ],
     )
     .map_err(SqliteError::query("job replace"))?;

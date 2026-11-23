@@ -26,7 +26,7 @@ CREATE INDEX IF NOT EXISTS idx_rh_flagged_jobs_open
 INSERT INTO rh_flagged_jobs (
     task, job_key, payload, priority, max_attempts, failures, last_error,
     first_failed_at, last_failed_at, flagged_at)
-SELECT j.task, j.job_key, j.payload, COALESCE(p.priority, 0), j.max_attempts,
+SELECT j.task, NULLIF(j.job_key, ''), j.payload, COALESCE(p.priority, 0), j.max_attempts,
        CASE WHEN j.attempts < 1 THEN 1 ELSE j.attempts END,
        COALESCE(j.last_error, ''), j.updated_at, j.updated_at, j.updated_at
   FROM ros_jobs j
@@ -34,7 +34,7 @@ SELECT j.task, j.job_key, j.payload, COALESCE(p.priority, 0), j.max_attempts,
  WHERE j.state = 'dead'
    AND NOT EXISTS (
         SELECT 1 FROM rh_flagged_jobs f
-         WHERE j.job_key IS NOT NULL AND f.job_key = j.job_key
+         WHERE f.job_key = NULLIF(j.job_key, '')
    );
 
 INSERT INTO rh_job_failures (job_key, failures, first_failed_at, last_failed_at)
@@ -42,7 +42,7 @@ SELECT j.job_key,
        CASE WHEN j.attempts < 1 THEN 1 ELSE j.attempts END,
        j.updated_at, j.updated_at
   FROM ros_jobs j
- WHERE j.state = 'dead' AND j.job_key IS NOT NULL
+ WHERE j.state = 'dead' AND NULLIF(j.job_key, '') IS NOT NULL
 ON CONFLICT (job_key) DO NOTHING;
 
 DELETE FROM ros_jobs WHERE state = 'dead';

@@ -137,6 +137,13 @@ where
     assert_eq!(stored.attempts, 0);
     assert_eq!(stored.max_attempts, 9);
     assert_eq!(stored.last_error, None);
+    let mut other = embed("reset", 9, JobKeyMode::Replace)?;
+    other.name = JobName::Fixed(FixedJob::SynthesizeToolCall);
+    let renamed = queue.enqueue(other).await?;
+    assert_eq!(
+        queued_job(queue, renamed).await?.name,
+        JobName::Fixed(FixedJob::SynthesizeToolCall)
+    );
     Ok(())
 }
 
