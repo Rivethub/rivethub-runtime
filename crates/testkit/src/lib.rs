@@ -44,6 +44,7 @@ pub mod wiki_files;
 pub mod wiki_golden;
 pub mod wiki_lineage;
 pub mod wiki_mentions;
+pub mod wiki_recompile;
 pub mod wiki_routes;
 
 use std::path::Path;

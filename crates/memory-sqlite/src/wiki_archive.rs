@@ -12,17 +12,17 @@ pub(crate) async fn read(
     slug: &str,
     month: Option<&str>,
 ) -> Result<Option<String>, SqliteError> {
+    let root = match tokio::fs::canonicalize(root).await {
+        Ok(root) => root,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(SqliteError::WikiIo(error)),
+    };
     let month = match month {
         Some(month) => match parse_archive_month(month) {
             Some(month) => Some(month),
             None => return Ok(None),
         },
         None => None,
-    };
-    let root = match tokio::fs::canonicalize(root).await {
-        Ok(root) => root,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(SqliteError::WikiIo(error)),
     };
     let archives = root.join(ARCHIVE_DIRECTORY);
     let mut paths = Vec::new();
@@ -40,11 +40,6 @@ pub(crate) async fn read(
     );
     let mut found = None;
     for path in paths {
-        let text = match tokio::fs::read_to_string(&path).await {
-            Ok(text) => text,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(SqliteError::WikiIo(error)),
-        };
         let canonical = match tokio::fs::canonicalize(&path).await {
             Ok(path) => path,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
@@ -55,6 +50,9 @@ pub(crate) async fn read(
                 message: "wiki archive escaped its directory".to_owned(),
             });
         }
+        let text = tokio::fs::read_to_string(canonical)
+            .await
+            .map_err(SqliteError::WikiIo)?;
         let text = wiki_files::wiki_writer::references::archive(text).map_err(|error| {
             SqliteError::Invalid {
                 message: error.to_string(),

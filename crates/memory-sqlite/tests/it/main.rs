@@ -48,6 +48,7 @@ mod unembedded_sweep;
 mod wiki_consolidate;
 mod wiki_files;
 mod wiki_imports;
+mod wiki_recompile;
 mod wiki_routes;
 mod wiki_summary;
 mod worker_pauses;

@@ -66,6 +66,7 @@ mod wiki_history;
 mod wiki_materialize;
 mod wiki_page_files;
 mod wiki_read;
+mod wiki_recompile;
 mod wiki_topics;
 mod worker_pauses;
 

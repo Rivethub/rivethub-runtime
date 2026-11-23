@@ -172,8 +172,6 @@ pub enum Error {
     OutRequired,
     #[error("--since requires an ISO timestamp")]
     SinceRequired,
-    #[error("recompile-wiki needs Postgres in this version")]
-    RecompileNeedsPostgres,
     #[error("--min-bytes requires a byte count: {0}")]
     RecompileBytes(String),
     #[error("--slug requires a wiki page slug: {0}")]
