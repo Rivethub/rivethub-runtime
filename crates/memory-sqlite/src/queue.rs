@@ -304,14 +304,7 @@ fn reject_claim(
     now: Timestamp,
 ) -> Result<(), SqliteError> {
     let clipped: String = error.to_string().chars().take(ERROR_CHARS).collect();
-    conn.execute(
-        "UPDATE ros_jobs
-            SET state = 'dead', last_error = ?2, locked_at = NULL, updated_at = ?3
-          WHERE id = ?1 AND state = 'queued'",
-        params![id, clipped, time::stamp(now)],
-    )
-    .map_err(SqliteError::query("job claim reject"))?;
-    Ok(())
+    crate::flagged::archive_job(conn, id, &clipped, now)
 }
 
 fn release_one(conn: &mut Connection, id: &str, now: Timestamp) -> Result<(), SqliteError> {

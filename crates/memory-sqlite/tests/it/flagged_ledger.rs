@@ -182,6 +182,78 @@ async fn rolling_back_a_flag_leaves_the_job_queued_and_the_ledger_empty() -> Tes
     Ok(())
 }
 
+#[tokio::test]
+async fn a_swept_job_keeps_the_queue_time() -> TestResult {
+    let fresh = fresh_store()?;
+    let due_store = fresh.store.clone();
+    let plant_store = fresh.store.clone();
+    testkit::memory_jobs::a_swept_job_keeps_the_queue_time(
+        &fresh.store,
+        &fresh.store,
+        async move || due(&due_store).await,
+        async move || plant_updated_at(&plant_store, "swept").await,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_job_past_the_flag_threshold_is_claimed_before_the_sweep() -> TestResult {
+    let fresh = fresh_store()?;
+    let plant_store = fresh.store.clone();
+    testkit::memory_jobs::a_job_past_the_flag_threshold_is_claimed_before_the_sweep(
+        &fresh.store,
+        &fresh.store,
+        async move || plant_claimable(&plant_store, "early").await,
+    )
+    .await
+}
+
+async fn plant_updated_at(store: &SqliteStore, key: &str) -> TestResult {
+    let key = key.to_owned();
+    store
+        .with_conn(move |conn| {
+            let changed = conn
+                .execute(
+                    "UPDATE ros_jobs
+                        SET attempts = 5, state = 'queued', locked_at = NULL, last_error = NULL,
+                            updated_at = '2020-01-02T03:04:05.000Z'
+                      WHERE job_key = ?1",
+                    params![key],
+                )
+                .map_err(crate::common::seed)?;
+            if changed == 1 {
+                Ok(())
+            } else {
+                Err(crate::common::seed(rusqlite::Error::QueryReturnedNoRows))
+            }
+        })
+        .await?;
+    Ok(())
+}
+
+async fn plant_claimable(store: &SqliteStore, key: &str) -> TestResult {
+    let key = key.to_owned();
+    store
+        .with_conn(move |conn| {
+            let changed = conn
+                .execute(
+                    "UPDATE ros_jobs
+                        SET attempts = 5, state = 'queued', locked_at = NULL, last_error = NULL,
+                            run_at = '2020-01-01T00:00:00.000Z'
+                      WHERE job_key = ?1",
+                    params![key],
+                )
+                .map_err(crate::common::seed)?;
+            if changed == 1 {
+                Ok(())
+            } else {
+                Err(crate::common::seed(rusqlite::Error::QueryReturnedNoRows))
+            }
+        })
+        .await?;
+    Ok(())
+}
+
 async fn due(store: &SqliteStore) -> TestResult {
     store
         .with_conn(|conn| {

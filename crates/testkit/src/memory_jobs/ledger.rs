@@ -170,9 +170,69 @@ where
     Ok(())
 }
 
+pub async fn a_swept_job_keeps_the_queue_time<S, Q, D, P>(
+    store: &S,
+    queue: &Q,
+    mut due: D,
+    mut plant: P,
+) -> Outcome
+where
+    S: FlaggedJobs,
+    Q: JobQueue,
+    D: AsyncFnMut() -> Outcome,
+    P: AsyncFnMut() -> Outcome,
+{
+    let queued_at = wire::time::parse_rfc3339(QUEUED_AT)?;
+    queue
+        .enqueue(embed("swept", 25, JobKeyMode::Replace)?)
+        .await?;
+    plant().await?;
+    assert_eq!(queue.flag_stuck().await?, 1);
+    let swept = named(store, "swept").await?;
+    assert_eq!(swept.first_failed_at, Some(queued_at));
+    assert_eq!(swept.last_failed_at, queued_at);
+    assert!(swept.flagged_at > queued_at);
+    queue
+        .enqueue(embed("failed", 1, JobKeyMode::Replace)?)
+        .await?;
+    due().await?;
+    let claimed = claim_embed(queue).await?.ok_or("the ordinary job")?;
+    let after_claim = Timestamp::now();
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    queue.fail(claimed.id, "ordinary failure").await?;
+    let failed = named(store, "failed").await?;
+    assert_eq!(failed.error, "ordinary failure");
+    assert!(failed.last_failed_at > after_claim);
+    Ok(())
+}
+
+pub async fn a_job_past_the_flag_threshold_is_claimed_before_the_sweep<S, Q, P>(
+    store: &S,
+    queue: &Q,
+    mut plant: P,
+) -> Outcome
+where
+    S: FlaggedJobs,
+    Q: JobQueue,
+    P: AsyncFnMut() -> Outcome,
+{
+    queue
+        .enqueue(embed("early", 25, JobKeyMode::Replace)?)
+        .await?;
+    plant().await?;
+    assert_eq!(store.flagged().await?, Vec::new());
+    claim_embed(queue)
+        .await?
+        .ok_or("a job past the flag threshold was not claimed")?;
+    assert_eq!(store.flagged().await?, Vec::new());
+    Ok(())
+}
+
 pub fn ledger_job(key: &str, max_attempts: i32) -> Result<Job, serde_json::Error> {
     embed(key, max_attempts, JobKeyMode::Replace)
 }
+
+const QUEUED_AT: &str = "2020-01-02T03:04:05Z";
 
 fn embed(key: &str, max_attempts: i32, mode: JobKeyMode) -> Result<Job, serde_json::Error> {
     Ok(Job {
@@ -205,6 +265,18 @@ async fn claim_embed<Q: JobQueue>(
             FixedJob::EmbedTarget,
         )]))
         .await
+}
+
+async fn named<S: FlaggedJobs>(
+    store: &S,
+    key: &str,
+) -> Result<kernel::flagged::FlaggedJob, String> {
+    let mut rows = store.flagged().await.map_err(|error| error.to_string())?;
+    let index = rows
+        .iter()
+        .position(|job| job.key.as_deref() == Some(key))
+        .ok_or_else(|| format!("{key} is not in the ledger"))?;
+    Ok(rows.swap_remove(index))
 }
 
 async fn only<S: FlaggedJobs>(store: &S) -> Result<kernel::flagged::FlaggedJob, String> {

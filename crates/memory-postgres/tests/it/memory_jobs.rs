@@ -38,6 +38,17 @@ async fn the_nearest_chunk_pool_keeps_one_chunk_per_message(pool: PgPool) -> Tes
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_parent_outside_the_cap_uses_the_chunk_score(pool: PgPool) -> TestResult {
+    let provider: Arc<dyn kernel::model::ModelProvider> =
+        Arc::new(FakeProvider::new(vec![Script::Embed(vec![Embedding {
+            vector: testkit::memory_jobs::query_vector(),
+        }])]));
+    let memory =
+        PostgresMemory::new(pool).with_query_embed(QueryEmbed::new(provider, None, None, None));
+    testkit::memory_jobs::a_parent_outside_the_cap_uses_the_chunk_score(&memory).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn a_chunk_write_rejects_a_vector_wider_than_the_message(pool: PgPool) -> TestResult {
     let memory = PostgresMemory::new(pool);
     testkit::memory_jobs::a_chunk_write_rejects_a_vector_wider_than_the_message(&memory).await
