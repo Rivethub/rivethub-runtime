@@ -3,7 +3,7 @@ use jiff::Timestamp;
 use kernel::memory::summary_reference::SummaryReferenceError;
 use kernel::owner::Owner;
 use kernel::wiki::builder::{ExtractWiki, WikiStoreError, WikiSummary};
-use kernel::wiki::page::WikiSlug;
+use kernel::wiki::page::{WikiPage, WikiSlug};
 use kernel::wiki::recompile::{
     RecompileSource, Recompiled, SourceSummary, WikiRecompileStore, rebase_recompiled,
 };
@@ -27,8 +27,14 @@ impl WikiRecompileStore for SqliteStore {
             .wiki_directory()
             .ok_or(WikiStoreError::DirectoryMissing)?;
         let repository = WikiRepository::for_store(directory.to_path_buf());
-        let Some(page) = repository.read_unlocked(slug).await? else {
-            return Ok(None);
+        let named = slug.clone();
+        let unrecorded = blocking(self, move |conn| unrecorded_page(conn, &named)).await?;
+        let page = match unrecorded {
+            Some(page) => page,
+            None => match repository.read_unlocked(slug).await? {
+                Some(page) => page,
+                None => return Ok(None),
+            },
         };
         let history = repository.history_since(slug, since).await?;
         let slug = slug.clone();
@@ -59,6 +65,14 @@ impl WikiRecompileStore for SqliteStore {
         })
         .await
     }
+}
+
+fn unrecorded_page(conn: &Connection, slug: &WikiSlug) -> Result<Option<WikiPage>, WikiStoreError> {
+    let stored = crate::wiki_read::database_page(conn, slug.as_ref())
+        .map_err(|error| WikiStoreError::Query(Box::new(error)))?;
+    Ok(stored
+        .filter(|stored| stored.git_sha.is_none())
+        .map(|stored| stored.page))
 }
 
 fn source_summaries(
@@ -121,6 +135,12 @@ fn store_locked(
         validate_input(tx, input)?;
     }
     let runtime = tokio::runtime::Handle::current();
+    runtime.block_on(crate::wiki_materialize::record_stored(
+        repository,
+        tx,
+        &page.meta.slug,
+        now,
+    ))?;
     let slug = page.meta.slug.as_ref();
     let current = runtime.block_on(repository.read(slug))?.ok_or_else(|| {
         WikiStoreError::InvalidPatch(format!(
