@@ -405,7 +405,6 @@ impl CaptureTransport for HookTransport {
 }
 
 async fn remote_gateway(remote: &config::model::CaptureGateway) -> Result<Endpoint, Error> {
-    let roots = reqwest::Certificate::from_pem_bundle(&tokio::fs::read(&remote.ca).await?)?;
     let mut headers = reqwest::header::HeaderMap::new();
     if let Some(token) = &remote.token {
         let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
@@ -413,13 +412,19 @@ async fn remote_gateway(remote: &config::model::CaptureGateway) -> Result<Endpoi
         value.set_sensitive(true);
         headers.insert(reqwest::header::AUTHORIZATION, value);
     }
-    let client = reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .no_proxy()
         .https_only(true)
         .timeout(POST_TIMEOUT)
-        .tls_certs_only(roots)
-        .default_headers(headers)
-        .build()?;
+        .default_headers(headers);
+    let builder = match &remote.ca {
+        Some(ca) => {
+            let roots = reqwest::Certificate::from_pem_bundle(&tokio::fs::read(ca).await?)?;
+            builder.tls_certs_only(roots)
+        }
+        None => builder,
+    };
+    let client = builder.build()?;
     Ok(Endpoint {
         url: url::Url::parse(&remote.url)?,
         client,
