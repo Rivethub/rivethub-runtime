@@ -32,8 +32,6 @@ pub fn record_path(state_dir: &Path) -> PathBuf {
     state_dir.join(FILE_NAME)
 }
 
-/// Holds the record for as long as the gateway serves. Dropping it removes the
-/// file, but only while the file still names this process.
 #[derive(Debug)]
 pub struct Published {
     path: PathBuf,
@@ -70,8 +68,6 @@ pub fn publish(state_dir: &Path, bound: SocketAddr, tls: bool) -> Result<Publish
     Ok(Published { path, pid })
 }
 
-/// The record of a gateway that is running now on this state directory.
-/// A missing, unreadable, foreign or dead-pid record yields `None`.
 #[must_use]
 pub fn read_live(state_dir: &Path) -> Option<RuntimeRecord> {
     let record = read_file(&record_path(state_dir))?;
@@ -79,16 +75,28 @@ pub fn read_live(state_dir: &Path) -> Option<RuntimeRecord> {
 }
 
 fn read_file(path: &Path) -> Option<RuntimeRecord> {
-    let text = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&text).ok()
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            tracing::debug!(%error, path = %path.display(), "gateway runtime record unreadable");
+            return None;
+        }
+    };
+    match serde_json::from_str(&text) {
+        Ok(record) => Some(record),
+        Err(error) => {
+            tracing::debug!(%error, path = %path.display(), "gateway runtime record malformed");
+            None
+        }
+    }
 }
 
 fn alive(pid: u32) -> bool {
-    let Ok(raw) = i32::try_from(pid) else {
-        return false;
-    };
-    matches!(
-        nix::sys::signal::kill(Pid::from_raw(raw), None),
-        Ok(()) | Err(Errno::EPERM)
-    )
+    i32::try_from(pid).is_ok_and(|raw| {
+        matches!(
+            nix::sys::signal::kill(Pid::from_raw(raw), None),
+            Ok(()) | Err(Errno::EPERM)
+        )
+    })
 }

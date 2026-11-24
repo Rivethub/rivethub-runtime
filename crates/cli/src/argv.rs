@@ -89,7 +89,6 @@ fn taken(rest: &str) -> Taken {
     }
 }
 
-/// Takes `--gateway <url>`. Returns true when it consumed the option.
 pub(crate) fn take_gateway(scan: &mut Scan<'_>, into: &mut Option<String>) -> Result<bool, Error> {
     match scan.option("--gateway", None) {
         Taken::Value(raw) => {
@@ -105,7 +104,6 @@ pub(crate) fn take_gateway(scan: &mut Scan<'_>, into: &mut Option<String>) -> Re
     }
 }
 
-/// The environment a command runs in once `--gateway` is applied. The flag wins over `RIVETHUB_GATEWAY_URL`.
 pub(crate) fn with_gateway(
     env: &config::Environment,
     gateway: Option<&str>,
@@ -113,7 +111,7 @@ pub(crate) fn with_gateway(
     match gateway {
         Some(url) => env
             .clone()
-            .with_override(crate::status::GATEWAY_URL_ENV, url),
+            .with_override(crate::gateway_target::GATEWAY_URL_ENV, url),
         None => env.clone(),
     }
 }

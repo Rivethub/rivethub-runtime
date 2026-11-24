@@ -8,7 +8,8 @@ use semver::Version;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 
-use crate::status::{self, GatewayTarget};
+use crate::gateway_target::{self, GatewayTarget};
+use crate::status;
 use crate::{Error, Report, configuration};
 
 #[derive(Debug, Subcommand)]
@@ -67,7 +68,7 @@ pub(crate) async fn status(env: &Environment, json: bool) -> Result<Report, Erro
         return Ok(status::run(env).await);
     }
     let (_, loaded) = configuration::load(env).await?;
-    let target = status::gateway_target(env, &loaded.config).await?;
+    let target = gateway_target::gateway_target(env, &loaded.config).await?;
     let (health, health_error) = match status::probe(env, &loaded.config).await {
         Ok(health) => (Some(health), None),
         Err(error) => (None, Some(error.to_string())),
@@ -95,7 +96,7 @@ pub(crate) async fn status(env: &Environment, json: bool) -> Result<Report, Erro
 pub(crate) async fn tls_command(command: TlsCommand, env: &Environment) -> Result<Report, Error> {
     let TlsCommand::Fingerprint { json } = command;
     let (_, loaded) = configuration::load(env).await?;
-    let target = status::gateway_target(env, &loaded.config).await?;
+    let target = gateway_target::gateway_target(env, &loaded.config).await?;
     let Some(tls) = tls(&target)? else {
         return Err(Error::NoTls {
             origin: origin(&target.url),

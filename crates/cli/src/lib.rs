@@ -8,6 +8,7 @@ pub mod doctor;
 mod error;
 mod exit;
 mod facts;
+mod gateway_target;
 mod harness;
 mod listener;
 mod local;
