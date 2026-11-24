@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use crate::support;
 
 use std::sync::Arc;
@@ -94,11 +96,11 @@ async fn a_record_whose_process_is_gone_does_not_redirect_status() {
         ),
     );
     let state = state_dir(&env);
-    let stale = format!(
+    let record_text = format!(
         r#"{{"pid":{DEAD_PID},"state_dir":{state:?},"host":"127.0.0.1","port":{},"tls":false}}"#,
         recorded.addr.port()
     );
-    std::fs::write(gateway::runtime_record::record_path(&state), stale).expect("record");
+    std::fs::write(gateway::runtime_record::record_path(&state), record_text).expect("record");
     let status = run(&["status"], &env).await;
     assert!(
         status.stdout.contains("running (v2.0.0)"),
@@ -211,7 +213,7 @@ async fn ingest_bundle_posts_to_the_gateway_the_flag_names() {
         gateway::runtime_record::publish(&state_dir(&env), recorded.addr, false).expect("publish");
 
     let flag = format!("http://{}", flagged.addr);
-    let _ = run(
+    let _: cli::Report = run(
         &[
             "memory",
             "ingest-bundle",
@@ -240,7 +242,7 @@ async fn ingest_bundle_posts_to_the_gateway_the_flag_names() {
         "the recorded gateway was not used"
     );
 
-    let _ = run(&["memory", "ingest-bundle", &bundle, "--force"], &env).await;
+    let _: cli::Report = run(&["memory", "ingest-bundle", &bundle, "--force"], &env).await;
     assert!(
         !env_seen.lock().is_empty(),
         "without the flag the environment URL is used"
