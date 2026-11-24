@@ -55,6 +55,28 @@ impl DropBox {
         })
     }
 
+    pub(super) async fn on_this_node(
+        env: &config::Environment,
+        servers: &ShareServers,
+    ) -> Result<Self, DropError> {
+        let config = crate::db::load(env, None)
+            .await
+            .map_err(|error| std::io::Error::other(error.to_string()))?
+            .config;
+        let endpoint = crate::status::gateway_with(
+            env,
+            &config,
+            TRANSFER_TIMEOUT,
+            crate::status::Redirects::Refuse,
+            None,
+        )
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+        Ok(Self {
+            server: servers.on_this_node(endpoint)?,
+        })
+    }
+
     pub(super) const fn host(&self) -> &ShareServer {
         self.server.host()
     }

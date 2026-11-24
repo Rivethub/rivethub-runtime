@@ -262,3 +262,158 @@ fn a_drop_whose_files_cannot_be_deleted_is_not_consumed() {
         ]
     );
 }
+
+#[test]
+fn a_drop_claimed_from_the_root_is_served_once() {
+    let dir = tempfile::tempdir().expect("temp");
+    let root = private_root(&dir);
+    let id = plant(&root, wire::time::elapsed_days(1));
+    let Ok(Claim::Ready { bytes, .. }) = crate::drops::claim_in(&root, &id) else {
+        panic!("a live drop is claimed");
+    };
+    assert_eq!(bytes, 28);
+    assert!(matches!(
+        crate::drops::claim_in(&root, &id),
+        Ok(Claim::Gone)
+    ));
+    assert_eq!(names(&root), Vec::<String>::new());
+}
+
+#[test]
+fn an_expired_drop_cannot_be_claimed_from_the_root() {
+    let dir = tempfile::tempdir().expect("temp");
+    let root = private_root(&dir);
+    let id = plant(&root, SignedDuration::from_secs(-1));
+    assert!(matches!(
+        crate::drops::claim_in(&root, &id),
+        Ok(Claim::Gone)
+    ));
+    assert_eq!(names(&root), Vec::<String>::new());
+}
+
+#[test]
+fn claiming_from_a_missing_or_open_root_is_refused() {
+    let dir = tempfile::tempdir().expect("temp");
+    let id = DropId::generate().expect("random source");
+    assert!(matches!(
+        crate::drops::claim_in(&dir.path().join("none"), &id),
+        Err(OpenError::Io { .. })
+    ));
+    let open = dir.path().join("open");
+    std::fs::create_dir(&open).expect("root");
+    std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o750)).expect("mode");
+    assert!(matches!(
+        crate::drops::claim_in(&open, &id),
+        Err(OpenError::Unsafe { .. })
+    ));
+}
+
+#[test]
+fn a_drop_taken_outside_the_gateway_leaves_the_sweep_index() {
+    let dir = tempfile::tempdir().expect("temp");
+    let root = private_root(&dir);
+    let id = plant(&root, SignedDuration::from_secs(-1));
+    let store = Store::open(&config(root.clone())).expect("open");
+    assert_eq!(store.index.lock().usage(&alice()), (1, 28));
+    std::fs::remove_file(root.join(format!("{}.age", id.as_str()))).expect("taken elsewhere");
+    store.sweep(Duration::from_secs(3600)).expect("sweep");
+    assert_eq!(store.index.lock().usage(&alice()), (0, 0));
+}
+
+#[test]
+fn a_drop_claimed_outside_the_gateway_frees_its_quota_for_the_next_upload() {
+    let dir = tempfile::tempdir().expect("temp");
+    let root = private_root(&dir);
+    let id = plant(&root, wire::time::elapsed_days(1));
+    let mut settings = config(root.clone());
+    settings.per_user_drops = 1;
+    let store = Store::open(&settings).expect("open");
+    assert!(
+        store.reserve(&alice(), 28).is_err(),
+        "the planted drop fills the quota"
+    );
+    assert!(matches!(
+        crate::drops::claim_in(&root, &id),
+        Ok(Claim::Ready { .. })
+    ));
+    assert!(
+        store.reserve(&alice(), 28).is_ok(),
+        "the claimed drop no longer counts"
+    );
+}
+
+fn restart(root: &std::path::Path) -> std::sync::mpsc::Receiver<Result<Store, OpenError>> {
+    let settings = config(root.to_path_buf());
+    let (opened, restarted) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        opened
+            .send(Store::open(&settings))
+            .expect("the test watches the restart");
+    });
+    restarted
+}
+
+fn still_waiting(restarted: &std::sync::mpsc::Receiver<Result<Store, OpenError>>) -> bool {
+    matches!(
+        restarted.recv_timeout(Duration::from_millis(200)),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+    )
+}
+
+#[test]
+fn a_restart_leaves_a_claim_from_the_root_alone_until_it_lets_go() {
+    let dir = tempfile::tempdir().expect("temp");
+    let root = private_root(&dir);
+    let id = plant(&root, wire::time::elapsed_days(1));
+    let receiver = Store::attach(&root).expect("attach");
+    let held = receiver.lock().expect("claim lock");
+    assert!(
+        receiver.take(&id).expect("take"),
+        "the claim takes the body"
+    );
+    let restarted = restart(&root);
+    assert!(
+        still_waiting(&restarted),
+        "recovery waits for the claim in flight"
+    );
+    assert_eq!(
+        names(&root),
+        vec![
+            format!("{}.json", id.as_str()),
+            format!("{}.sending", id.as_str())
+        ],
+        "recovery does not put back a body a live claim holds"
+    );
+    drop(held);
+    let store = restarted.recv().expect("restart").expect("open");
+    assert!(
+        matches!(store.claim(&id), Claim::Ready { bytes: 28, .. }),
+        "a claim that let go unfinished is released"
+    );
+}
+
+#[test]
+fn a_drop_claimed_from_the_root_during_a_restart_is_served_once() {
+    let dir = tempfile::tempdir().expect("temp");
+    let root = private_root(&dir);
+    let id = plant(&root, wire::time::elapsed_days(1));
+    let receiver = Store::attach(&root).expect("attach");
+    let held = receiver.lock().expect("claim lock");
+    let restarted = restart(&root);
+    assert!(
+        still_waiting(&restarted),
+        "recovery waits for the claim in flight"
+    );
+    assert!(matches!(
+        receiver.claim(&id),
+        Claim::Ready { bytes: 28, .. }
+    ));
+    drop(held);
+    let store = restarted.recv().expect("restart").expect("open");
+    assert!(matches!(store.claim(&id), Claim::Gone));
+    assert!(matches!(
+        crate::drops::claim_in(&root, &id),
+        Ok(Claim::Gone)
+    ));
+    assert_eq!(names(&root), Vec::<String>::new());
+}

@@ -15,6 +15,7 @@ use tokio_util::task::TaskTracker;
 
 pub(crate) use limit::RetryAfter;
 pub use limit::{Rate, Rates};
+pub use store::Claim;
 
 use crate::routes::join_task;
 use crate::tenancy::UserId;
@@ -106,6 +107,17 @@ pub enum OpenError {
         path: PathBuf,
         source: std::io::Error,
     },
+}
+
+pub fn claim_in(root: &std::path::Path, id: &DropId) -> Result<Claim, OpenError> {
+    let store = store::Store::attach(root)?;
+    let held = store.lock().map_err(|source| OpenError::Io {
+        path: root.to_path_buf(),
+        source,
+    })?;
+    let claimed = store.claim(id);
+    drop(held);
+    Ok(claimed)
 }
 
 #[derive(Debug)]

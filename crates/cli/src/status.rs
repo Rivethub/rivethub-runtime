@@ -360,7 +360,7 @@ fn place_of_ip(address: IpAddr) -> StorePlace {
     }
 }
 
-async fn gateway_with(
+pub(crate) async fn gateway_with(
     env: &Environment,
     config: &Config,
     timeout: Duration,

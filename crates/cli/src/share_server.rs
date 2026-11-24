@@ -260,6 +260,36 @@ impl ShareServers {
         timeout: Duration,
     ) -> Result<Server, ServerError> {
         self.policy.admit(host)?;
+        self.client_for(host, timeout).await
+    }
+
+    pub(crate) fn on_this_node(
+        &self,
+        gateway: crate::status::Endpoint,
+    ) -> Result<Server, ServerError> {
+        let port = gateway
+            .url
+            .port_or_known_default()
+            .ok_or(CodeError::Server)?;
+        let host = match gateway.url.host() {
+            Some(url::Host::Domain(name)) => format!("{name}:{port}"),
+            Some(url::Host::Ipv4(address)) => format!("{address}:{port}"),
+            Some(url::Host::Ipv6(_)) | None => format!("localhost:{port}"),
+        };
+        Ok(Server {
+            host: host.parse()?,
+            base: gateway.url,
+            client: gateway.client,
+            logins: self.logins.clone(),
+            lock: self.lock.clone(),
+        })
+    }
+
+    async fn client_for(
+        &self,
+        host: &ShareServer,
+        timeout: Duration,
+    ) -> Result<Server, ServerError> {
         let base = Url::parse(&host.base_url()).map_err(|_| CodeError::Server)?;
         let mut builder = reqwest::Client::builder()
             .no_proxy()
