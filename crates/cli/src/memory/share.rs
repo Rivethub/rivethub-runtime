@@ -76,6 +76,7 @@ pub(super) enum ShareCommand {
         dry_run: bool,
         force: bool,
         decisions: Decisions,
+        gateway: Option<String>,
     },
     KeyShow,
     TrustAdd {
@@ -91,7 +92,7 @@ pub(super) enum ShareCommand {
 
 const SHARE_USAGE: &str =
     "usage: rh memory share <sanitized bundle> [--server <host>] [--unsigned] [--flags <n>]";
-const RECEIVE_USAGE: &str = "usage: rh memory receive <share code> [--dry-run] [--session <n>=import|skip|hold-spans]... [--all=import|skip|hold-spans] [--force]";
+const RECEIVE_USAGE: &str = "usage: rh memory receive <share code> [--dry-run] [--session <n>=import|skip|hold-spans]... [--all=import|skip|hold-spans] [--force] [--gateway <url>]";
 const KEY_USAGE: &str = "usage: rh memory key show";
 const TRUST_USAGE: &str =
     "usage: rh memory trust add <name> <key> | trust list | trust remove <name> [<key>]";
@@ -148,6 +149,7 @@ pub(super) fn receive_args(args: &[String]) -> Result<MemoryCommand, Error> {
     let mut dry_run = false;
     let mut force = false;
     let mut decisions = Decisions::default();
+    let mut gateway = None;
     while let Some(token) = scan.current().map(str::to_owned) {
         if scan.flag("--dry-run") {
             dry_run = true;
@@ -155,6 +157,9 @@ pub(super) fn receive_args(args: &[String]) -> Result<MemoryCommand, Error> {
         }
         if scan.flag("--force") {
             force = true;
+            continue;
+        }
+        if crate::argv::take_gateway(&mut scan, &mut gateway)? {
             continue;
         }
         if super::hold::take_decision(&mut scan, &mut decisions)? {
@@ -172,6 +177,7 @@ pub(super) fn receive_args(args: &[String]) -> Result<MemoryCommand, Error> {
         dry_run,
         force,
         decisions,
+        gateway,
     }))
 }
 
@@ -227,7 +233,11 @@ pub(super) async fn run(command: ShareCommand, env: &Environment) -> Result<Repo
             dry_run,
             force,
             decisions,
-        } => receive(env, code, dry_run, force, &decisions).await,
+            gateway,
+        } => {
+            let env = crate::argv::with_gateway(env, gateway.as_deref());
+            receive(&env, code, dry_run, force, &decisions).await
+        }
         ShareCommand::KeyShow => key_show(env),
         ShareCommand::TrustAdd { name, key } => {
             super::receiving::trust_sender(env, &name, key)?;

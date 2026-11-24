@@ -10,6 +10,7 @@ mod cleanup_guard;
 mod contract;
 mod db;
 mod facts;
+mod gateway_locate;
 mod harness_connect;
 mod local;
 mod local_config;

@@ -86,6 +86,7 @@ pub(super) enum MemoryCommand {
         force: bool,
         dry_run: bool,
         decisions: capture::receive::Decisions,
+        gateway: Option<String>,
     },
     Sanitize(super::sanitize::Job),
     Share(super::share::ShareCommand),

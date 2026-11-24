@@ -204,8 +204,18 @@ async fn health_endpoint(
     config: &Config,
     redirects: Redirects,
 ) -> Result<Endpoint, Error> {
-    let Endpoint { url, client } =
-        gateway_with(env, config, Duration::from_secs(3), redirects, None).await?;
+    let Endpoint { url, client } = gateway_with(
+        env,
+        config,
+        Duration::from_secs(3),
+        redirects,
+        None,
+        match redirects {
+            Redirects::Follow => Locate::Discover,
+            Redirects::Refuse => Locate::Configured,
+        },
+    )
+    .await?;
     Ok(Endpoint {
         url: url.join("healthz")?,
         client,
@@ -226,7 +236,15 @@ pub(crate) async fn gateway_as(
     timeout: Duration,
     owner_uid: Option<u32>,
 ) -> Result<Endpoint, Error> {
-    gateway_with(env, config, timeout, Redirects::Follow, owner_uid).await
+    gateway_with(
+        env,
+        config,
+        timeout,
+        Redirects::Follow,
+        owner_uid,
+        Locate::Discover,
+    )
+    .await
 }
 
 pub(crate) struct GatewayTarget {
@@ -234,21 +252,66 @@ pub(crate) struct GatewayTarget {
     pub(crate) url: url::Url,
     pub(crate) ca: Option<std::path::PathBuf>,
     pin: Option<(String, SocketAddr)>,
+    explicit: bool,
 }
 
+impl GatewayTarget {
+    fn sends_owner_token(&self) -> bool {
+        !self.explicit
+            || match self.url.host() {
+                Some(url::Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
+                Some(url::Host::Ipv4(address)) => address.is_loopback(),
+                Some(url::Host::Ipv6(address)) => address.is_loopback(),
+                None => false,
+            }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Locate {
+    Discover,
+    Configured,
+}
+
+pub(crate) const GATEWAY_URL_ENV: &str = "RIVETHUB_GATEWAY_URL";
+
+/// Where this node's gateway is. In order: `RIVETHUB_GATEWAY_URL` (the
+/// `--gateway` flag sets it), the runtime record of a gateway running now on
+/// this state directory, then the config.
 pub(crate) async fn gateway_target(
     env: &Environment,
     config: &Config,
 ) -> Result<GatewayTarget, Error> {
+    target_for(env, config, Locate::Discover).await
+}
+
+async fn target_for(
+    env: &Environment,
+    config: &Config,
+    locate: Locate,
+) -> Result<GatewayTarget, Error> {
+    let explicit = match locate {
+        Locate::Discover => env
+            .text(GATEWAY_URL_ENV)
+            .map(str::trim)
+            .filter(|text| !text.is_empty()),
+        Locate::Configured => None,
+    };
+    if let Some(raw) = explicit {
+        return explicit_target(env, config, raw);
+    }
     let hostname = host_name()?;
     let node = config::resolve_node_name(config, env, &hostname)?;
     let section = config.gateway.clone();
     let tls_env = env.clone();
     let shared = config::shared_dir(&tls_env);
-    let source = tokio::task::spawn_blocking(move || {
+    let mut source = tokio::task::spawn_blocking(move || {
         BindSource::resolve_section(section.as_ref(), &tls_env, &node, &shared)
     })
     .await?;
+    if matches!(locate, Locate::Discover) {
+        source = running_bind(env, source)?;
+    }
     let mut url = listen_url(&source)?;
     let ca = gateway::private_ca(config.gateway.as_ref(), env, &config::shared_dir(env));
     let pin = match (&source.tls_cert, &ca) {
@@ -260,6 +323,59 @@ pub(crate) async fn gateway_target(
         url,
         ca,
         pin,
+        explicit: false,
+    })
+}
+
+fn running_bind(env: &Environment, mut source: BindSource) -> Result<BindSource, Error> {
+    let Some(record) = gateway::runtime_record::read_live(&gateway::state_dir(env)?) else {
+        return Ok(source);
+    };
+    if record.tls != source.tls_cert.is_some() {
+        tracing::debug!("the running gateway's TLS differs from the config; using the config");
+        return Ok(source);
+    }
+    source.port = record.port;
+    if !record.tls && !record.host.is_unspecified() {
+        source.host = record.host.to_string();
+    }
+    Ok(source)
+}
+
+fn explicit_target(env: &Environment, config: &Config, raw: &str) -> Result<GatewayTarget, Error> {
+    let mut url = url::Url::parse(raw)?;
+    let tls = match url.scheme() {
+        "https" => true,
+        "http" => false,
+        scheme => return Err(Error::GatewayScheme(scheme.to_owned())),
+    };
+    if !url.path().ends_with('/') {
+        let path = format!("{}/", url.path());
+        url.set_path(&path);
+    }
+    let host = url
+        .host_str()
+        .ok_or(Error::Address)?
+        .trim_matches(['[', ']'])
+        .to_owned();
+    let port = url.port_or_known_default().ok_or(Error::Address)?;
+    let ca = if tls {
+        gateway::private_ca(config.gateway.as_ref(), env, &config::shared_dir(env))
+    } else {
+        None
+    };
+    Ok(GatewayTarget {
+        source: BindSource {
+            host,
+            port,
+            tls_cert: None,
+            tls_key: None,
+            notices: Vec::new(),
+        },
+        url,
+        ca,
+        pin: None,
+        explicit: true,
     })
 }
 
@@ -381,8 +497,9 @@ async fn gateway_with(
     timeout: Duration,
     redirects: Redirects,
     owner_uid: Option<u32>,
+    locate: Locate,
 ) -> Result<Endpoint, Error> {
-    let target = gateway_target(env, config).await?;
+    let target = target_for(env, config, locate).await?;
     let policy = match redirects {
         Redirects::Follow => reqwest::redirect::Policy::default(),
         Redirects::Refuse => reqwest::redirect::Policy::none(),
@@ -393,8 +510,10 @@ async fn gateway_with(
         .timeout(timeout);
     let verified_tls = target.source.tls_cert.is_some() && target.ca.is_some();
     let token = match owner_uid {
-        Some(_) => gateway::local_owner::read_token(&gateway::state_dir(env)?)?,
-        None => None,
+        Some(_) if target.sends_owner_token() => {
+            gateway::local_owner::read_token(&gateway::state_dir(env)?)?
+        }
+        Some(_) | None => None,
     };
     let builder = match (token, owner_uid) {
         (Some(token), Some(uid)) => {
@@ -409,6 +528,10 @@ async fn gateway_with(
         Some(ca) if verified_tls => {
             let roots = reqwest::Certificate::from_pem_bundle(&std::fs::read(ca)?)?;
             builder.tls_certs_only(roots)
+        }
+        Some(ca) if target.explicit && target.url.scheme() == "https" => {
+            let roots = reqwest::Certificate::from_pem_bundle(&std::fs::read(ca)?)?;
+            builder.tls_certs_merge(roots)
         }
         Some(_) | None => builder,
     };
