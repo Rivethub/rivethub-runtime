@@ -16,6 +16,7 @@ use capture::writer::PostError;
 use clap::Subcommand;
 use clap::ValueEnum;
 use config::Environment;
+use sha2::Digest as _;
 use tokio::io::AsyncReadExt as _;
 use wire::harness::HarnessId;
 
@@ -362,16 +363,30 @@ async fn writer_as(
     let paths = config::Paths::new(env)?;
     let overridden = env
         .text(crate::gateway_target::GATEWAY_URL_ENV)
-        .is_some_and(|text| !text.trim().is_empty());
+        .map(str::trim)
+        .filter(|text| !text.is_empty());
     let remote = loaded
         .config
         .memory
         .as_ref()
         .and_then(|memory| memory.capture.gateway.as_ref())
-        .filter(|_| !overridden);
+        .filter(|_| overridden.is_none());
     let endpoint = match remote {
         Some(remote) => remote_gateway(remote).await,
         None => status::gateway_as(env, &loaded.config, POST_TIMEOUT, Some(owner_uid)).await,
+    };
+    let spool_dir = match overridden {
+        Some(url) => {
+            if let Err(error) = endpoint {
+                return Err(error);
+            }
+            let digest = hex::encode(sha2::Sha256::digest(url.as_bytes()));
+            paths.state_dir().join(format!(
+                "{SPOOL_DIR}-to-{}",
+                digest.get(..16).unwrap_or(&digest)
+            ))
+        }
+        None => paths.state_dir().join(SPOOL_DIR),
     };
     let transport = match endpoint {
         Ok(Endpoint { url, client }) => HookTransport::Http(HttpCaptureTransport::new(
@@ -381,12 +396,7 @@ async fn writer_as(
         Err(error) => HookTransport::Refused(error.to_string()),
     };
     let redaction = capture::redaction::resolve(Some(loaded.config.capture_redaction()), env);
-    let writer = CaptureWriter::new(
-        transport,
-        CaptureSpool::new(paths.state_dir().join(SPOOL_DIR)),
-        None,
-        redaction,
-    );
+    let writer = CaptureWriter::new(transport, CaptureSpool::new(spool_dir), None, redaction);
     Ok((writer, paths))
 }
 

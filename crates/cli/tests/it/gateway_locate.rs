@@ -300,3 +300,77 @@ async fn the_flag_beats_the_configured_capture_gateway() {
         "the flag's gateway got the capture post"
     );
 }
+
+async fn posts_for_one_flagged_import(seed_default_spool: bool) -> usize {
+    let (flagged, seen) = recorder().await;
+    let home = home();
+    let directory = tempfile::tempdir().expect("directory");
+    let bundle = raw_bundle(directory.path()).await;
+    let env = environment(&home);
+    config(
+        &home,
+        "memory:\n  capture:\n    gateway:\n      url: https://127.0.0.1:1\n",
+    );
+    if seed_default_spool {
+        capture::spool::CaptureSpool::new(state_dir(&env).join("capture-spool"))
+            .spool(r#"{"events":[]}"#, jiff::Timestamp::now())
+            .await
+            .expect("seed the default spool");
+    }
+    let flag = format!("http://{}", flagged.addr);
+    let _: cli::Report = run(
+        &[
+            "memory",
+            "ingest-bundle",
+            &bundle,
+            "--force",
+            "--gateway",
+            &flag,
+        ],
+        &env,
+    )
+    .await;
+    let posts = seen.lock();
+    posts
+        .iter()
+        .filter(|(method, _)| method == Method::POST)
+        .count()
+}
+
+#[tokio::test]
+async fn a_flagged_import_never_replays_batches_queued_for_another_gateway() {
+    assert_eq!(
+        posts_for_one_flagged_import(true).await,
+        posts_for_one_flagged_import(false).await,
+        "batches queued for the configured capture gateway went to the flag's gateway"
+    );
+}
+
+#[tokio::test]
+async fn a_flag_with_a_query_is_refused_before_anything_is_queued() {
+    let home = home();
+    let directory = tempfile::tempdir().expect("directory");
+    let bundle = raw_bundle(directory.path()).await;
+    let env = environment(&home);
+    let report = run(
+        &[
+            "memory",
+            "ingest-bundle",
+            &bundle,
+            "--force",
+            "--gateway",
+            "http://127.0.0.1:9/?x=1",
+        ],
+        &env,
+    )
+    .await;
+    assert!(
+        report.stderr.contains("must not carry a query or fragment"),
+        "{}",
+        report.stderr
+    );
+    assert!(
+        !state_dir(&env).join("capture-spool").exists(),
+        "a refused flag queued a batch"
+    );
+}

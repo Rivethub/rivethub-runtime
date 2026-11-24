@@ -96,6 +96,9 @@ pub(crate) fn take_gateway(scan: &mut Scan<'_>, into: &mut Option<String>) -> Re
             if !matches!(url.scheme(), "http" | "https") {
                 return Err(Error::GatewayScheme(url.scheme().to_owned()));
             }
+            if url.query().is_some() || url.fragment().is_some() {
+                return Err(Error::GatewayUrlSuffix);
+            }
             *into = Some(raw);
             Ok(true)
         }
