@@ -22,6 +22,7 @@ use crate::tenancy::UserId;
 
 const REQUEST_LIMIT: usize = 16 * 1024 * 1024;
 const ANSWER_LIMIT: usize = 4 * 1024 * 1024;
+const PASSTHROUGH_ANSWER_LIMIT: usize = 32 * 1024 * 1024;
 const TYPED_TIMEOUT: Duration = Duration::from_secs(30);
 const HTTP_FIRST_BYTE: Duration = Duration::from_secs(60);
 const DETAIL_LIMIT: usize = 1024;
@@ -318,8 +319,58 @@ fn kept(name: &HeaderName) -> bool {
         && name.as_str() != "keep-alive"
 }
 
+fn kept_response(name: &HeaderName) -> bool {
+    let lower = name.as_str();
+    kept(name)
+        && name != header::X_CONTENT_TYPE_OPTIONS
+        && name != header::CONTENT_SECURITY_POLICY
+        && name != header::REFRESH
+        && lower != "content-security-policy-report-only"
+        && !lower.starts_with("access-control-")
+}
+
+fn bounded_body(
+    response: reqwest::Response,
+    limit: usize,
+) -> Result<axum::body::Body, PluginRouteError> {
+    if let Some(len) = response.content_length() {
+        let size = usize::try_from(len).map_err(|_| {
+            PluginRouteError::Invalid(format!("the answer is larger than {limit} bytes"))
+        })?;
+        if size > limit {
+            return Err(PluginRouteError::Invalid(format!(
+                "the answer is larger than {limit} bytes"
+            )));
+        }
+    }
+    let stream = futures::stream::try_unfold(
+        (response.bytes_stream(), 0_usize),
+        move |(mut inner, total)| async move {
+            use futures::StreamExt as _;
+            match inner.next().await {
+                None => Ok(None),
+                Some(Err(error)) => Err(std::io::Error::other(error.to_string())),
+                Some(Ok(chunk)) => {
+                    let next = total.saturating_add(chunk.len());
+                    if next > limit {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("plug-in response exceeded {limit} bytes"),
+                        ));
+                    }
+                    Ok(Some((chunk, (inner, next))))
+                }
+            }
+        },
+    );
+    Ok(axum::body::Body::from_stream(stream))
+}
+
 async fn passthrough(target: &Target<'_>, request: Request) -> Result<Response, PluginRouteError> {
     let (parts, body) = request.into_parts();
+    let request_bytes = axum::body::to_bytes(body, REQUEST_LIMIT)
+        .await
+        .map_err(|error| PluginRouteError::TooLarge(error.to_string()))?;
     let mut headers: HeaderMap = parts
         .headers
         .iter()
@@ -331,7 +382,7 @@ async fn passthrough(target: &Target<'_>, request: Request) -> Result<Response, 
         .client
         .request(parts.method, &target.url)
         .headers(headers)
-        .body(reqwest::Body::wrap_stream(body.into_data_stream()))
+        .body(request_bytes)
         .send();
     let response = tokio::time::timeout(HTTP_FIRST_BYTE, pending)
         .await
@@ -342,15 +393,18 @@ async fn passthrough(target: &Target<'_>, request: Request) -> Result<Response, 
             ))
         })?
         .map_err(|error| PluginRouteError::Failed(error.to_string()))?;
-    let mut answer = Response::builder().status(response.status());
-    for (name, value) in response.headers() {
-        if kept(name) && name != header::X_CONTENT_TYPE_OPTIONS {
+    let status = response.status();
+    let response_headers = response.headers().clone();
+    let limited = bounded_body(response, PASSTHROUGH_ANSWER_LIMIT)?;
+    let mut answer = Response::builder().status(status);
+    for (name, value) in &response_headers {
+        if kept_response(name) {
             answer = answer.header(name, value);
         }
     }
     answer
         .header(header::CONTENT_SECURITY_POLICY, PAGE_POLICY)
         .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
-        .body(axum::body::Body::from_stream(response.bytes_stream()))
+        .body(limited)
         .map_err(|error| PluginRouteError::Failed(error.to_string()))
 }

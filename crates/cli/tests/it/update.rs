@@ -491,3 +491,83 @@ async fn cancellation_during_download_cleans_staging_and_preserves_installation(
     server.close().await?;
     Ok(())
 }
+
+async fn run_with_manifest_sig(
+    manifest_sig: String,
+    keyring: &gateway::account::ReleaseKeyring,
+) -> std::result::Result<(Fixture, cli::Report), Box<dyn std::error::Error>> {
+    let fixture = Fixture::new()?;
+    let srv = update_support::server_with_sigs(
+        Published::Good,
+        Some(manifest_sig),
+        Vec::new(),
+        std::collections::BTreeMap::new(),
+    )
+    .await?;
+    let updater = Updater::new(
+        fixture.binary.clone(),
+        format!("http://{}/releases/", srv.addr).parse()?,
+        web_url(&srv)?,
+        Scope::User,
+    )
+    .keyring(keyring.clone());
+    let report = updater
+        .run(&args(), &fixture.env(), &CancellationToken::new())
+        .await;
+    srv.close().await?;
+    Ok((fixture, report))
+}
+
+#[tokio::test]
+async fn release_signature_accepts_trusted_key_and_fails_closed_on_forged_or_unknown() -> Result {
+    use aws_lc_rs::signature::{Ed25519KeyPair, KeyPair as _};
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD;
+    use gateway::account::{ReleaseKeyring, UpdateKey};
+    use sha2::{Digest as _, Sha256};
+
+    let pair = Ed25519KeyPair::generate()?;
+    let pub_raw: [u8; 32] = pair
+        .public_key()
+        .as_ref()
+        .try_into()
+        .map_err(|_| "pubkey length")?;
+    let keyring =
+        ReleaseKeyring::default_trusted().with_key("test-key", UpdateKey::from_bytes(pub_raw));
+
+    let archive = update_support::archive(Published::Good)?;
+    let digest = hex::encode(Sha256::digest(&archive));
+    let mut manifest = String::new();
+    for tag in ["v0.9.0", "v0.11.0", "v0.10.0"] {
+        use std::fmt::Write as _;
+        let arch = std::env::consts::ARCH;
+        writeln!(
+            manifest,
+            "{digest}  rh-{}-{arch}-unknown-linux-gnu.tar.gz",
+            tag.trim_start_matches('v')
+        )?;
+    }
+    let valid_sig = format!(
+        "v1:test-key:{}\n",
+        STANDARD.encode(pair.sign(manifest.as_bytes()).as_ref())
+    );
+
+    let (fixture, report) = run_with_manifest_sig(valid_sig, &keyring).await?;
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    assert_eq!(std::fs::read(&fixture.binary)?, BINARY);
+
+    for bad_sig in [
+        format!("v1:test-key:{}\n", STANDARD.encode([0_u8; 64])),
+        format!("v1:rogue-key:{}\n", STANDARD.encode([1_u8; 64])),
+    ] {
+        let (fixture, report) = run_with_manifest_sig(bad_sig, &keyring).await?;
+        assert_eq!(report.exit, Exit::Failure);
+        assert!(
+            report.stderr.contains("signature verification failed"),
+            "{}",
+            report.stderr
+        );
+        assert_eq!(std::fs::read(&fixture.binary)?, b"old runtime");
+    }
+    Ok(())
+}

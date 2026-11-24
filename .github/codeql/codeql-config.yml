@@ -1,0 +1,7 @@
+name: "RivetHub CodeQL config"
+
+paths-ignore:
+  - "**/tests/**"
+  - "**/*_test.rs"
+  - "crates/testkit/**"
+  - "xtask/**"

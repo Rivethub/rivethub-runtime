@@ -551,3 +551,69 @@ fn search_reports_store_degradation() {
         })
     );
 }
+
+#[test]
+fn taxonomy_writes_require_local_owner() {
+    let store = Arc::new(testkit::FakeMemoryStore::default());
+    let handle: Arc<dyn kernel::memory::MemoryStore> =
+        Arc::clone(&store) as Arc<dyn kernel::memory::MemoryStore>;
+    let owner = gateway::tenancy::UserId::new(testkit::OWNER.to_owned()).expect("test owner");
+    let guest = gateway::tenancy::UserId::new("guest".to_owned()).expect("guest id");
+    let tenancy = gateway::tenancy::Tenancy::local(owner)
+        .with_token("guest-token", guest)
+        .expect("guest token");
+    let gateway = Arc::new(
+        Gateway::new(handle, common::settings())
+            .with_local_owner(common::local_owner())
+            .with_tenancy(tenancy),
+    );
+    let app = gateway.router(false);
+
+    let guest_post = |path: &str, body: Vec<u8>| {
+        let mut request = recorded("POST", path, body);
+        request
+            .headers
+            .push(("Authorization".to_owned(), "Bearer guest-token".to_owned()));
+        block_on(answer(app.clone(), request)).expect("in-process answer")
+    };
+
+    for (path, payload) in [
+        (
+            "/api/memory/tags/taxonomy",
+            serde_json::to_vec(&TagTaxonomyUpsertRequest {
+                key: Some("project".to_owned()),
+                value: Some("acmekit".to_owned()),
+                display: None,
+                parent_value: None,
+                aliases: None,
+                reason: None,
+                decided_by: None,
+            })
+            .expect("serialize"),
+        ),
+        (
+            "/api/memory/tags/taxonomy/decide",
+            serde_json::to_vec(&TagTaxonomyDecideRequest {
+                entries: Some(vec![wire::gateway::memory::TagEntryPair {
+                    key: "project".to_owned(),
+                    value: "acmekit".to_owned(),
+                }]),
+                state: Some(TagState::Accepted),
+                decided_by: None,
+            })
+            .expect("serialize"),
+        ),
+        (
+            "/api/memory/tags/taxonomy/merge",
+            serde_json::to_vec(&TagTaxonomyMergeRequest {
+                key: Some("project".to_owned()),
+                from: Some("acme".to_owned()),
+                into: Some("acmekit".to_owned()),
+            })
+            .expect("serialize"),
+        ),
+    ] {
+        let response = guest_post(path, payload);
+        assert_eq!(response.status, 403, "{path}");
+    }
+}

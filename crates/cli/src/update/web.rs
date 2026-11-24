@@ -9,6 +9,8 @@ use sha2::{Digest as _, Sha256};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
+use gateway::account::ReleaseKeyring;
+
 use super::{Channel, UpdateError, files, release};
 
 mod active;
@@ -184,11 +186,12 @@ impl Store {
         api: &Url,
         channel: Channel,
         runtime: &str,
+        keyring: &ReleaseKeyring,
         shutdown: &CancellationToken,
     ) -> Result<Outcome, UpdateError> {
         let runtime = Version::parse(runtime).map_err(|_| UpdateError::Version(runtime.into()))?;
         let client = release::client(api)?;
-        let candidates = candidates(&client, api, channel, shutdown).await?;
+        let candidates = candidates(&client, api, channel, keyring, shutdown).await?;
         let selected = select(
             candidates.iter().map(|(manifest, _)| manifest),
             channel,
@@ -281,6 +284,7 @@ async fn candidates(
     client: &reqwest::Client,
     api: &Url,
     channel: Channel,
+    keyring: &ReleaseKeyring,
     shutdown: &CancellationToken,
 ) -> Result<Vec<(Manifest, Url)>, UpdateError> {
     let mut candidates = Vec::new();
@@ -297,7 +301,7 @@ async fn candidates(
             };
             if accepts(channel, build_channel) {
                 let Some(candidate) =
-                    candidate(client, &release, &version, build_channel, shutdown).await?
+                    candidate(client, &release, &version, build_channel, keyring, shutdown).await?
                 else {
                     tracing::warn!(
                         tag = %release.tag_name,
@@ -320,9 +324,10 @@ async fn candidate(
     release: &release::Release,
     version: &Version,
     channel: Channel,
+    keyring: &ReleaseKeyring,
     shutdown: &CancellationToken,
 ) -> Result<Option<(Manifest, Url)>, UpdateError> {
-    match described(client, release, version, channel, shutdown).await {
+    match described(client, release, version, channel, keyring, shutdown).await {
         Ok(candidate) => Ok(Some(candidate)),
         Err(UpdateError::Asset { .. } | UpdateError::AssetSize | UpdateError::WebManifest) => {
             Ok(None)
@@ -336,10 +341,28 @@ async fn described(
     release: &release::Release,
     version: &Version,
     channel: Channel,
+    keyring: &ReleaseKeyring,
     shutdown: &CancellationToken,
 ) -> Result<(Manifest, Url), UpdateError> {
     let url = release::asset(release, MANIFEST)?;
     let bytes = release::download(client, url, MANIFEST_LIMIT as usize, shutdown).await?;
+    if let Some(sig_url) = release::asset_optional(release, "web-manifest.json.sig")? {
+        let sig_bytes = release::download(client, sig_url, 1024, shutdown).await?;
+        let sig_text = std::str::from_utf8(&sig_bytes).map_err(|_| {
+            UpdateError::Signature("web-manifest.json.sig is not valid UTF-8".to_owned())
+        })?;
+        keyring.verify_envelope(&bytes, sig_text).map_err(|_| {
+            UpdateError::Signature(format!(
+                "web-manifest.json.sig signature verification failed for {}",
+                release.tag_name
+            ))
+        })?;
+    } else {
+        tracing::warn!(
+            tag = %release.tag_name,
+            "web-manifest.json.sig is not published on this release; skipping signature check"
+        );
+    }
     let manifest: Manifest =
         serde_json::from_slice(&bytes).map_err(|_| UpdateError::WebManifest)?;
     manifest.validate(version, channel)?;

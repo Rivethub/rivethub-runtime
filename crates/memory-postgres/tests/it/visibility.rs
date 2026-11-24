@@ -2083,3 +2083,266 @@ END $$;
     );
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn rls_writes_on_topic_and_summary_children_require_owner(pool: PgPool) -> TestResult {
+    let (store, _) = seed(&pool).await?;
+    let probe = probe(&pool).await?;
+    let alice = viewer("alice")?;
+    let bob = viewer("bob")?;
+    let alice_scope = Scope::Viewer(alice.clone());
+    let bob_scope = Scope::Viewer(bob.clone());
+    let shared = Visibility::Space(shared_space()?);
+
+    let topic = alice_scope
+        .clone()
+        .run(work_topic(&store, &alice, "Shared Kitchen"))
+        .await?
+        .uuid();
+    let tenancy = PostgresTenancy::new(probe.clone());
+    alice_scope
+        .clone()
+        .run(tenancy.mark_topic(&alice, TopicId::from_uuid(topic), Some(&shared)))
+        .await?;
+
+    let second = SessionId::try_from(SECOND.to_owned())?;
+    alice_scope
+        .clone()
+        .run(tenancy.mark_session(
+            &alice,
+            &SessionKey::from(&second),
+            Some(&shared),
+            Timestamp::now(),
+        ))
+        .await?;
+
+    let second_conv: Uuid =
+        sqlx::query_scalar("SELECT id FROM rh_conversations WHERE session_key = $1")
+            .bind(SECOND)
+            .fetch_one(&pool)
+            .await?;
+    let msg1: Uuid =
+        sqlx::query_scalar("SELECT id FROM rh_messages WHERE conversation_id = $1 LIMIT 1")
+            .bind(second_conv)
+            .fetch_one(&pool)
+            .await?;
+    let msg2: Uuid = sqlx::query_scalar(
+        "INSERT INTO rh_messages (conversation_id, agent, channel, role, content, owner_user_id)
+         VALUES ($1, 'rivet', 'cli', 'user', 'Extra shared message', 'alice')
+         RETURNING id",
+    )
+    .bind(second_conv)
+    .fetch_one(&pool)
+    .await?;
+
+    let summary_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO rh_summaries (conversation_id, owner_user_id, content)
+         VALUES ($1, 'alice', 'Shared summary')
+         RETURNING id",
+    )
+    .bind(second_conv)
+    .fetch_one(&pool)
+    .await?;
+
+    let decision_id = Uuid::new_v4();
+    let fact_id = Uuid::new_v4();
+    alice_scope
+        .clone()
+        .run(async {
+            sqlx::query(
+                "INSERT INTO rh_topic_aliases (topic_id, alias, alias_key, kind)
+                 VALUES ($1, 'Kitchen Alias', 'kitchen-alias', 'work')",
+            )
+            .bind(topic)
+            .execute(&probe)
+            .await?;
+            sqlx::query(
+                "INSERT INTO rh_topic_decisions
+                 (id, topic_id, text, status, decided_by, created_at, updated_at)
+                 VALUES ($1, $2, 'Keep tiling', 'active', 'alice', now(), now())",
+            )
+            .bind(decision_id)
+            .bind(topic)
+            .execute(&probe)
+            .await?;
+            sqlx::query(
+                "INSERT INTO rh_entity_facts (id, topic_id, key, created_at)
+                 VALUES ($1, $2, 'paint', now())",
+            )
+            .bind(fact_id)
+            .bind(topic)
+            .execute(&probe)
+            .await?;
+            sqlx::query(
+                "INSERT INTO rh_topic_redirects (slug, topic_id, created_at)
+                 VALUES ('shared-kitchen-old', $1, now())",
+            )
+            .bind(topic)
+            .execute(&probe)
+            .await?;
+            sqlx::query(
+                "INSERT INTO rh_summary_sources (summary_id, message_id, ordinal)
+                 VALUES ($1, $2, 0)",
+            )
+            .bind(summary_id)
+            .bind(msg1)
+            .execute(&probe)
+            .await?;
+            Ok::<_, sqlx::Error>(())
+        })
+        .await?;
+
+    for (name, query) in [
+        (
+            "rh_topic_aliases",
+            "SELECT count(*) FROM rh_topic_aliases WHERE topic_id = $1",
+        ),
+        (
+            "rh_topic_decisions",
+            "SELECT count(*) FROM rh_topic_decisions WHERE topic_id = $1",
+        ),
+        (
+            "rh_entity_facts",
+            "SELECT count(*) FROM rh_entity_facts WHERE topic_id = $1",
+        ),
+        (
+            "rh_topic_redirects",
+            "SELECT count(*) FROM rh_topic_redirects WHERE topic_id = $1",
+        ),
+    ] {
+        let count: i64 = bob_scope
+            .clone()
+            .run(sqlx::query_scalar(query).bind(topic).fetch_one(&probe))
+            .await?;
+        assert_eq!(count, 1, "shared read on {name} for space member");
+    }
+    let source_count: i64 = bob_scope
+        .clone()
+        .run(
+            sqlx::query_scalar("SELECT count(*) FROM rh_summary_sources WHERE summary_id = $1")
+                .bind(summary_id)
+                .fetch_one(&probe),
+        )
+        .await?;
+    assert_eq!(source_count, 1, "shared read on rh_summary_sources");
+
+    for (name, sql, bind_first, bind_second) in [
+        (
+            "rh_topic_aliases INSERT",
+            "INSERT INTO rh_topic_aliases (topic_id, alias, alias_key, kind)
+             VALUES ($1, 'Forged Alias', 'forged-alias', 'work')",
+            topic,
+            Uuid::nil(),
+        ),
+        (
+            "rh_topic_decisions INSERT",
+            "INSERT INTO rh_topic_decisions
+             (id, topic_id, text, status, decided_by, created_at, updated_at)
+             VALUES ($2, $1, 'Forged decision', 'active', 'bob', now(), now())",
+            topic,
+            Uuid::new_v4(),
+        ),
+        (
+            "rh_entity_facts INSERT",
+            "INSERT INTO rh_entity_facts (id, topic_id, key, created_at)
+             VALUES ($2, $1, 'forged', now())",
+            topic,
+            Uuid::new_v4(),
+        ),
+        (
+            "rh_topic_redirects INSERT",
+            "INSERT INTO rh_topic_redirects (slug, topic_id, created_at)
+             VALUES ('forged-redirect', $1, now())",
+            topic,
+            Uuid::nil(),
+        ),
+        (
+            "rh_summary_sources INSERT",
+            "INSERT INTO rh_summary_sources (summary_id, message_id, ordinal)
+             VALUES ($1, $2, 1)",
+            summary_id,
+            msg2,
+        ),
+    ] {
+        let outcome = bob_scope
+            .clone()
+            .run(async {
+                let q = sqlx::query(sql).bind(bind_first);
+                if bind_second.is_nil() {
+                    q.execute(&probe).await
+                } else {
+                    q.bind(bind_second).execute(&probe).await
+                }
+            })
+            .await;
+        assert!(
+            outcome.as_ref().is_err_and(refused),
+            "{name} by non-owner should fail with 42501, got {outcome:?}"
+        );
+    }
+
+    for (name, sql, target) in [
+        (
+            "rh_topic_aliases UPDATE",
+            "UPDATE rh_topic_aliases SET alias = 'Tampered' WHERE topic_id = $1",
+            topic,
+        ),
+        (
+            "rh_topic_aliases DELETE",
+            "DELETE FROM rh_topic_aliases WHERE topic_id = $1",
+            topic,
+        ),
+        (
+            "rh_topic_decisions UPDATE",
+            "UPDATE rh_topic_decisions SET text = 'Tampered' WHERE id = $1",
+            decision_id,
+        ),
+        (
+            "rh_topic_decisions DELETE",
+            "DELETE FROM rh_topic_decisions WHERE id = $1",
+            decision_id,
+        ),
+        (
+            "rh_entity_facts UPDATE",
+            "UPDATE rh_entity_facts SET key = 'tampered' WHERE id = $1",
+            fact_id,
+        ),
+        (
+            "rh_entity_facts DELETE",
+            "DELETE FROM rh_entity_facts WHERE id = $1",
+            fact_id,
+        ),
+        (
+            "rh_topic_redirects UPDATE",
+            "UPDATE rh_topic_redirects SET slug = 'tampered' WHERE topic_id = $1",
+            topic,
+        ),
+        (
+            "rh_topic_redirects DELETE",
+            "DELETE FROM rh_topic_redirects WHERE topic_id = $1",
+            topic,
+        ),
+        (
+            "rh_summary_sources UPDATE",
+            "UPDATE rh_summary_sources SET ordinal = 99 WHERE summary_id = $1",
+            summary_id,
+        ),
+        (
+            "rh_summary_sources DELETE",
+            "DELETE FROM rh_summary_sources WHERE summary_id = $1",
+            summary_id,
+        ),
+    ] {
+        let done = bob_scope
+            .clone()
+            .run(sqlx::query(sql).bind(target).execute(&probe))
+            .await?;
+        assert_eq!(
+            done.rows_affected(),
+            0,
+            "{name} by non-owner modified a row"
+        );
+    }
+
+    Ok(())
+}

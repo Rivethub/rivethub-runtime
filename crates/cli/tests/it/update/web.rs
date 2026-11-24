@@ -287,3 +287,70 @@ async fn web_only_leaves_legacy_state_available_for_first_start() -> Result {
     assert!(!home.path().join(".rivethub").exists());
     Ok(())
 }
+
+#[tokio::test]
+async fn web_signature_fails_closed_when_forged_and_accepts_trusted_key() -> Result {
+    use aws_lc_rs::signature::{Ed25519KeyPair, KeyPair as _};
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD;
+    use gateway::account::{ReleaseKeyring, UpdateKey};
+    use sha2::{Digest as _, Sha256};
+
+    let release = build("1.2.0", "0.9.0", Contents::Site)?;
+    let manifest_json = format!(
+        r#"{{"schemaVersion":1,"version":"1.2.0","commit":"{}","channel":"stable","minRhVersion":"0.9.0","asset":"rivethub-web-1.2.0.tar.gz","sha256":"{}"}}"#,
+        "a".repeat(40),
+        hex::encode(Sha256::digest(&release.archive))
+    );
+    let pair = Ed25519KeyPair::generate()?;
+    let pub_raw: [u8; 32] = pair
+        .public_key()
+        .as_ref()
+        .try_into()
+        .map_err(|_| "pubkey length")?;
+    let keyring =
+        ReleaseKeyring::default_trusted().with_key("test-key", UpdateKey::from_bytes(pub_raw));
+    let good_sig = format!(
+        "v1:test-key:{}\n",
+        STANDARD.encode(pair.sign(manifest_json.as_bytes()).as_ref())
+    );
+    let forged_sig = format!("v1:test-key:{}\n", STANDARD.encode([0_u8; 64]));
+
+    let mut args_web = args();
+    args_web.web_only = true;
+
+    let fixture = Fixture::new()?;
+    let sigs = std::collections::BTreeMap::from([("1.2.0".to_owned(), forged_sig)]);
+    let srv = super::update_support::server_with_sigs(
+        Published::Good,
+        None,
+        vec![build("1.2.0", "0.9.0", Contents::Site)?],
+        sigs,
+    )
+    .await?;
+    let report = updater(&fixture, &srv, "0.9.0")?
+        .keyring(keyring.clone())
+        .run(&args_web, &fixture.env(), &CancellationToken::new())
+        .await;
+    assert_eq!(report.exit, Exit::Failure);
+    assert!(
+        report.stderr.contains("signature verification failed"),
+        "{}",
+        report.stderr
+    );
+    assert!(!web_root(&fixture).join("current").exists());
+    srv.close().await?;
+
+    let fixture = Fixture::new()?;
+    let sigs = std::collections::BTreeMap::from([("1.2.0".to_owned(), good_sig)]);
+    let srv =
+        super::update_support::server_with_sigs(Published::Good, None, vec![release], sigs).await?;
+    let report = updater(&fixture, &srv, "0.9.0")?
+        .keyring(keyring)
+        .run(&args_web, &fixture.env(), &CancellationToken::new())
+        .await;
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    assert_active(&fixture, "1.2.0")?;
+    srv.close().await?;
+    Ok(())
+}

@@ -8,6 +8,8 @@ use sha2::{Digest as _, Sha256};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
+use gateway::account::ReleaseKeyring;
+
 use super::{Channel, UpdateError, files};
 
 #[derive(Debug, Deserialize)]
@@ -68,60 +70,33 @@ impl Staged {
     }
 }
 
+pub(super) struct StageTarget<'a> {
+    pub(super) version: Option<&'a str>,
+    pub(super) beta: bool,
+    pub(super) running: &'a str,
+}
+
 pub(super) async fn stage(
     api: &Url,
-    version: Option<&str>,
-    beta: bool,
-    running: &str,
+    target: StageTarget<'_>,
     directory: &Path,
+    keyring: &ReleaseKeyring,
     shutdown: &CancellationToken,
 ) -> Result<Staged, UpdateError> {
     let platform = platform()?;
     let client = client(api)?;
-    let mut endpoint = api.clone();
-    {
-        let mut segments = endpoint
-            .path_segments_mut()
-            .map_err(|()| UpdateError::Release)?;
-        segments.pop_if_empty();
-        if let Some(version) = version {
-            validate_version(version)?;
-            segments.push("tags").push(version);
-        } else if !beta {
-            segments.push("latest");
-        }
-    }
-    let release = if version.is_none() && beta {
-        endpoint.set_query(Some("per_page=100"));
-        let body = download(&client, endpoint, 8 * 1024 * 1024, shutdown).await?;
-        let releases: Vec<Release> =
-            serde_json::from_slice(&body).map_err(|_| UpdateError::Release)?;
-        newest(releases)?
-    } else {
-        let body = match download(&client, endpoint, 1024 * 1024, shutdown).await {
-            Err(UpdateError::Http(error))
-                if error.status() == Some(reqwest::StatusCode::NOT_FOUND) =>
-            {
-                return Err(version.map_or(UpdateError::NoRelease, |version| {
-                    UpdateError::NotPublished(version.to_owned())
-                }));
-            }
-            downloaded => downloaded?,
-        };
-        serde_json::from_slice(&body).map_err(|_| UpdateError::Release)?
-    };
-    accept(&release, version, beta)?;
+    let release = fetch_release(&client, api, target.version, target.beta, shutdown).await?;
+    accept(&release, target.version, target.beta)?;
     validate_version(&release.tag_name)?;
-    let pinned = version.is_some();
     let version = release
         .tag_name
         .strip_prefix('v')
         .ok_or_else(|| UpdateError::Version(release.tag_name.clone()))?;
-    if !pinned {
+    if target.version.is_none() {
         let published = semver::Version::parse(version)
             .map_err(|_| UpdateError::Version(release.tag_name.clone()))?;
-        let running = semver::Version::parse(running)
-            .map_err(|_| UpdateError::Version(running.to_owned()))?;
+        let running = semver::Version::parse(target.running)
+            .map_err(|_| UpdateError::Version(target.running.to_owned()))?;
         match published.cmp(&running) {
             std::cmp::Ordering::Less => return Ok(Staged::Newer(release.tag_name)),
             std::cmp::Ordering::Equal => return Ok(Staged::UpToDate(release.tag_name)),
@@ -129,8 +104,7 @@ pub(super) async fn stage(
         }
     }
     let archive_name = format!("rh-{version}-{platform}.tar.gz");
-    let manifest = asset(&release, "SHA256SUMS")?;
-    let manifest = download(&client, manifest, 16 * 1024, shutdown).await?;
+    let manifest = fetch_verified_manifest(&client, &release, keyring, shutdown).await?;
     let expected = *checksums(&manifest)?
         .get(&archive_name)
         .ok_or(UpdateError::Manifest)?;
@@ -148,6 +122,71 @@ pub(super) async fn stage(
     let directory = directory.to_owned();
     tokio::task::spawn_blocking(move || unpack(&archive, &directory)).await??;
     Ok(Staged::Ready(release.tag_name))
+}
+
+async fn fetch_release(
+    client: &reqwest::Client,
+    api: &Url,
+    version: Option<&str>,
+    beta: bool,
+    shutdown: &CancellationToken,
+) -> Result<Release, UpdateError> {
+    let mut endpoint = api.clone();
+    {
+        let mut segments = endpoint
+            .path_segments_mut()
+            .map_err(|()| UpdateError::Release)?;
+        segments.pop_if_empty();
+        if let Some(version) = version {
+            validate_version(version)?;
+            segments.push("tags").push(version);
+        } else if !beta {
+            segments.push("latest");
+        }
+    }
+    if version.is_none() && beta {
+        endpoint.set_query(Some("per_page=100"));
+        let body = download(client, endpoint, 8 * 1024 * 1024, shutdown).await?;
+        let releases: Vec<Release> =
+            serde_json::from_slice(&body).map_err(|_| UpdateError::Release)?;
+        return newest(releases);
+    }
+    let body = match download(client, endpoint, 1024 * 1024, shutdown).await {
+        Err(UpdateError::Http(error)) if error.status() == Some(reqwest::StatusCode::NOT_FOUND) => {
+            return Err(version.map_or(UpdateError::NoRelease, |version| {
+                UpdateError::NotPublished(version.to_owned())
+            }));
+        }
+        downloaded => downloaded?,
+    };
+    serde_json::from_slice(&body).map_err(|_| UpdateError::Release)
+}
+
+async fn fetch_verified_manifest(
+    client: &reqwest::Client,
+    release: &Release,
+    keyring: &ReleaseKeyring,
+    shutdown: &CancellationToken,
+) -> Result<Vec<u8>, UpdateError> {
+    let manifest_url = asset(release, "SHA256SUMS")?;
+    let manifest = download(client, manifest_url, 16 * 1024, shutdown).await?;
+    if let Some(sig_url) = asset_optional(release, "SHA256SUMS.sig")? {
+        let sig_bytes = download(client, sig_url, 1024, shutdown).await?;
+        let sig_text = std::str::from_utf8(&sig_bytes)
+            .map_err(|_| UpdateError::Signature("SHA256SUMS.sig is not valid UTF-8".to_owned()))?;
+        keyring.verify_envelope(&manifest, sig_text).map_err(|_| {
+            UpdateError::Signature(format!(
+                "SHA256SUMS.sig signature verification failed for {}",
+                release.tag_name
+            ))
+        })?;
+    } else {
+        tracing::warn!(
+            tag = %release.tag_name,
+            "SHA256SUMS.sig is not published on this release; verifying SHA-256 checksum only"
+        );
+    }
+    Ok(manifest)
 }
 
 fn accept(release: &Release, version: Option<&str>, beta: bool) -> Result<(), UpdateError> {
@@ -219,12 +258,22 @@ pub(super) fn asset(release: &Release, name: &str) -> Result<Url, UpdateError> {
         tag: release.tag_name.clone(),
         name: name.to_owned(),
     };
+    asset_optional(release, name)?.ok_or_else(missing)
+}
+
+pub(super) fn asset_optional(release: &Release, name: &str) -> Result<Option<Url>, UpdateError> {
+    let duplicate = || UpdateError::Asset {
+        tag: release.tag_name.clone(),
+        name: name.to_owned(),
+    };
     let mut matching = release.assets.iter().filter(|asset| asset.name == name);
-    let asset = matching.next().ok_or_else(missing)?;
+    let Some(asset) = matching.next() else {
+        return Ok(None);
+    };
     if matching.next().is_some() {
-        return Err(missing());
+        return Err(duplicate());
     }
-    Ok(asset.browser_download_url.clone())
+    Ok(Some(asset.browser_download_url.clone()))
 }
 
 fn checksums(bytes: &[u8]) -> Result<BTreeMap<String, [u8; 32]>, UpdateError> {

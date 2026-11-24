@@ -72,6 +72,8 @@ pub enum UpdateError {
     Manifest,
     #[error("SHA-256 verification failed for {0}")]
     Checksum(String),
+    #[error("{0}")]
+    Signature(String),
     #[error("update path is outside its root or is not a regular file: {}", .0.display())]
     Path(PathBuf),
     #[error("another update is in progress")]
