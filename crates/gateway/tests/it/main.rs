@@ -18,6 +18,7 @@ mod plugin_security;
 mod plugin_support;
 mod plugins;
 mod replay;
+mod runtime_record;
 mod server;
 mod serving;
 mod session_catalog;
