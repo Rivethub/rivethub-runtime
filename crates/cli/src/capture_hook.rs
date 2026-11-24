@@ -278,9 +278,30 @@ pub(crate) async fn ingest_bundle(
 }
 
 fn spool_at(env: &Environment) -> Result<CaptureSpool, Error> {
-    Ok(CaptureSpool::new(
-        config::Paths::new(env)?.state_dir().join(SPOOL_DIR),
-    ))
+    Ok(CaptureSpool::new(spool_dir(
+        env,
+        &config::Paths::new(env)?.state_dir(),
+    )?))
+}
+
+fn spool_dir(env: &Environment, state_dir: &std::path::Path) -> Result<std::path::PathBuf, Error> {
+    let Some(raw) = env
+        .text(crate::gateway_target::GATEWAY_URL_ENV)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    else {
+        return Ok(state_dir.join(SPOOL_DIR));
+    };
+    let mut url = url::Url::parse(raw)?;
+    if !url.path().ends_with('/') {
+        let path = format!("{}/", url.path());
+        url.set_path(&path);
+    }
+    let digest = hex::encode(sha2::Sha256::digest(url.as_str().as_bytes()));
+    Ok(state_dir.join(format!(
+        "{SPOOL_DIR}-to-{}",
+        digest.get(..16).unwrap_or(&digest)
+    )))
 }
 
 async fn spool_command(env: &Environment, requeue_dead: bool) -> Result<Report, Error> {
@@ -375,19 +396,12 @@ async fn writer_as(
         Some(remote) => remote_gateway(remote).await,
         None => status::gateway_as(env, &loaded.config, POST_TIMEOUT, Some(owner_uid)).await,
     };
-    let spool_dir = match overridden {
-        Some(url) => {
-            if let Err(error) = endpoint {
-                return Err(error);
-            }
-            let digest = hex::encode(sha2::Sha256::digest(url.as_bytes()));
-            paths.state_dir().join(format!(
-                "{SPOOL_DIR}-to-{}",
-                digest.get(..16).unwrap_or(&digest)
-            ))
-        }
-        None => paths.state_dir().join(SPOOL_DIR),
-    };
+    if overridden.is_some()
+        && let Err(error) = endpoint
+    {
+        return Err(error);
+    }
+    let spool_dir = spool_dir(env, &paths.state_dir())?;
     let transport = match endpoint {
         Ok(Endpoint { url, client }) => HookTransport::Http(HttpCaptureTransport::new(
             url.as_str().trim_end_matches('/').to_owned(),

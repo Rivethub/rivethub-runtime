@@ -374,3 +374,24 @@ async fn a_flag_with_a_query_is_refused_before_anything_is_queued() {
         "a refused flag queued a batch"
     );
 }
+
+#[tokio::test]
+async fn the_spool_command_shows_the_queue_of_the_chosen_gateway_however_it_is_spelled() {
+    let home = home();
+    let env = environment(&home);
+    let default = run(&["capture", "spool"], &env).await;
+    let bare = run(
+        &["capture", "spool"],
+        &env.clone()
+            .with_override("RIVETHUB_GATEWAY_URL", "http://127.0.0.1:9"),
+    )
+    .await;
+    let slashed = run(
+        &["capture", "spool"],
+        &env.with_override("RIVETHUB_GATEWAY_URL", "http://127.0.0.1:9/"),
+    )
+    .await;
+    assert!(bare.stdout.contains("capture-spool-to-"), "{}", bare.stdout);
+    assert_eq!(bare.stdout, slashed.stdout);
+    assert_ne!(bare.stdout, default.stdout);
+}
