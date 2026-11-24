@@ -16,6 +16,7 @@ use capture::writer::PostError;
 use clap::Subcommand;
 use clap::ValueEnum;
 use config::Environment;
+use sha2::Digest as _;
 use tokio::io::AsyncReadExt as _;
 use wire::harness::HarnessId;
 
@@ -277,9 +278,30 @@ pub(crate) async fn ingest_bundle(
 }
 
 fn spool_at(env: &Environment) -> Result<CaptureSpool, Error> {
-    Ok(CaptureSpool::new(
-        config::Paths::new(env)?.state_dir().join(SPOOL_DIR),
-    ))
+    Ok(CaptureSpool::new(spool_dir(
+        env,
+        &config::Paths::new(env)?.state_dir(),
+    )?))
+}
+
+fn spool_dir(env: &Environment, state_dir: &std::path::Path) -> Result<std::path::PathBuf, Error> {
+    let Some(raw) = env
+        .text(crate::gateway_target::GATEWAY_URL_ENV)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    else {
+        return Ok(state_dir.join(SPOOL_DIR));
+    };
+    let mut url = url::Url::parse(raw)?;
+    if !url.path().ends_with('/') {
+        let path = format!("{}/", url.path());
+        url.set_path(&path);
+    }
+    let digest = hex::encode(sha2::Sha256::digest(url.as_str().as_bytes()));
+    Ok(state_dir.join(format!(
+        "{SPOOL_DIR}-to-{}",
+        digest.get(..16).unwrap_or(&digest)
+    )))
 }
 
 async fn spool_command(env: &Environment, requeue_dead: bool) -> Result<Report, Error> {
@@ -360,15 +382,26 @@ async fn writer_as(
 ) -> Result<(CaptureWriter<HookTransport>, config::Paths), Error> {
     let loaded = db::load(env, None).await?;
     let paths = config::Paths::new(env)?;
+    let overridden = env
+        .text(crate::gateway_target::GATEWAY_URL_ENV)
+        .map(str::trim)
+        .filter(|text| !text.is_empty());
     let remote = loaded
         .config
         .memory
         .as_ref()
-        .and_then(|memory| memory.capture.gateway.as_ref());
+        .and_then(|memory| memory.capture.gateway.as_ref())
+        .filter(|_| overridden.is_none());
     let endpoint = match remote {
         Some(remote) => remote_gateway(remote).await,
         None => status::gateway_as(env, &loaded.config, POST_TIMEOUT, Some(owner_uid)).await,
     };
+    if overridden.is_some()
+        && let Err(error) = endpoint
+    {
+        return Err(error);
+    }
+    let spool_dir = spool_dir(env, &paths.state_dir())?;
     let transport = match endpoint {
         Ok(Endpoint { url, client }) => HookTransport::Http(HttpCaptureTransport::new(
             url.as_str().trim_end_matches('/').to_owned(),
@@ -377,12 +410,7 @@ async fn writer_as(
         Err(error) => HookTransport::Refused(error.to_string()),
     };
     let redaction = capture::redaction::resolve(Some(loaded.config.capture_redaction()), env);
-    let writer = CaptureWriter::new(
-        transport,
-        CaptureSpool::new(paths.state_dir().join(SPOOL_DIR)),
-        None,
-        redaction,
-    );
+    let writer = CaptureWriter::new(transport, CaptureSpool::new(spool_dir), None, redaction);
     Ok((writer, paths))
 }
 
@@ -405,7 +433,6 @@ impl CaptureTransport for HookTransport {
 }
 
 async fn remote_gateway(remote: &config::model::CaptureGateway) -> Result<Endpoint, Error> {
-    let roots = reqwest::Certificate::from_pem_bundle(&tokio::fs::read(&remote.ca).await?)?;
     let mut headers = reqwest::header::HeaderMap::new();
     if let Some(token) = &remote.token {
         let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
@@ -413,13 +440,19 @@ async fn remote_gateway(remote: &config::model::CaptureGateway) -> Result<Endpoi
         value.set_sensitive(true);
         headers.insert(reqwest::header::AUTHORIZATION, value);
     }
-    let client = reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .no_proxy()
         .https_only(true)
         .timeout(POST_TIMEOUT)
-        .tls_certs_only(roots)
-        .default_headers(headers)
-        .build()?;
+        .default_headers(headers);
+    let builder = match &remote.ca {
+        Some(ca) => {
+            let roots = reqwest::Certificate::from_pem_bundle(&tokio::fs::read(ca).await?)?;
+            builder.tls_certs_only(roots)
+        }
+        None => builder,
+    };
+    let client = builder.build()?;
     Ok(Endpoint {
         url: url::Url::parse(&remote.url)?,
         client,

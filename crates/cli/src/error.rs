@@ -97,6 +97,12 @@ pub enum Error {
     Url(#[from] url::ParseError),
     #[error("gateway host or port is invalid")]
     Address,
+    #[error("--gateway requires a URL (e.g. --gateway http://127.0.0.1:5174)")]
+    GatewayRequired,
+    #[error("the gateway URL must be http or https, not {0}")]
+    GatewayScheme(String),
+    #[error("the gateway URL must not carry a query or fragment")]
+    GatewayUrlSuffix,
     #[error("schema verifier failed: rivethub-migrate: {0}")]
     Verifier(#[from] migrate::Error),
     #[error(
