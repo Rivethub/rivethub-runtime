@@ -76,9 +76,13 @@ pub(super) fn ingest_args(args: &[String]) -> Result<MemoryCommand, Error> {
     let mut force = false;
     let mut dry_run = false;
     let mut decisions = Decisions::default();
+    let mut gateway = None;
     while let Some(token) = scan.current().map(str::to_owned) {
         if scan.flag("--force") {
             force = true;
+            continue;
+        }
+        if crate::argv::take_gateway(&mut scan, &mut gateway)? {
             continue;
         }
         if super::hold::take_decision(&mut scan, &mut decisions)? {
@@ -105,6 +109,7 @@ pub(super) fn ingest_args(args: &[String]) -> Result<MemoryCommand, Error> {
         force,
         dry_run,
         decisions,
+        gateway,
     })
 }
 
@@ -113,8 +118,10 @@ pub(super) async fn ingest(
     force: bool,
     dry_run: bool,
     decisions: &Decisions,
+    gateway: Option<&str>,
     env: &Environment,
 ) -> Result<Report, Error> {
+    let env = &crate::argv::with_gateway(env, gateway);
     let bundle = capture::bundle::parse(&tokio::fs::read_to_string(path).await?)?;
     let raw = bundle.manifest.sanitization == Sanitization::Raw;
     if raw && !force && !dry_run {

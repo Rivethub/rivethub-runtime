@@ -12,6 +12,7 @@ use serde::Deserialize;
 use wire::gateway::{CloudPolicy, HealthzResponse, HubPolicy};
 use x509_parser::extensions::GeneralName;
 
+use crate::gateway_target::{Locate, gateway_target, target_for};
 use crate::{Error, Report, configuration, process};
 
 #[derive(Debug, Deserialize)]
@@ -204,8 +205,18 @@ async fn health_endpoint(
     config: &Config,
     redirects: Redirects,
 ) -> Result<Endpoint, Error> {
-    let Endpoint { url, client } =
-        gateway_with(env, config, Duration::from_secs(3), redirects, None).await?;
+    let Endpoint { url, client } = gateway_with(
+        env,
+        config,
+        Duration::from_secs(3),
+        redirects,
+        None,
+        match redirects {
+            Redirects::Follow => Locate::Discover,
+            Redirects::Refuse => Locate::Configured,
+        },
+    )
+    .await?;
     Ok(Endpoint {
         url: url.join("healthz")?,
         client,
@@ -226,44 +237,18 @@ pub(crate) async fn gateway_as(
     timeout: Duration,
     owner_uid: Option<u32>,
 ) -> Result<Endpoint, Error> {
-    gateway_with(env, config, timeout, Redirects::Follow, owner_uid).await
+    gateway_with(
+        env,
+        config,
+        timeout,
+        Redirects::Follow,
+        owner_uid,
+        Locate::Discover,
+    )
+    .await
 }
 
-pub(crate) struct GatewayTarget {
-    pub(crate) source: BindSource,
-    pub(crate) url: url::Url,
-    pub(crate) ca: Option<std::path::PathBuf>,
-    pin: Option<(String, SocketAddr)>,
-}
-
-pub(crate) async fn gateway_target(
-    env: &Environment,
-    config: &Config,
-) -> Result<GatewayTarget, Error> {
-    let hostname = host_name()?;
-    let node = config::resolve_node_name(config, env, &hostname)?;
-    let section = config.gateway.clone();
-    let tls_env = env.clone();
-    let shared = config::shared_dir(&tls_env);
-    let source = tokio::task::spawn_blocking(move || {
-        BindSource::resolve_section(section.as_ref(), &tls_env, &node, &shared)
-    })
-    .await?;
-    let mut url = listen_url(&source)?;
-    let ca = gateway::private_ca(config.gateway.as_ref(), env, &config::shared_dir(env));
-    let pin = match (&source.tls_cert, &ca) {
-        (Some(cert), Some(_)) => served_pin(&mut url, cert, source.port)?,
-        _ => None,
-    };
-    Ok(GatewayTarget {
-        source,
-        url,
-        ca,
-        pin,
-    })
-}
-
-fn listen_url(source: &BindSource) -> Result<url::Url, Error> {
+pub(crate) fn listen_url(source: &BindSource) -> Result<url::Url, Error> {
     let mut url = url::Url::parse(if source.tls_cert.is_some() {
         "https://localhost/"
     } else {
@@ -381,8 +366,9 @@ async fn gateway_with(
     timeout: Duration,
     redirects: Redirects,
     owner_uid: Option<u32>,
+    locate: Locate,
 ) -> Result<Endpoint, Error> {
-    let target = gateway_target(env, config).await?;
+    let target = target_for(env, config, locate).await?;
     let policy = match redirects {
         Redirects::Follow => reqwest::redirect::Policy::default(),
         Redirects::Refuse => reqwest::redirect::Policy::none(),
@@ -393,8 +379,10 @@ async fn gateway_with(
         .timeout(timeout);
     let verified_tls = target.source.tls_cert.is_some() && target.ca.is_some();
     let token = match owner_uid {
-        Some(_) => gateway::local_owner::read_token(&gateway::state_dir(env)?)?,
-        None => None,
+        Some(_) if target.sends_owner_token() => {
+            gateway::local_owner::read_token(&gateway::state_dir(env)?)?
+        }
+        Some(_) | None => None,
     };
     let builder = match (token, owner_uid) {
         (Some(token), Some(uid)) => {
@@ -409,6 +397,10 @@ async fn gateway_with(
         Some(ca) if verified_tls => {
             let roots = reqwest::Certificate::from_pem_bundle(&std::fs::read(ca)?)?;
             builder.tls_certs_only(roots)
+        }
+        Some(ca) if target.explicit && target.url.scheme() == "https" => {
+            let roots = reqwest::Certificate::from_pem_bundle(&std::fs::read(ca)?)?;
+            builder.tls_certs_merge(roots)
         }
         Some(_) | None => builder,
     };
@@ -431,7 +423,7 @@ fn owner_header(token: &str) -> Result<reqwest::header::HeaderMap, Error> {
     Ok(headers)
 }
 
-fn served_pin(
+pub(crate) fn served_pin(
     url: &mut url::Url,
     cert: &Path,
     port: u16,
@@ -486,7 +478,7 @@ fn served_name(cert: &Path, address: IpAddr) -> Result<Option<String>, Error> {
     Ok(dns.into_iter().next())
 }
 
-fn host_name() -> Result<String, Error> {
+pub(crate) fn host_name() -> Result<String, Error> {
     let raw = nix::unistd::gethostname().map_err(|_| Error::HostName)?;
     let text = raw.into_string().map_err(|_| Error::HostName)?;
     let trimmed = text.trim();

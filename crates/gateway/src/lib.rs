@@ -13,6 +13,7 @@ mod models;
 pub mod peer;
 pub mod plugins;
 pub mod routes;
+pub mod runtime_record;
 mod scope;
 pub mod server;
 mod session_access;
