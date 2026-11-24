@@ -101,6 +101,8 @@ pub enum Error {
     GatewayRequired,
     #[error("the gateway URL must be http or https, not {0}")]
     GatewayScheme(String),
+    #[error("the gateway URL must not carry a query or fragment")]
+    GatewayUrlSuffix,
     #[error("schema verifier failed: rivethub-migrate: {0}")]
     Verifier(#[from] migrate::Error),
     #[error(

@@ -100,6 +100,9 @@ fn running_bind(env: &Environment, mut source: BindSource) -> Result<BindSource,
 
 fn explicit_target(env: &Environment, config: &Config, raw: &str) -> Result<GatewayTarget, Error> {
     let mut url = url::Url::parse(raw)?;
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err(Error::GatewayUrlSuffix);
+    }
     let tls = match url.scheme() {
         "https" => true,
         "http" => false,

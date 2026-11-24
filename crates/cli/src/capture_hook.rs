@@ -360,11 +360,15 @@ async fn writer_as(
 ) -> Result<(CaptureWriter<HookTransport>, config::Paths), Error> {
     let loaded = db::load(env, None).await?;
     let paths = config::Paths::new(env)?;
+    let overridden = env
+        .text(crate::gateway_target::GATEWAY_URL_ENV)
+        .is_some_and(|text| !text.trim().is_empty());
     let remote = loaded
         .config
         .memory
         .as_ref()
-        .and_then(|memory| memory.capture.gateway.as_ref());
+        .and_then(|memory| memory.capture.gateway.as_ref())
+        .filter(|_| !overridden);
     let endpoint = match remote {
         Some(remote) => remote_gateway(remote).await,
         None => status::gateway_as(env, &loaded.config, POST_TIMEOUT, Some(owner_uid)).await,

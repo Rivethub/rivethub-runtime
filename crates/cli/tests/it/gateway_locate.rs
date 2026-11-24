@@ -139,6 +139,22 @@ async fn the_environment_url_beats_the_runtime_record_and_the_config() {
 }
 
 #[tokio::test]
+async fn a_gateway_url_with_a_query_or_fragment_is_refused() {
+    let home = home();
+    config(&home, "");
+    for url in ["http://127.0.0.1:1/?a=b", "http://127.0.0.1:1/#top"] {
+        let env = environment(&home).with_override("RIVETHUB_GATEWAY_URL", url);
+        let status = run(&["status", "--json"], &env).await;
+        assert_ne!(status.exit, Exit::Ok);
+        assert!(
+            status.stderr.contains("query or fragment"),
+            "{}",
+            status.stderr
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_gateway_url_that_is_not_http_is_refused() {
     let home = home();
     let env = environment(&home).with_override("RIVETHUB_GATEWAY_URL", "ftp://127.0.0.1:1/");
@@ -248,4 +264,39 @@ async fn ingest_bundle_posts_to_the_gateway_the_flag_names() {
         "without the flag the environment URL is used"
     );
     assert!(record_seen.lock().is_empty());
+}
+
+#[tokio::test]
+async fn the_flag_beats_the_configured_capture_gateway() {
+    let (flagged, flagged_seen) = recorder().await;
+    let home = home();
+    let directory = tempfile::tempdir().expect("directory");
+    let bundle = raw_bundle(directory.path()).await;
+    let env = environment(&home);
+    config(
+        &home,
+        "memory:\n  capture:\n    gateway:\n      url: https://127.0.0.1:1\n",
+    );
+
+    let flag = format!("http://{}", flagged.addr);
+    let _: cli::Report = run(
+        &[
+            "memory",
+            "ingest-bundle",
+            &bundle,
+            "--force",
+            "--gateway",
+            &flag,
+        ],
+        &env,
+    )
+    .await;
+
+    assert!(
+        flagged_seen
+            .lock()
+            .iter()
+            .any(|(method, _)| method == Method::POST),
+        "the flag's gateway got the capture post"
+    );
 }

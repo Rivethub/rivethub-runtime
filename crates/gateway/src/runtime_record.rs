@@ -93,10 +93,22 @@ fn read_file(path: &Path) -> Option<RuntimeRecord> {
 }
 
 fn alive(pid: u32) -> bool {
-    i32::try_from(pid).is_ok_and(|raw| {
-        matches!(
-            nix::sys::signal::kill(Pid::from_raw(raw), None),
-            Ok(()) | Err(Errno::EPERM)
-        )
-    })
+    pid != 0
+        && i32::try_from(pid).is_ok_and(|raw| {
+            matches!(
+                nix::sys::signal::kill(Pid::from_raw(raw), None),
+                Ok(()) | Err(Errno::EPERM)
+            )
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::alive;
+
+    #[test]
+    fn pid_zero_is_never_alive() {
+        assert!(!alive(0));
+        assert!(alive(std::process::id()));
+    }
 }
