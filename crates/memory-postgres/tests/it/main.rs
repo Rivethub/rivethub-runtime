@@ -5,6 +5,7 @@ mod append_imports;
 mod bundle;
 mod chunk_hnsw;
 mod chunk_search;
+mod conversion_backfill;
 mod counts;
 mod deadline;
 mod digest;
