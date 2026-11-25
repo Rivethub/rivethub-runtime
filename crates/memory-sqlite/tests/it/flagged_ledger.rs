@@ -154,6 +154,18 @@ async fn replace_detaches_a_job_that_is_still_running() -> TestResult {
 }
 
 #[tokio::test]
+async fn a_handoff_leaves_a_running_job_with_its_key() -> TestResult {
+    let fresh = fresh_store()?;
+    let store = fresh.store.clone();
+    testkit::memory_jobs::a_handoff_leaves_a_running_job_with_its_key(
+        &fresh.store,
+        &fresh.store,
+        async move || due(&store).await,
+    )
+    .await
+}
+
+#[tokio::test]
 async fn rolling_back_a_flag_leaves_the_job_queued_and_the_ledger_empty() -> TestResult {
     let fresh = fresh_store()?;
     let store = &fresh.store;

@@ -11,6 +11,7 @@ mod chunk_pool;
 mod chunk_search;
 mod cleanup_snapshot;
 mod close;
+mod conversion_backfill;
 mod digest;
 mod embed_store;
 mod flagged_ledger;

@@ -369,7 +369,7 @@ fn key_mode(mode: JobKeyMode) -> &'static str {
     }
 }
 
-fn single_flight(job: &Job) -> Option<&str> {
+pub(crate) fn single_flight(job: &Job) -> Option<&str> {
     if matches!(
         job.name,
         JobName::Fixed(

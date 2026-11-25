@@ -200,13 +200,7 @@ pub(crate) async fn store(
     let history_count = i32::try_from(page.history.len())
         .map_err(|error| WikiStoreError::InvalidPatch(error.to_string()))?;
     let search_text = kernel::wiki::page::build_wiki_search_text(page);
-    let owner = home.map(|home| {
-        if home.visibility == "private" {
-            home.owner_user_id.as_str()
-        } else {
-            home.scope.as_str()
-        }
-    });
+    let owner = home.map(WikiScope::row_owner);
     sqlx::query(
         "INSERT INTO rh_wiki_topics (slug, title, aliases, tags, entities, current_state, article, related,
             search_text, history_count, last_verified_at, created_at, updated_at, git_sha,

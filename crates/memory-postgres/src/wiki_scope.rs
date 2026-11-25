@@ -22,6 +22,14 @@ impl WikiScope {
     pub(crate) fn primary(&self) -> bool {
         self.directory.is_empty()
     }
+
+    pub(crate) fn row_owner(&self) -> &str {
+        if self.visibility == PRIVATE {
+            &self.owner_user_id
+        } else {
+            &self.scope
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
@@ -93,7 +101,9 @@ pub(crate) async fn topic_scope(
     primary: Option<&str>,
 ) -> Result<Option<WikiScope>, WikiStoreError> {
     let found: Option<(Option<String>, String)> = sqlx::query_as(
-        "SELECT owner_user_id, rh_topic_visibility(id) FROM rh_topics WHERE id = $1",
+        "SELECT owner_user_id,
+                CASE WHEN kind = 'entity' THEN 'private' ELSE rh_topic_visibility(id) END
+           FROM rh_topics WHERE id = $1",
     )
     .bind(topic)
     .fetch_optional(&mut *conn)

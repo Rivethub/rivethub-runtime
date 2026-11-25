@@ -15,6 +15,8 @@ use uuid::Uuid;
 use super::error::query_error;
 
 use super::lease::load_page_prose;
+use crate::wiki_scope::WikiScope;
+
 pub(super) async fn write_history(
     tx: &mut Transaction<'_, Postgres>,
     entity: Uuid,
@@ -66,6 +68,7 @@ pub(super) async fn write_rewrite(
 pub(super) async fn chosen_prose(
     tx: &mut Transaction<'_, Postgres>,
     view: &EntityView,
+    home: &WikiScope,
     body: &StoredRewrite,
     older: bool,
 ) -> Result<EntityProse, EntityStoreError> {
@@ -75,7 +78,7 @@ pub(super) async fn chosen_prose(
             article: body.article.clone(),
         });
     }
-    let stored = load_page_prose(tx, view).await?;
+    let stored = load_page_prose(tx, view, home).await?;
     Ok(EntityProse {
         summary: stored.summary,
         article: prose_article(&stored.article),

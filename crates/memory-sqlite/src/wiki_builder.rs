@@ -398,7 +398,9 @@ fn backfill(conn: &Connection, budget: BackfillBudget) -> Result<Vec<ExtractWiki
             "SELECT s.id, s.conversation_id FROM ros_summaries s
              LEFT JOIN ros_conversations c ON c.id = s.conversation_id
              LEFT JOIN ros_wiki_extractions e ON e.summary_id = s.id
-             WHERE ((s.kind = 'leaf' AND (e.summary_id IS NULL OR e.status = 'failed' ))
+             WHERE ((s.kind = 'leaf' AND (e.summary_id IS NULL OR e.status = 'failed')
+                     AND NOT EXISTS (SELECT 1 FROM rh_summary_conversion_items i
+                                      WHERE i.conversation_id = s.conversation_id AND i.state <> 'complete'))
                  OR EXISTS (SELECT 1 FROM ros_summary_deliveries d WHERE d.anchor_id = s.id AND d.consumer = 'wiki'))
                AND (c.id IS NULL OR c.session_key NOT LIKE 'heartbeat:%')
                AND NOT EXISTS (SELECT 1 FROM ros_jobs j WHERE j.job_key = 'wiki-ext-' || s.id)

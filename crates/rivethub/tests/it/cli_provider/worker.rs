@@ -78,6 +78,7 @@ async fn composed_summarizer_settles_obsolete_cli_job_without_embedder() -> Test
         filing: store.clone(),
         pages: store.clone(),
         decisions: store.clone(),
+        flagged: store.clone(),
         changes: store.clone(),
         digests: store.clone(),
         tidy: store.clone(),

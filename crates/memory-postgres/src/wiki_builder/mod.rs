@@ -76,7 +76,9 @@ impl WikiBuilderStore for PostgresMemory {
             "SELECT s.id, s.conversation_id FROM rh_summaries s
              LEFT JOIN rh_conversations c ON c.id = s.conversation_id
              LEFT JOIN rh_wiki_extractions e ON e.summary_id = s.id
-             WHERE ((s.kind = 'leaf' AND (e.summary_id IS NULL OR e.status = 'failed' OR (e.status = 'done' AND cardinality(e.topics_touched) > 0 AND e.git_sha IS NULL)))
+             WHERE ((s.kind = 'leaf' AND (e.summary_id IS NULL OR e.status = 'failed' OR (e.status = 'done' AND cardinality(e.topics_touched) > 0 AND e.git_sha IS NULL))
+                     AND NOT EXISTS (SELECT 1 FROM rh_summary_conversion_items i
+                                      WHERE i.conversation_id = s.conversation_id AND i.state <> 'complete'))
                  OR EXISTS (SELECT 1 FROM rh_summary_deliveries d WHERE d.anchor_id = s.id AND d.consumer = 'wiki'))
                AND (c.id IS NULL OR c.session_key NOT LIKE 'heartbeat:%')
                AND NOT EXISTS (SELECT 1 FROM rh_flagged_jobs f WHERE f.job_key = 'wiki-ext-' || s.id::text)
@@ -474,7 +476,10 @@ async fn lock_slugs(
     Ok(())
 }
 
-async fn lock_slug(tx: &mut Transaction<'_, Postgres>, slug: &str) -> Result<(), WikiStoreError> {
+pub(crate) async fn lock_slug(
+    tx: &mut Transaction<'_, Postgres>,
+    slug: &str,
+) -> Result<(), WikiStoreError> {
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
         .bind(slug)
         .execute(&mut **tx)

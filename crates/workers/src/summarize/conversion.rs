@@ -149,6 +149,7 @@ fn failure_reason(error: &WorkerError) -> String {
         | WorkerError::Lineage(..)
         | WorkerError::Memory(..)
         | WorkerError::TopicPage(..)
+        | WorkerError::Flagged(..)
         | WorkerError::Tidy(..)
         | WorkerError::TidyAnswer { .. }
         | WorkerError::Changes(..)
