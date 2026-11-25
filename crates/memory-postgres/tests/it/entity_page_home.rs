@@ -722,6 +722,51 @@ async fn a_work_page_steps_past_a_scoped_page_with_its_name(pool: PgPool) -> Tes
     Ok(())
 }
 
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_work_page_steps_past_a_key_its_owner_cannot_see(pool: PgPool) -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let memory = shared_memory(&pool, directory.path()).await?;
+    seed_page(
+        &pool,
+        &SeededPage {
+            key: "mesh",
+            local: "mesh",
+            owner: "coco",
+            topic: None,
+            state: "Coco's mesh.",
+        },
+    )
+    .await?;
+    let work = Uuid::new_v4();
+    seed_topic(&pool, work, "work", "mesh", "phil").await?;
+    let phil = Scope::Viewer(Viewer::new(Owner::new("phil".to_owned())?, Vec::new()));
+
+    let failures = phil
+        .run(sync_topic_page(
+            &memory,
+            &memory,
+            &memory,
+            &SyncTopicPage::topic(TopicId::from_uuid(work)),
+            SweepOwners::All,
+            at("2026-11-07T02:00:00Z"),
+        ))
+        .await?;
+
+    assert!(failures.is_empty(), "the sweep failed: {failures:?}");
+    assert_eq!(
+        pages(&pool).await?,
+        vec![
+            stored("mesh", "coco", "Coco's mesh.", None),
+            stored("mesh-2", "phil", "", Some(work)),
+        ]
+    );
+    assert!(
+        !directory.path().join("topics/mesh.md").exists(),
+        "the sweep wrote a file for a key it could not claim"
+    );
+    Ok(())
+}
+
 async fn shared_memory(
     pool: &PgPool,
     directory: &std::path::Path,

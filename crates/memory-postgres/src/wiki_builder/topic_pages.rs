@@ -426,7 +426,14 @@ async fn vacant(
     tx: &mut Transaction<'_, Postgres>,
     placed: &Placed,
 ) -> Result<bool, WikiStoreError> {
-    sqlx::query_scalar::<_, bool>(
+    let mut every_owner = sqlx::Connection::begin(&mut **tx)
+        .await
+        .map_err(query_error)?;
+    sqlx::query("SELECT set_config('rh.maintenance', 'on', true)")
+        .execute(&mut *every_owner)
+        .await
+        .map_err(query_error)?;
+    let vacant = sqlx::query_scalar::<_, bool>(
         "SELECT NOT EXISTS (SELECT 1 FROM rh_wiki_topics
                              WHERE slug = $1 OR topic_id = $2
                                 OR (coalesce(local_slug, slug) = $3
@@ -438,9 +445,11 @@ async fn vacant(
     .bind(&placed.local)
     .bind(placed.scope.as_ref().map(|scope| &scope.scope))
     .bind(placed.scope.as_ref().is_none_or(WikiScope::primary))
-    .fetch_one(&mut **tx)
+    .fetch_one(&mut *every_owner)
     .await
-    .map_err(query_error)
+    .map_err(query_error)?;
+    every_owner.rollback().await.map_err(query_error)?;
+    Ok(vacant)
 }
 
 pub(super) fn topic_page(page: WikiPage) -> Result<TopicPage, WikiStoreError> {
