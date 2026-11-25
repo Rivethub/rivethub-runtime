@@ -5,6 +5,7 @@ use kernel::wiki::builder::WikiStoreError;
 use kernel::wiki::consolidate::{WikiConsolidateStore, WikiFold};
 use kernel::wiki::page::WikiSlug;
 use kernel::wiki::page::{ArticleSection, FoldMark, WikiPage, WikiSectionRef};
+use sqlx::{Postgres, Transaction};
 
 use super::overlays::Placed;
 use super::{lock_slug, query_error, settle, topics};
@@ -62,16 +63,18 @@ impl TopicPageStore for PostgresMemory {
         page: &TopicPage,
         now: Timestamp,
     ) -> Result<(), WikiStoreError> {
-        let placed = self.place_note_page(&page.slug, Some(topic.uuid())).await?;
-        let directory = placed
-            .scope
-            .as_ref()
-            .map_or(String::new(), |scope| scope.directory.clone());
-        let mut repository = WikiRepository::for_store(self.wiki_home(&directory)?)
-            .lock()
-            .await?;
-        let saved = self.save_locked(&mut repository, page, &placed, now).await;
-        settle(saved, repository.release().await)
+        self.write_topic_page(topic, page, Claim::Overwrite, now)
+            .await
+            .map(drop)
+    }
+
+    async fn create_topic_page(
+        &self,
+        topic: TopicId,
+        page: &TopicPage,
+        now: Timestamp,
+    ) -> Result<bool, WikiStoreError> {
+        self.write_topic_page(topic, page, Claim::Vacant, now).await
     }
 
     async fn edit_page(
@@ -198,7 +201,34 @@ impl TopicPageStore for PostgresMemory {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Claim {
+    Overwrite,
+    Vacant,
+}
+
 impl PostgresMemory {
+    async fn write_topic_page(
+        &self,
+        topic: TopicId,
+        page: &TopicPage,
+        claim: Claim,
+        now: Timestamp,
+    ) -> Result<bool, WikiStoreError> {
+        let placed = self.place_note_page(&page.slug, Some(topic.uuid())).await?;
+        let directory = placed
+            .scope
+            .as_ref()
+            .map_or(String::new(), |scope| scope.directory.clone());
+        let mut repository = WikiRepository::for_store(self.wiki_home(&directory)?)
+            .lock()
+            .await?;
+        let saved = self
+            .save_locked(&mut repository, page, &placed, claim, now)
+            .await;
+        settle(saved, repository.release().await)
+    }
+
     async fn repository(&self) -> Result<LockedRepository, WikiStoreError> {
         let directory = self
             .wiki_directory
@@ -248,7 +278,9 @@ impl PostgresMemory {
         if after == before {
             return Ok(());
         }
-        self.save_locked(repository, &after, placed, now).await
+        self.save_locked(repository, &after, placed, Claim::Overwrite, now)
+            .await
+            .map(drop)
     }
 
     async fn home(&self, slug: &WikiSlug) -> Result<(PageHome, Option<WikiScope>), WikiStoreError> {
@@ -301,8 +333,9 @@ impl PostgresMemory {
         repository: &mut LockedRepository,
         page: &TopicPage,
         placed: &Placed,
+        claim: Claim,
         now: Timestamp,
-    ) -> Result<(), WikiStoreError> {
+    ) -> Result<bool, WikiStoreError> {
         let mut tx = self.pool.begin().await.map_err(query_error)?;
         if let Some(id) = kernel::wiki::origin::NoteOrigin::current() {
             crate::summary_replace::shared(&mut tx, &[id])
@@ -310,6 +343,10 @@ impl PostgresMemory {
                 .map_err(super::fence_error)?;
         }
         lock_slug(&mut tx, &placed.key).await?;
+        if !claim.allows(&mut tx, placed).await? {
+            tx.rollback().await.map_err(query_error)?;
+            return Ok(false);
+        }
         let local = WikiSlug::try_from(placed.local.clone())
             .map_err(|error| WikiStoreError::InvalidPatch(error.to_string()))?;
         let mut stored = match repository.read(&placed.local).await? {
@@ -364,8 +401,44 @@ impl PostgresMemory {
                 .await
                 .map_err(query_error)?;
         }
-        tx.commit().await.map_err(query_error)
+        tx.commit().await.map_err(query_error)?;
+        Ok(true)
     }
+}
+
+impl Claim {
+    async fn allows(
+        self,
+        tx: &mut Transaction<'_, Postgres>,
+        placed: &Placed,
+    ) -> Result<bool, WikiStoreError> {
+        match self {
+            Self::Overwrite => Ok(true),
+            Self::Vacant if !placed.canonical => Ok(false),
+            Self::Vacant => vacant(tx, placed).await,
+        }
+    }
+}
+
+async fn vacant(
+    tx: &mut Transaction<'_, Postgres>,
+    placed: &Placed,
+) -> Result<bool, WikiStoreError> {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT NOT EXISTS (SELECT 1 FROM rh_wiki_topics
+                             WHERE slug = $1 OR topic_id = $2
+                                OR (coalesce(local_slug, slug) = $3
+                                    AND (scope = $4 OR ($5 AND scope IS NULL))))
+            AND NOT EXISTS (SELECT 1 FROM rh_wiki_redirects WHERE from_slug = $1)",
+    )
+    .bind(&placed.key)
+    .bind(placed.bind)
+    .bind(&placed.local)
+    .bind(placed.scope.as_ref().map(|scope| &scope.scope))
+    .bind(placed.scope.as_ref().is_none_or(WikiScope::primary))
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(query_error)
 }
 
 pub(super) fn topic_page(page: WikiPage) -> Result<TopicPage, WikiStoreError> {

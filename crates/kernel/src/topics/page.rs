@@ -132,6 +132,13 @@ pub trait TopicPageStore: Send + Sync {
         now: Timestamp,
     ) -> Result<(), WikiStoreError>;
 
+    async fn create_topic_page(
+        &self,
+        topic: TopicId,
+        page: &TopicPage,
+        now: Timestamp,
+    ) -> Result<bool, WikiStoreError>;
+
     async fn edit_page(
         &self,
         slug: &WikiSlug,
@@ -274,9 +281,9 @@ impl PageSync<'_> {
             return self.ensure_entity(root).await;
         }
         let slug = self.free_slug(&root.slug).await?;
-        let page = TopicPage::empty(slug.clone(), root.name.as_str());
-        self.pages.save_topic_page(root.id, &page, self.now).await?;
-        Ok(slug)
+        self.create(root, slug.clone())
+            .await?
+            .ok_or_else(|| WikiStoreError::SlugConflict(slug.as_ref().to_owned()).into())
     }
 
     async fn ensure_entity(&self, root: &Topic) -> Result<WikiSlug, TopicPageError> {
@@ -288,9 +295,23 @@ impl PageSync<'_> {
         if self.pages.page_taken(&slug).await? {
             return Ok(slug);
         }
+        Ok(self.create(root, slug.clone()).await?.unwrap_or(slug))
+    }
+
+    async fn create(
+        &self,
+        root: &Topic,
+        slug: WikiSlug,
+    ) -> Result<Option<WikiSlug>, TopicPageError> {
         let page = TopicPage::empty(slug.clone(), root.name.as_str());
-        self.pages.save_topic_page(root.id, &page, self.now).await?;
-        Ok(slug)
+        if self
+            .pages
+            .create_topic_page(root.id, &page, self.now)
+            .await?
+        {
+            return Ok(Some(slug));
+        }
+        Ok(self.topics.page_slug(root.id).await?)
     }
 
     async fn free_slug(&self, topic: &Slug) -> Result<WikiSlug, TopicPageError> {

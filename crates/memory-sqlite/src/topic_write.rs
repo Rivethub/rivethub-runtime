@@ -14,6 +14,7 @@ use wiki_files::wiki_writer::LockedRepository;
 
 use crate::SqliteStore;
 use crate::time;
+use crate::topic_pages::Claim;
 use crate::topic_pages::read;
 use crate::topic_pages::save;
 use crate::wiki_builder::query;
@@ -24,8 +25,9 @@ pub(crate) async fn save_filed(
     topic: TopicId,
     page: &TopicPage,
     now: Timestamp,
-    origin: Option<Uuid>,
-) -> Result<(), WikiStoreError> {
+    claim: Claim,
+) -> Result<bool, WikiStoreError> {
+    let origin = kernel::wiki::origin::NoteOrigin::current();
     let path = crate::page_files::database_path(store).await?;
     let page = page.clone();
     let locked = crate::page_files::Files::wiki(root).lock().await?;
@@ -33,6 +35,9 @@ pub(crate) async fn save_filed(
         let mut held = crate::page_files::HeldTx::open(&path)?;
         let tx = held.immediate()?;
         share(&tx, origin)?;
+        if !claim.allows(&tx, topic, &page.slug)? {
+            return Ok(false);
+        }
         let existing = read(&tx, &page.slug)?;
         if let Some(existing) = existing.as_ref() {
             tokio::runtime::Handle::current().block_on(crate::wiki_materialize::record_stored(
@@ -48,7 +53,7 @@ pub(crate) async fn save_filed(
         crate::wiki_page_files::upsert(&tx, &stored, &sha, now)?;
         save(&tx, topic, &page, &time::stamp(now))?;
         tx.commit().map_err(query)?;
-        Ok(())
+        Ok(true)
     })
     .await
 }

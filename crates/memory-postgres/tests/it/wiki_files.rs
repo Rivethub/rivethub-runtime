@@ -35,6 +35,24 @@ async fn page_files_match_sqlite(pool: PgPool) -> TestResult {
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_late_sweep_keeps_the_entity_page(pool: PgPool) -> TestResult {
+    let wiki = tempfile::tempdir()?;
+    sqlx::query(
+        "INSERT INTO rh_conversations (id, session_key, agent, title, owner_user_id)
+         VALUES ($1, 'claude-code:page-race', 'rivet', 'page race', 'owner')",
+    )
+    .bind(uuid::Uuid::parse_str(CONVERSATION)?)
+    .execute(&pool)
+    .await?;
+    let root = std::fs::canonicalize(wiki.path())?;
+    let store = PostgresMemory::new(pool).with_wiki_directory(root.clone());
+    Scope::Maintenance
+        .run(async { testkit::wiki_files::a_late_sweep_keeps_the_entity_page(&store, &root).await })
+        .await?;
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn removing_a_missing_file_in_a_new_repository_deletes_the_row(pool: PgPool) -> TestResult {
     let wiki = tempfile::tempdir()?;
     let root = std::fs::canonicalize(wiki.path())?;

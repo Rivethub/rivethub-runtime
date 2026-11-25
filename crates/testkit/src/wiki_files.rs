@@ -22,19 +22,12 @@ use kernel::wiki::consolidate::WikiConsolidateStore;
 use kernel::wiki::consolidate::WikiFold;
 use kernel::wiki::entity_pass::EntityStore;
 use kernel::wiki::entity_pass::EntityView;
-use kernel::wiki::entity_pass::ExtractEntities;
-use kernel::wiki::entity_pass::FactState;
-use kernel::wiki::entity_pass::PreparedEntity;
-use kernel::wiki::entity_pass::PreparedFact;
-use kernel::wiki::entity_pass::PreparedHistory;
 use kernel::wiki::entity_pass::PublishOutcome;
-use kernel::wiki::entity_pass::StoredRewrite;
 use kernel::wiki::page::FoldMark;
 use kernel::wiki::page::WikiAction;
 use kernel::wiki::page::WikiPatch;
 use kernel::wiki::page::WikiSlug;
 use uuid::Uuid;
-use wire::time::TimestampFormat as _;
 
 use crate::topics::Outcome;
 
@@ -285,6 +278,12 @@ pub use cover::FAILED_SENTENCE;
 pub use cover::commit_failure_keeps_rows;
 pub use cover::stale_publish_keeps_the_file;
 
+#[path = "wiki_file_race.rs"]
+mod race;
+
+pub use race::RacingEntity;
+pub use race::a_late_sweep_keeps_the_entity_page;
+
 pub async fn publish_entity(
     store: &impl PageFileStore,
     summary: &str,
@@ -293,59 +292,8 @@ pub async fn publish_entity(
     sentence: &str,
     when: &str,
 ) -> Result<EntityView, Box<dyn std::error::Error>> {
-    write_leaf(store, summary, prose, when).await?;
-    let id = uid(summary)?;
-    let conversation = uid(CONVERSATION)?;
-    let leaf = match store
-        .entity_work(&ExtractEntities {
-            summary_id: id,
-            conversation_id: Some(conversation),
-            session_at: None,
-        })
-        .await?
-    {
-        kernel::wiki::entity_pass::EntityWork::Pending(leaf) => leaf,
-        kernel::wiki::entity_pass::EntityWork::Complete { entities } => {
-            return Err(format!("summary {summary} was already an entity: {entities:?}").into());
-        }
-    };
-    let view = store
-        .commit(
-            std::slice::from_ref(&leaf),
-            &PreparedEntity {
-                entity_ref: None,
-                name: name.to_owned(),
-                type_name: "Tools".to_owned(),
-                aliases: Vec::new(),
-                facts: Vec::new(),
-                history: Vec::new(),
-            },
-            at(when)?,
-        )
-        .await?
-        .ok_or("entity commit was skipped")?;
-    let body = StoredRewrite {
-        summary: prose.to_owned(),
-        article: format!("{prose} Kept on the bench."),
-        facts: vec![PreparedFact {
-            attribute: "place".to_owned(),
-            value: "bench".to_owned(),
-            as_of: at(when)?,
-            status: FactState::Current,
-            summary_id: id,
-            conversation_id: Some(conversation),
-        }],
-        history: Some(PreparedHistory {
-            summary_id: id,
-            conversation_id: Some(conversation),
-            session_on: at(when)?.utc_date(),
-            sentence: sentence.to_owned(),
-        }),
-        owner: crate::OWNER.to_owned(),
-        session_at: at(when)?,
-        session_id: id,
-        evidence: sentence.to_owned(),
-    };
+    let view = race::commit_entity(store, summary, name, prose, when).await?;
+    let body = race::entity_rewrite(summary, prose, sentence, when)?;
     let mut lease = store.lease_entity(view.id).await?;
     let published = lease.apply(&body, at(when)?).await?;
     lease.release().await?;

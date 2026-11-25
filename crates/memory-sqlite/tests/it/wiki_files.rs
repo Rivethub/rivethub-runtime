@@ -24,6 +24,19 @@ async fn page_files_match_postgres() -> TestResult {
     Ok(())
 }
 
+#[tokio::test]
+async fn a_late_sweep_keeps_the_entity_page() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let database = dir.path().join("memory.sqlite");
+    migrate::sqlite(&database)?;
+    let wiki = dir.path().join("wiki");
+    std::fs::create_dir(&wiki)?;
+    seed(&database)?;
+    let store = SqliteStore::open(&database)?.with_wiki_directory(wiki.clone());
+    testkit::wiki_files::a_late_sweep_keeps_the_entity_page(&store, &wiki).await?;
+    Ok(())
+}
+
 fn seed(database: &Path) -> TestResult {
     let conn = rusqlite::Connection::open(database)?;
     conn.execute(

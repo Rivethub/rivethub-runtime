@@ -19,6 +19,7 @@ use kernel::wiki::page::WikiSlug;
 use memory_postgres::PostgresMemory;
 use memory_postgres::time::PgTimestamp;
 use sqlx::PgPool;
+use testkit::wiki_files::RacingEntity;
 use uuid::Uuid;
 use wire::time::TimestampFormat as _;
 
@@ -640,6 +641,44 @@ async fn an_entity_write_names_the_page_key_it_wrote(pool: PgPool) -> TestResult
         })
         .await?;
     assert_eq!(bound.as_deref(), Some("coco-cocobox"));
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_late_sweep_keeps_another_scopes_entity_page(pool: PgPool) -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let memory = shared_memory(&pool, directory.path()).await?;
+    let entity = Uuid::new_v4();
+    let (conversation, leaf) = seed_session(&pool, "coco").await?;
+    seed_entity(&pool, entity, "cocobox", "coco").await?;
+    let racing = RacingEntity::new(
+        &memory,
+        entity,
+        rewrite(leaf, conversation, "coco"),
+        at("2026-11-07T01:00:00Z"),
+    );
+
+    Scope::Maintenance
+        .run(sync_topic_page(
+            &memory,
+            &racing,
+            &memory,
+            &SyncTopicPage::topic(TopicId::from_uuid(entity)),
+            SweepOwners::All,
+            at("2026-11-07T02:00:00Z"),
+        ))
+        .await?;
+
+    assert!(racing.fired(), "the entity builder ran inside the sweep");
+    assert_eq!(
+        pages(&pool).await?,
+        vec![stored("coco-cocobox", "coco", "GPU host.", Some(entity))]
+    );
+    let file = std::fs::read_to_string(directory.path().join("users/coco/topics/cocobox.md"))?;
+    assert!(
+        file.contains("GPU host."),
+        "the sweep blanked the file: {file}"
+    );
     Ok(())
 }
 

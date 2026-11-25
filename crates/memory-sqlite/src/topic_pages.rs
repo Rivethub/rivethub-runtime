@@ -64,21 +64,18 @@ impl TopicPageStore for SqliteStore {
         page: &TopicPage,
         now: Timestamp,
     ) -> Result<(), WikiStoreError> {
-        let origin = kernel::wiki::origin::NoteOrigin::current();
-        if let Some(root) = self.wiki_directory() {
-            return crate::topic_write::save_filed(self, root, topic, page, now, origin).await;
-        }
-        let page = page.clone();
-        blocking(self, move |conn| {
-            let tx = crate::summary_replace::immediate(conn).map_err(query)?;
-            if let Some(id) = origin {
-                crate::summary_replace::shared(&tx, id)
-                    .map_err(crate::wiki_builder::fence_error)?;
-            }
-            save(&tx, topic, &page, &time::stamp(now))?;
-            tx.commit().map_err(query)
-        })
-        .await
+        write_topic_page(self, topic, page, Claim::Overwrite, now)
+            .await
+            .map(drop)
+    }
+
+    async fn create_topic_page(
+        &self,
+        topic: TopicId,
+        page: &TopicPage,
+        now: Timestamp,
+    ) -> Result<bool, WikiStoreError> {
+        write_topic_page(self, topic, page, Claim::Vacant, now).await
     }
 
     async fn edit_page(
@@ -244,6 +241,60 @@ impl TopicPageStore for SqliteStore {
             crate::topic_write::delete_topic(conn, &slug)
         })
         .await
+    }
+}
+
+async fn write_topic_page(
+    store: &SqliteStore,
+    topic: TopicId,
+    page: &TopicPage,
+    claim: Claim,
+    now: Timestamp,
+) -> Result<bool, WikiStoreError> {
+    if let Some(root) = store.wiki_directory() {
+        return crate::topic_write::save_filed(store, root, topic, page, now, claim).await;
+    }
+    let origin = kernel::wiki::origin::NoteOrigin::current();
+    let page = page.clone();
+    blocking(store, move |conn| {
+        let tx = crate::summary_replace::immediate(conn).map_err(query)?;
+        if let Some(id) = origin {
+            crate::summary_replace::shared(&tx, id).map_err(crate::wiki_builder::fence_error)?;
+        }
+        if !claim.allows(&tx, topic, &page.slug)? {
+            return Ok(false);
+        }
+        save(&tx, topic, &page, &time::stamp(now))?;
+        tx.commit().map_err(query)?;
+        Ok(true)
+    })
+    .await
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Claim {
+    Overwrite,
+    Vacant,
+}
+
+impl Claim {
+    pub(crate) fn allows(
+        self,
+        conn: &Connection,
+        topic: TopicId,
+        slug: &WikiSlug,
+    ) -> Result<bool, WikiStoreError> {
+        if matches!(self, Self::Overwrite) {
+            return Ok(true);
+        }
+        conn.query_row(
+            "SELECT NOT EXISTS (SELECT 1 FROM ros_wiki_topics WHERE slug = ?1)
+                AND NOT EXISTS (SELECT 1 FROM ros_wiki_redirects WHERE from_slug = ?1)
+                AND NOT EXISTS (SELECT 1 FROM rh_topic_pages WHERE topic_id = ?2)",
+            params![slug.as_ref(), topic.to_string()],
+            |row| row.get(0),
+        )
+        .map_err(query)
     }
 }
 
