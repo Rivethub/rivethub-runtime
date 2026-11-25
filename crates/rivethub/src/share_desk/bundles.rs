@@ -7,13 +7,17 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use capture::bundle::Sealed;
+use capture::sanitize::LocalReview;
 use capture::sanitize::Report;
+use capture::sanitize::Restored;
 use capture::seal::MAX_BUNDLE_BYTES;
+use capture::share::BundlePaths;
 use kernel::memory::share::desk::BundleName;
 use kernel::memory::share::desk::DeskError;
 use kernel::memory::share::desk::Draft;
 use kernel::memory::share::desk::ReadyBundle;
 use uuid::Uuid;
+use wire::capture::ReviewStamp;
 use wire::capture::Sanitization;
 use wire::capture::SessionBundle;
 
@@ -90,6 +94,7 @@ struct Ready {
     open: u32,
     at: Timestamp,
     policy_sha256: String,
+    review: Option<ReviewStamp>,
 }
 
 fn load(path: PathBuf) -> Result<Ready, Unready> {
@@ -100,8 +105,10 @@ fn load(path: PathBuf) -> Result<Ready, Unready> {
     let file = BundleFile::of(path, &metadata);
     let text = read(&file)?;
     let bundle = capture::bundle::parse(std::str::from_utf8(&text)?)?;
-    let (at, policy_sha256) = match &bundle.manifest.sanitization {
-        Sanitization::Sanitized(stamp) => (stamp.at, stamp.policy_sha256.clone()),
+    let (at, policy_sha256, review) = match &bundle.manifest.sanitization {
+        Sanitization::Sanitized(stamp) => {
+            (stamp.at, stamp.policy_sha256.clone(), stamp.review.clone())
+        }
         Sanitization::Raw => return Err(Unready::Raw),
     };
     let flags = capture::sanitize::open_flags(&bundle)?;
@@ -113,6 +120,7 @@ fn load(path: PathBuf) -> Result<Ready, Unready> {
         bundle,
         at,
         policy_sha256,
+        review,
     })
 }
 
@@ -198,6 +206,37 @@ pub(super) async fn forget(file: Option<BundleFile>) {
     }
 }
 
+async fn sibling(path: &Path) -> Result<Option<Vec<u8>>, DeskError> {
+    match tokio::fs::read(path).await {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(super::failed(error)),
+    }
+}
+
+async fn reviewed(
+    dir: &Path,
+    name: &BundleName,
+    review: &ReviewStamp,
+    at: Timestamp,
+) -> Result<Option<(LocalReview, Restored)>, DeskError> {
+    let paths = BundlePaths::beside(&dir.join(format!("{name}{EXTENSION}")));
+    let (Some(report), Some(local)) = (sibling(&paths.report).await?, sibling(&paths.local).await?)
+    else {
+        return Ok(None);
+    };
+    let refused = |error: &dyn std::fmt::Display| {
+        DeskError::Refused(format!(
+            "the review files beside {name} cannot be used: {error}"
+        ))
+    };
+    let local: LocalReview = serde_json::from_slice(&local).map_err(|error| refused(&error))?;
+    let report = String::from_utf8(report).map_err(|error| refused(&error))?;
+    let restored =
+        capture::sanitize::restore(review, at, &local, &report).map_err(|error| refused(&error))?;
+    Ok(Some((local, restored)))
+}
+
 impl NodeDesk {
     pub(super) async fn draft_from(&self, name: &BundleName) -> Result<Draft, DeskError> {
         let path = self.share_dir.join(format!("{name}{EXTENSION}"));
@@ -211,11 +250,21 @@ impl NodeDesk {
                     super::failed(unready)
                 }
             })?;
-        if ready.open > 0 {
-            return Err(DeskError::BundleFlags {
-                open: usize::try_from(ready.open).map_err(super::failed)?,
-            });
-        }
+        let reviewed = match &ready.review {
+            Some(review) if !review.flags.is_empty() => {
+                reviewed(&self.share_dir, name, review, ready.at).await?
+            }
+            Some(_) | None => None,
+        };
+        let (local, decision, resolved) = match reviewed {
+            Some((local, restored)) => (Some(local), Some(restored.decision), restored.resolved),
+            None if ready.open > 0 => {
+                return Err(DeskError::BundleFlags {
+                    open: usize::try_from(ready.open).map_err(super::failed)?,
+                });
+            }
+            None => (None, None, BTreeMap::new()),
+        };
         let conversations = ready
             .bundle
             .sessions
@@ -234,7 +283,7 @@ impl NodeDesk {
             changes: Vec::new(),
             collisions: Vec::new(),
             rechecked: 0,
-            decision: None,
+            decision,
         };
         reservation.commit(
             DraftState {
@@ -243,9 +292,9 @@ impl NodeDesk {
                     bundle: ready.bundle,
                     text: ready.text,
                 },
-                local: None,
+                local,
                 report,
-                resolved: BTreeMap::new(),
+                resolved,
                 conversations,
                 file: Some(ready.file),
             },

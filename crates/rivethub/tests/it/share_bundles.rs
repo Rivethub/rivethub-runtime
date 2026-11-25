@@ -2,7 +2,11 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
 
 use kernel::memory::share::desk::BundleName;
+use kernel::memory::share::desk::Delivery;
 use kernel::memory::share::desk::DeskError;
+use kernel::memory::share::desk::FlagChoice;
+use kernel::memory::share::desk::FlagState;
+use kernel::memory::share::desk::Mark;
 use kernel::memory::share::desk::PushRequest;
 use kernel::memory::share::desk::SendConfirm;
 use kernel::memory::share::desk::ServerKind;
@@ -10,6 +14,7 @@ use kernel::memory::share::desk::ShareDesk as _;
 use rivethub::share_desk::NodeDesk;
 
 use crate::sessions::Node;
+use crate::sessions::RISKY;
 use crate::sessions::TestResult;
 use crate::sessions::call;
 use crate::sessions::chosen;
@@ -30,7 +35,14 @@ fn share_dir(node: &Node) -> PathBuf {
     node.home.path().join(".local/share/rivethub/share")
 }
 
-async fn sanitize(node: &Node, ids: &[&str], out: &str, decide: bool) -> TestResult {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Review {
+    Off,
+    Advise,
+    Block,
+}
+
+async fn sanitize(node: &Node, ids: &[&str], out: &str, review: Review) -> TestResult {
     let chosen: Vec<String> = ids
         .iter()
         .map(|id| format!(r#"{{"id":"{id}","decision":"approve"}}"#))
@@ -39,8 +51,10 @@ async fn sanitize(node: &Node, ids: &[&str], out: &str, decide: bool) -> TestRes
         &node.server(false)?,
         "session_sanitize",
         &format!(
-            r#"{{"sessions":[{}],"out":"{out}","decide":{decide}}}"#,
-            chosen.join(",")
+            r#"{{"sessions":[{}],"out":"{out}","decide":{},"block":{}}}"#,
+            chosen.join(","),
+            review != Review::Off,
+            review == Review::Block
         ),
     )
     .await?;
@@ -84,8 +98,8 @@ async fn only_sanitized_bundles_are_listed_as_ready() -> TestResult {
     let desk = desk(&dana, false)?;
     assert_eq!(listed(&desk).await?, Vec::new(), "no share folder yet");
 
-    sanitize(&dana, &[&alpha, &gamma], "ready.json", false).await?;
-    sanitize(&dana, &[&gamma], "flagged.json", true).await?;
+    sanitize(&dana, &[&alpha, &gamma], "ready.json", Review::Off).await?;
+    sanitize(&dana, &[&gamma], "flagged.json", Review::Advise).await?;
     raw_copy(&dana, "ready.json", "raw.json")?;
     let share = share_dir(&dana);
     std::fs::write(share.join("junk.json"), "not a bundle")?;
@@ -122,10 +136,19 @@ async fn only_sanitized_bundles_are_listed_as_ready() -> TestResult {
             "{refused}: {drafted:?}"
         );
     }
-    let flagged = desk.draft_bundle(name("flagged")?).await;
+    let flagged = desk.draft_bundle(name("flagged")?).await?;
+    assert_eq!(flagged.open_flags(), 1);
+    let flag = flagged.flags.first().ok_or("the flag is shown")?;
+    assert_eq!(flag.state, FlagState::Open);
+    assert!(flag.score > 0.0, "{}", flag.score);
+    assert!(flag.text.as_str().contains(RISKY), "{flag:?}");
+    assert!(flagged.decision.is_some());
+
+    std::fs::copy(share.join("flagged.json"), share.join("orphan.json"))?;
+    let orphan = desk.draft_bundle(name("orphan")?).await;
     assert!(
-        matches!(flagged, Err(DeskError::BundleFlags { open: 1 })),
-        "{flagged:?}"
+        matches!(orphan, Err(DeskError::BundleFlags { open: 1 })),
+        "a bundle without its review files cannot be reviewed: {orphan:?}"
     );
     model.close().await?;
     Ok(())
@@ -145,7 +168,7 @@ async fn a_listed_bundle_pushes_to_a_hub_and_only_the_bundle_file_goes() -> Test
     let dana = Node::new("dana", "http://127.0.0.1:9", &sessions()).await?;
     let (alpha, gamma, _) = chosen(&dana)?;
     let desk = desk(&dana, false)?;
-    sanitize(&dana, &[&alpha, &gamma], "ready.json", false).await?;
+    sanitize(&dana, &[&alpha, &gamma], "ready.json", Review::Off).await?;
     add_hub(&dana, &host)?;
     team_login(&dana, &host)?;
     let share = share_dir(&dana);
@@ -211,6 +234,68 @@ async fn a_listed_bundle_pushes_to_a_hub_and_only_the_bundle_file_goes() -> Test
 }
 
 #[tokio::test]
+async fn a_withheld_flag_in_a_bundle_is_marked_on_the_desk_then_pushed() -> TestResult {
+    let model = model().await?;
+    let captured = Pushes::default();
+    let hub = testkit::stub_server(
+        axum::Router::new()
+            .route("/api/me", axum::routing::get(hub_me))
+            .route("/api/capture", axum::routing::post(hub_capture))
+            .with_state(captured.clone()),
+    )
+    .await?;
+    let host = hub.addr.to_string();
+    let dana = Node::new("dana", &format!("http://{}", model.addr), &sessions()).await?;
+    let (_, gamma, _) = chosen(&dana)?;
+    let desk = desk(&dana, false)?;
+    sanitize(&dana, &[&gamma], "held.json", Review::Block).await?;
+    add_hub(&dana, &host)?;
+    team_login(&dana, &host)?;
+    let share = share_dir(&dana);
+    let confirm = PushRequest {
+        hub: "team".to_owned().into(),
+        confirm: SendConfirm {
+            sessions: 1,
+            kept_flags: 0,
+        },
+    };
+
+    let draft = desk.draft_bundle(name("held")?).await?;
+    assert_eq!(draft.open_flags(), 1);
+    let refused = desk.push(draft.id, confirm.clone()).await;
+    assert!(
+        matches!(refused, Err(DeskError::OpenFlags { open: 1 })),
+        "{refused:?}"
+    );
+    let marked = desk
+        .mark(
+            draft.id,
+            vec![Mark {
+                number: 1,
+                choice: FlagChoice::Redact,
+                learn: false,
+            }],
+        )
+        .await?;
+    assert_eq!(marked.draft.open_flags(), 0);
+    desk.push(draft.id, confirm).await?;
+
+    let seen = captured.0.lock().clone();
+    let text = serde_json::to_string(&seen.iter().map(|(_, batch)| batch).collect::<Vec<_>>())?;
+    assert!(text.contains("[REDACTED:flagged]"), "{text}");
+    assert!(!text.contains(RISKY), "{text}");
+    assert!(!text.contains("[FLAGGED:"), "{text}");
+    assert!(
+        !share.join("held.json").exists(),
+        "the shared bundle is removed"
+    );
+    assert!(share.join("held.review.local.json").exists());
+    model.close().await?;
+    hub.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_bundle_sent_to_a_drop_box_is_removed_unless_it_changed() -> TestResult {
     let drops = Drops::default();
     let drop_box = testkit::stub_server(
@@ -224,8 +309,8 @@ async fn a_bundle_sent_to_a_drop_box_is_removed_unless_it_changed() -> TestResul
     let (alpha, gamma, _) = chosen(&dana)?;
     let desk = desk(&dana, false)?;
     sign_in(&dana, &host)?;
-    sanitize(&dana, &[&alpha], "one.json", false).await?;
-    sanitize(&dana, &[&gamma], "two.json", false).await?;
+    sanitize(&dana, &[&alpha], "one.json", Review::Off).await?;
+    sanitize(&dana, &[&gamma], "two.json", Review::Off).await?;
     let share = share_dir(&dana);
 
     let one = desk.draft_bundle(name("one")?).await?;
@@ -280,15 +365,23 @@ fn policy(node: &Node, allowed: &[&str]) -> TestResult {
     Ok(())
 }
 
-async fn origins(desk: &NodeDesk) -> TestResult<(Vec<(String, ServerKind)>, bool)> {
+type Shown = (String, ServerKind, Delivery);
+
+async fn origins(desk: &NodeDesk) -> TestResult<(Vec<Shown>, bool)> {
     let servers = desk.servers().await?;
-    let mut shown: Vec<(String, ServerKind)> = servers
+    let mut shown: Vec<Shown> = servers
         .servers
         .into_iter()
-        .map(|server| (server.origin.to_string(), server.kind))
+        .map(|server| (server.origin.to_string(), server.kind, server.delivery))
         .collect();
     shown.sort_by(|a, b| a.0.cmp(&b.0));
     Ok((shown, servers.cloud_disabled))
+}
+
+fn push(hub: &str) -> Delivery {
+    Delivery::Push {
+        hub: hub.to_owned(),
+    }
 }
 
 #[tokio::test]
@@ -305,15 +398,29 @@ async fn servers_the_share_policy_refuses_are_not_offered() -> TestResult {
             ("rivethub.cloud", device),
             (team, member),
             ("other.example:8443", member),
+            ("hub.example:9443", device),
         ],
     )?;
     assert_eq!(
         origins(&desk).await?,
         (
             vec![
-                (team.to_owned(), ServerKind::Team),
-                ("other.example:8443".to_owned(), ServerKind::Team),
-                ("rivethub.cloud".to_owned(), ServerKind::Cloud),
+                (team.to_owned(), ServerKind::Team, push("team")),
+                (
+                    "hub.example:9443".to_owned(),
+                    ServerKind::Cloud,
+                    push("hub.example:9443")
+                ),
+                (
+                    "other.example:8443".to_owned(),
+                    ServerKind::Team,
+                    push("other.example:8443")
+                ),
+                (
+                    "rivethub.cloud".to_owned(),
+                    ServerKind::Cloud,
+                    Delivery::Code
+                ),
             ],
             false
         )
@@ -322,7 +429,10 @@ async fn servers_the_share_policy_refuses_are_not_offered() -> TestResult {
     policy(&dana, &[team])?;
     assert_eq!(
         origins(&desk).await?,
-        (vec![(team.to_owned(), ServerKind::Team)], true)
+        (
+            vec![(team.to_owned(), ServerKind::Team, push("team"))],
+            true
+        )
     );
     Ok(())
 }

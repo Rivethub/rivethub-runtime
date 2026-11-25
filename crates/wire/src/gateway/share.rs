@@ -369,6 +369,14 @@ pub struct ServerView {
     pub user: Option<String>,
     pub signed_in: bool,
     pub default: bool,
+    pub delivery: Delivery,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Delivery {
+    Push,
+    Code,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

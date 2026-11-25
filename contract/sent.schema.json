@@ -2022,6 +2022,13 @@
       ],
       "type": "object"
     },
+    "Delivery": {
+      "enum": [
+        "push",
+        "code"
+      ],
+      "type": "string"
+    },
     "DraftReport": {
       "properties": {
         "best_effort": {
@@ -8605,6 +8612,9 @@
         "default": {
           "type": "boolean"
         },
+        "delivery": {
+          "$ref": "#/$defs/Delivery"
+        },
         "hub": {
           "type": [
             "string",
@@ -8631,7 +8641,8 @@
         "origin",
         "kind",
         "signed_in",
-        "default"
+        "default",
+        "delivery"
       ],
       "type": "object"
     },

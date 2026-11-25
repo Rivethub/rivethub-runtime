@@ -4,6 +4,7 @@ mod local;
 mod places;
 mod render;
 mod resolve;
+mod restore;
 mod slots;
 
 use jiff::Timestamp;
@@ -33,6 +34,9 @@ pub use resolve::ResolveError;
 pub(super) use resolve::marks;
 pub(super) use resolve::render;
 pub(super) use resolve::restamped;
+pub use restore::RestoreError;
+pub use restore::Restored;
+pub use restore::restore;
 pub use slots::BaseValue;
 pub use slots::FieldAt;
 pub use slots::FieldName;

@@ -25,16 +25,23 @@ pub(super) async fn list(
         servers: servers
             .servers
             .into_iter()
-            .map(|server| body::ServerView {
-                origin: server.origin.to_string(),
-                kind: match server.kind {
-                    desk::ServerKind::Cloud => body::ServerKind::Cloud,
-                    desk::ServerKind::Team => body::ServerKind::Team,
-                },
-                hub: server.hub,
-                user: server.user,
-                signed_in: server.signed_in,
-                default: server.default,
+            .map(|server| {
+                let (delivery, hub) = match server.delivery {
+                    desk::Delivery::Push { hub } => (body::Delivery::Push, Some(hub)),
+                    desk::Delivery::Code => (body::Delivery::Code, None),
+                };
+                body::ServerView {
+                    origin: server.origin.to_string(),
+                    kind: match server.kind {
+                        desk::ServerKind::Cloud => body::ServerKind::Cloud,
+                        desk::ServerKind::Team => body::ServerKind::Team,
+                    },
+                    hub,
+                    user: server.user,
+                    signed_in: server.signed_in,
+                    default: server.default,
+                    delivery,
+                }
             })
             .collect(),
         cloud_disabled: servers.cloud_disabled,

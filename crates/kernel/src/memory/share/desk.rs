@@ -487,10 +487,16 @@ pub enum TokenStore {
 pub struct ServerView {
     pub origin: ServerOrigin,
     pub kind: ServerKind,
-    pub hub: Option<String>,
+    pub delivery: Delivery,
     pub user: Option<String>,
     pub signed_in: bool,
     pub default: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Delivery {
+    Push { hub: String },
+    Code,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -542,7 +548,7 @@ pub enum DeskError {
     )]
     UnknownBundle,
     #[error(
-        "the bundle still has {open} open flags; resolve them with rh memory sanitize --resolve on its report, then share it"
+        "the bundle has {open} open flags, but its report or local review file is missing, so they cannot be reviewed; sanitize the sessions again"
     )]
     BundleFlags { open: usize },
     #[error("rh already holds {MAX_DRAFTS} drafts or 256 MiB of them; send or discard one first")]

@@ -13,6 +13,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse as _;
 use kernel::memory::share::Decision;
 use kernel::memory::share::SessionChoices;
+use kernel::memory::share::desk::Delivery;
 use kernel::memory::share::desk::DeskError;
 use kernel::memory::share::desk::DraftId;
 use kernel::memory::share::desk::DraftRequest;
@@ -914,17 +915,14 @@ pub(crate) fn team_login(node: &Node, host: &str) -> TestResult {
     Ok(())
 }
 
-async fn hub_view(
-    desk: &NodeDesk,
-    host: &str,
-) -> TestResult<(Option<String>, bool, Option<String>)> {
+async fn hub_view(desk: &NodeDesk, host: &str) -> TestResult<(Delivery, bool, Option<String>)> {
     let listed = desk.servers().await?;
     let shown = listed
         .servers
         .into_iter()
         .find(|server| server.origin.as_str() == host)
         .ok_or("the hub is listed")?;
-    Ok((shown.hub, shown.signed_in, shown.user))
+    Ok((shown.delivery, shown.signed_in, shown.user))
 }
 
 #[tokio::test]
@@ -943,14 +941,14 @@ async fn the_desk_lists_a_connected_hub_and_pushes_a_draft_to_it() -> TestResult
     let (alpha, gamma, _) = chosen(&dana)?;
     let desk = desk(&dana, false)?;
     add_hub(&dana, &host)?;
-    assert_eq!(
-        hub_view(&desk, &host).await?,
-        (Some("team".to_owned()), false, None)
-    );
+    let team = Delivery::Push {
+        hub: "team".to_owned(),
+    };
+    assert_eq!(hub_view(&desk, &host).await?, (team.clone(), false, None));
     team_login(&dana, &host)?;
     assert_eq!(
         hub_view(&desk, &host).await?,
-        (Some("team".to_owned()), true, Some("fay".to_owned()))
+        (team, true, Some("fay".to_owned()))
     );
 
     let draft = desk.draft(request(&[&alpha, &gamma], false)?).await?;

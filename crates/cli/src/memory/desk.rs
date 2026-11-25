@@ -14,6 +14,7 @@ use capture::sign::NodeKey;
 use capture::sign::PublicKey;
 use config::Environment;
 use config::MappingFile;
+use kernel::memory::share::desk::Delivery;
 use kernel::memory::share::desk::ServerKind;
 use kernel::memory::share::desk::ServerView;
 use kernel::memory::share::desk::Servers;
@@ -414,7 +415,7 @@ pub async fn servers(env: &Environment) -> Result<Servers, Error> {
         views.push(ServerView {
             origin: default.clone().into(),
             kind: ServerKind::Cloud,
-            hub: servers.hub_named(default),
+            delivery: delivery(&servers, Some(default), default, false),
             user: None,
             signed_in: false,
             default: true,
@@ -427,7 +428,12 @@ pub async fn servers(env: &Environment) -> Result<Servers, Error> {
         };
         views.push(ServerView {
             default: default.as_deref() == Some(host.as_str()),
-            hub: servers.hub_named(&host),
+            delivery: delivery(
+                &servers,
+                default.as_deref(),
+                &host,
+                kind == ServerKind::Team,
+            ),
             origin: host.into(),
             kind,
             user,
@@ -439,9 +445,9 @@ pub async fn servers(env: &Environment) -> Result<Servers, Error> {
         if views.iter().all(|view| view.origin.as_str() != host) {
             views.push(ServerView {
                 default: default.as_deref() == Some(host.as_str()),
-                origin: host.into(),
                 kind: ServerKind::Team,
-                hub: hub.name,
+                delivery: delivery(&servers, default.as_deref(), &host, true),
+                origin: host.into(),
                 user: None,
                 signed_in: false,
             });
@@ -461,6 +467,23 @@ pub async fn servers(env: &Environment) -> Result<Servers, Error> {
         logins_file: store.file().display().to_string(),
         token_store: store.kind(),
     })
+}
+
+fn delivery(servers: &ShareServers, default: Option<&str>, host: &str, team: bool) -> Delivery {
+    if let Some(name) = servers.hub_named(host) {
+        return Delivery::Push { hub: name };
+    }
+    let drop_box = default == Some(host)
+        || host
+            .parse::<ShareServer>()
+            .is_ok_and(|server| server.is_cloud());
+    if team || !drop_box {
+        Delivery::Push {
+            hub: host.to_owned(),
+        }
+    } else {
+        Delivery::Code
+    }
 }
 
 pub(crate) fn host_name() -> Result<String, Error> {

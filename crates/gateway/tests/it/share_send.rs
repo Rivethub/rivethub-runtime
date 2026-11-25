@@ -10,15 +10,15 @@ use axum::http::{Method, Request, StatusCode};
 use gateway::Gateway;
 use gateway::tenancy::{Tenancy, UserId};
 use kernel::memory::share::desk::{
-    BundleName, DeskError, Draft, DraftId, DraftRequest, DraftSession, DraftTotals, EscapedText,
-    FindQuery, FlagState, FlagView, Found, LoginId, LoginRequest, LoginStep, Mark, Marked,
-    NodeKeyView, PushRequest, Pushed, ReadyBundle, SendRequest, Sent, ServerOrigin, Servers,
-    ShareDesk, TokenStore,
+    BundleName, Delivery, DeskError, Draft, DraftId, DraftRequest, DraftSession, DraftTotals,
+    EscapedText, FindQuery, FlagState, FlagView, Found, LoginId, LoginRequest, LoginStep, Mark,
+    Marked, NodeKeyView, PushRequest, Pushed, ReadyBundle, SendRequest, Sent, ServerKind,
+    ServerOrigin, ServerView, Servers, ShareDesk, TokenStore,
 };
 use parking_lot::Mutex;
 use tower::ServiceExt as _;
 use uuid::Uuid;
-use wire::gateway::share::{DraftReport, RefusalReason, ServersReply, ShareRefusal};
+use wire::gateway::share::{DraftReport, RefusalReason, ShareRefusal};
 use wire::plugin::manifest::Permission;
 
 use crate::common;
@@ -161,7 +161,26 @@ impl ShareDesk for FakeDesk {
     async fn servers(&self) -> Result<Servers, DeskError> {
         self.enter("servers")?;
         Ok(Servers {
-            servers: Vec::new(),
+            servers: vec![
+                ServerView {
+                    origin: ServerOrigin::from("hub.example:8443".to_owned()),
+                    kind: ServerKind::Cloud,
+                    delivery: Delivery::Push {
+                        hub: "team".to_owned(),
+                    },
+                    user: None,
+                    signed_in: true,
+                    default: false,
+                },
+                ServerView {
+                    origin: ServerOrigin::from("drops.example".to_owned()),
+                    kind: ServerKind::Cloud,
+                    delivery: Delivery::Code,
+                    user: Some("fay".to_owned()),
+                    signed_in: false,
+                    default: true,
+                },
+            ],
             cloud_disabled: true,
             logins_file: "share-logins.json".to_owned(),
             token_store: TokenStore::File,
@@ -754,9 +773,10 @@ async fn ready_bundles_and_the_cloud_policy_reach_the_wire_by_name() -> TestResu
     )
     .await?;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(body.contains(r#""cloud_disabled":true"#), "{body}");
-    let servers: ServersReply = serde_json::from_str(&body)?;
-    assert!(servers.cloud_disabled);
+    assert_eq!(
+        body,
+        r#"{"servers":[{"origin":"hub.example:8443","kind":"cloud","hub":"team","signed_in":true,"default":false,"delivery":"push"},{"origin":"drops.example","kind":"cloud","user":"fay","signed_in":false,"default":true,"delivery":"code"}],"cloud_disabled":true,"logins_file":"share-logins.json","token_store":"file"}"#
+    );
     assert_eq!(desk.calls(), ["bundles", "draft_bundle", "servers"]);
     Ok(())
 }
