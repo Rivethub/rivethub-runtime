@@ -256,7 +256,7 @@ impl EntityStore for PostgresMemory {
         now: Timestamp,
     ) -> Result<PublishOutcome, EntityStoreError> {
         let mut conn = self.pool.acquire().await.map_err(query_error)?.detach();
-        let home = entity_home(self, &mut conn, view.id).await?;
+        let home = entity_home(&mut conn, view.id, self.wiki_primary()).await?;
         let mut tx = conn.begin().await.map_err(query_error)?;
         lock_view(&mut tx, view).await?;
         let directory = self.wiki_home(&home.directory).map_err(store_error)?;
@@ -282,7 +282,7 @@ impl EntityStore for PostgresMemory {
             .execute(&mut conn)
             .await
             .map_err(query_error)?;
-        let home = entity_home(self, &mut conn, id).await?;
+        let home = entity_home(&mut conn, id, self.wiki_primary()).await?;
         let directory = self.wiki_home(&home.directory).map_err(store_error)?;
         Ok(Box::new(PgLease {
             conn: Some(conn),
@@ -500,9 +500,8 @@ impl EntityStore for PostgresMemory {
         summary_replace::shared_visible(&mut tx, &ids)
             .await
             .map_err(fence_error)?;
-        let (merged, removed) = super::merge::merge_pair(&mut tx, left, right, now)
-            .await
-            .map_err(query_error)?;
+        let (merged, removed) =
+            super::merge::merge_pair(&mut tx, left, right, self.wiki_primary(), now).await?;
         tx.commit().await.map_err(query_error)?;
         if let Some(page) = removed
             && let Err(error) = super::page_file::remove_page_file(self, &page).await

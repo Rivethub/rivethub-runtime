@@ -22,6 +22,14 @@ impl WikiScope {
     pub(crate) fn primary(&self) -> bool {
         self.directory.is_empty()
     }
+
+    pub(crate) fn row_owner(&self) -> &str {
+        if self.visibility == PRIVATE {
+            &self.owner_user_id
+        } else {
+            &self.scope
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]

@@ -476,7 +476,10 @@ async fn lock_slugs(
     Ok(())
 }
 
-async fn lock_slug(tx: &mut Transaction<'_, Postgres>, slug: &str) -> Result<(), WikiStoreError> {
+pub(crate) async fn lock_slug(
+    tx: &mut Transaction<'_, Postgres>,
+    slug: &str,
+) -> Result<(), WikiStoreError> {
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
         .bind(slug)
         .execute(&mut **tx)

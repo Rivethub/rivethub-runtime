@@ -2,24 +2,28 @@ use jiff::Timestamp;
 use kernel::wiki::entity_match::host_party_mismatch;
 use kernel::wiki::entity_pass::ENTITY_LOCK_CLASS;
 use kernel::wiki::entity_pass::EntityMerge;
+use kernel::wiki::entity_pass::EntityStoreError;
 use kernel::wiki::entity_pass::attribute_key;
 use sqlx::Postgres;
 use sqlx::Transaction;
 use uuid::Uuid;
 
+use super::error::query_error;
 use super::page_file::PageFile;
-use super::page_file::absorbed_page;
 
 pub(super) async fn merge_pair(
     tx: &mut Transaction<'_, Postgres>,
     left: Uuid,
     right: Uuid,
+    primary: Option<&str>,
     now: Timestamp,
-) -> Result<(Option<EntityMerge>, Option<PageFile>), sqlx::Error> {
-    let found_left = load_side(tx, left).await?;
-    let found_right = load_side(tx, right).await?;
+) -> Result<(Option<EntityMerge>, Option<PageFile>), EntityStoreError> {
+    let found_left = load_side(tx, left).await.map_err(query_error)?;
+    let found_right = load_side(tx, right).await.map_err(query_error)?;
     match (found_left, found_right) {
-        (Some(left_side), Some(right_side)) => merge_both(tx, left_side, right_side, now).await,
+        (Some(left_side), Some(right_side)) => {
+            merge_both(tx, left_side, right_side, primary, now).await
+        }
         (Some(found), None) => Ok((already(found, right), None)),
         (None, Some(found)) => Ok((already(found, left), None)),
         (None, None) => Ok((None, None)),
@@ -30,8 +34,9 @@ async fn merge_both(
     tx: &mut Transaction<'_, Postgres>,
     left: TopicSide,
     right: TopicSide,
+    primary: Option<&str>,
     now: Timestamp,
-) -> Result<(Option<EntityMerge>, Option<PageFile>), sqlx::Error> {
+) -> Result<(Option<EntityMerge>, Option<PageFile>), EntityStoreError> {
     if left.kind != "entity" || right.kind != "entity" {
         return Ok((None, None));
     }
@@ -39,11 +44,19 @@ async fn merge_both(
         return Ok((None, None));
     }
     let (survivor, absorbed) = older(left, right);
-    move_rows(tx, survivor.id, absorbed.id).await?;
-    add_name_alias(tx, survivor.id, &absorbed.name).await?;
-    let removed = redirect_wiki(tx, &survivor, &absorbed, now).await?;
-    repoint(tx, survivor.id, absorbed.id, absorbed.parent_id).await?;
-    retire(tx, &survivor, &absorbed, now).await?;
+    move_rows(tx, survivor.id, absorbed.id)
+        .await
+        .map_err(query_error)?;
+    add_name_alias(tx, survivor.id, &absorbed.name)
+        .await
+        .map_err(query_error)?;
+    let removed = super::page_file::redirect_wiki(tx, &survivor, &absorbed, primary, now).await?;
+    repoint(tx, survivor.id, absorbed.id, absorbed.parent_id)
+        .await
+        .map_err(query_error)?;
+    retire(tx, &survivor, &absorbed, now)
+        .await
+        .map_err(query_error)?;
     Ok((
         Some(EntityMerge {
             survivor: survivor.id,
@@ -295,85 +308,6 @@ async fn move_embedding(
     Ok(())
 }
 
-async fn redirect_wiki(
-    tx: &mut Transaction<'_, Postgres>,
-    survivor: &TopicSide,
-    absorbed: &TopicSide,
-    now: Timestamp,
-) -> Result<Option<PageFile>, sqlx::Error> {
-    super::bind::bind_page(tx, survivor.id, &survivor.slug).await?;
-    if survivor.slug == absorbed.slug {
-        return Ok(None);
-    }
-    let removed = absorbed_page(tx, absorbed.id, &absorbed.slug).await?;
-    ensure_page(tx, survivor).await?;
-    copy_sources(tx, &absorbed.slug, &survivor.slug).await?;
-    sqlx::query("UPDATE rh_wiki_redirects SET to_slug = $2 WHERE to_slug = $1 AND from_slug <> $2")
-        .bind(&absorbed.slug)
-        .bind(&survivor.slug)
-        .execute(&mut **tx)
-        .await?;
-    sqlx::query("DELETE FROM rh_wiki_topics WHERE slug = $1")
-        .bind(&absorbed.slug)
-        .execute(&mut **tx)
-        .await?;
-    sqlx::query!(
-        "INSERT INTO rh_wiki_redirects (from_slug, to_slug, created_at, owner_user_id)
-         VALUES ($1, $2, $3, coalesce(rh_scope_principal(), nullif($4, '')))
-         ON CONFLICT (from_slug) DO UPDATE SET to_slug = EXCLUDED.to_slug,
-             created_at = EXCLUDED.created_at,
-             owner_user_id = coalesce(rh_wiki_redirects.owner_user_id, EXCLUDED.owner_user_id)",
-        absorbed.slug,
-        survivor.slug,
-        crate::time::BindTime::bind_time(now) as _,
-        absorbed.owner_user_id
-    )
-    .execute(&mut **tx)
-    .await?;
-    Ok(removed)
-}
-
-async fn ensure_page(
-    tx: &mut Transaction<'_, Postgres>,
-    survivor: &TopicSide,
-) -> Result<(), sqlx::Error> {
-    let owner = if survivor.owner_user_id.is_empty() {
-        "owner"
-    } else {
-        survivor.owner_user_id.as_str()
-    };
-    sqlx::query(
-        "INSERT INTO rh_wiki_topics (slug, title, topic_id, owner_user_id)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (slug) DO NOTHING",
-    )
-    .bind(&survivor.slug)
-    .bind(&survivor.name)
-    .bind(survivor.id)
-    .bind(owner)
-    .execute(&mut **tx)
-    .await?;
-    Ok(())
-}
-
-async fn copy_sources(
-    tx: &mut Transaction<'_, Postgres>,
-    from_slug: &str,
-    into_slug: &str,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(COPY_CITATIONS)
-        .bind(from_slug)
-        .bind(into_slug)
-        .execute(&mut **tx)
-        .await?;
-    sqlx::query(COPY_PROVENANCE)
-        .bind(from_slug)
-        .bind(into_slug)
-        .execute(&mut **tx)
-        .await?;
-    Ok(())
-}
-
 async fn repoint(
     tx: &mut Transaction<'_, Postgres>,
     survivor: Uuid,
@@ -500,14 +434,14 @@ async fn retire(
 }
 
 #[derive(Debug, sqlx::FromRow)]
-struct TopicSide {
-    id: Uuid,
-    name: String,
-    slug: String,
+pub(super) struct TopicSide {
+    pub(super) id: Uuid,
+    pub(super) name: String,
+    pub(super) slug: String,
     #[sqlx(try_from = "jiff_sqlx::Timestamp")]
     created_at: Timestamp,
     kind: String,
-    owner_user_id: String,
+    pub(super) owner_user_id: String,
     type_name: String,
     parent_id: Option<Uuid>,
 }
@@ -601,19 +535,6 @@ DELETE FROM rh_entity_embeddings AS absorbed_row
  USING rh_entity_embeddings AS survivor_row
  WHERE absorbed_row.entity_id = $2
    AND survivor_row.entity_id = $1";
-
-const COPY_CITATIONS: &str = "\
-INSERT INTO rh_wiki_citations (topic_slug, summary_id, kind, note, cited_at, owner_user_id)
-SELECT $2, summary_id, kind, note, cited_at, owner_user_id
-  FROM rh_wiki_citations WHERE topic_slug = $1
-ON CONFLICT DO NOTHING";
-
-const COPY_PROVENANCE: &str = "\
-INSERT INTO rh_wiki_provenance
-    (topic_slug, source_kind, source_id, conversation_id, git_sha, created_at, owner_user_id)
-SELECT $2, source_kind, source_id, conversation_id, git_sha, created_at, owner_user_id
-  FROM rh_wiki_provenance WHERE topic_slug = $1
-ON CONFLICT DO NOTHING";
 
 const FOREIGN_KEYS: &str = "\
 SELECT c.relname AS table_name, a.attname AS column_name
