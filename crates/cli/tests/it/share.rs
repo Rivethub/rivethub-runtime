@@ -693,6 +693,85 @@ async fn receive_keeps_ciphertext_on_failure() {
     );
 }
 
+async fn shared_ciphertext(served: &Served) -> (String, Vec<u8>) {
+    let outside = tempfile::tempdir().expect("outside");
+    let sender = Node::new("dana", &served.url, None);
+    sender.sign_in(&served.url);
+    let bundle = sanitized(&sender, outside.path(), None).await;
+    let shared = sender
+        .run(&["memory", "share", &bundle.display().to_string()])
+        .await;
+    let ciphertext = served
+        .drops
+        .0
+        .lock()
+        .bodies
+        .first()
+        .cloned()
+        .expect("the uploaded drop");
+    (code_of(&shared.stdout), ciphertext)
+}
+
+#[tokio::test]
+async fn a_recoverable_partial_is_received_without_a_download() {
+    let served = drop_box().await;
+    let (code, ciphertext) = shared_ciphertext(&served).await;
+    let receiver = Node::new("ines", &served.url, None);
+    std::fs::create_dir_all(receiver.inbox()).expect("inbox");
+    std::fs::write(
+        receiver.inbox().join(inbox_name(&served.url, "rcv")),
+        ciphertext,
+    )
+    .expect("partial");
+    let again = receiver
+        .run(&["memory", "receive", &code, "--dry-run"])
+        .await;
+    assert_eq!(again.exit, Exit::Ok, "{}", again.stderr);
+    assert!(again.stdout.starts_with("would import 1 session from dana"));
+    assert_eq!(served.drops.0.lock().gets, 0, "no download was needed");
+    served.stop.cancel();
+}
+
+#[tokio::test]
+async fn a_corrupt_ciphertext_does_not_hide_a_valid_recovery_copy() {
+    let served = drop_box().await;
+    let (code, ciphertext) = shared_ciphertext(&served).await;
+    let receiver = Node::new("ines", &served.url, None);
+    std::fs::create_dir_all(receiver.inbox()).expect("inbox");
+    let corrupt = receiver.inbox().join(inbox_name(&served.url, "age"));
+    let recovery = receiver.inbox().join(inbox_name(&served.url, "rcv"));
+    std::fs::write(&corrupt, b"not an age file").expect("corrupt");
+    std::fs::write(&recovery, &ciphertext).expect("recovery");
+    let again = receiver
+        .run(&["memory", "receive", &code, "--dry-run"])
+        .await;
+    assert_eq!(again.exit, Exit::Ok, "{}", again.stderr);
+    assert!(again.stdout.starts_with("would import 1 session from dana"));
+    assert!(again.stdout.contains(&recovery.display().to_string()));
+    assert_eq!(served.drops.0.lock().gets, 0, "no download was needed");
+    assert_eq!(std::fs::read(&corrupt).expect("kept"), b"not an age file");
+    assert_eq!(std::fs::read(&recovery).expect("kept"), ciphertext);
+    served.stop.cancel();
+}
+
+#[tokio::test]
+async fn a_recovery_copy_that_fails_the_key_check_is_not_promoted() {
+    let served = drop_box().await;
+    let (code, _) = shared_ciphertext(&served).await;
+    let receiver = Node::new("ines", &served.url, None);
+    std::fs::create_dir_all(receiver.inbox()).expect("inbox");
+    let promoted = receiver.inbox().join(inbox_name(&served.url, "age"));
+    let recovery = receiver.inbox().join(inbox_name(&served.url, "rcv"));
+    std::fs::write(&recovery, b"age-encryption.org/v1\nforged").expect("recovery");
+    let failed = receiver
+        .run(&["memory", "receive", &code, "--dry-run"])
+        .await;
+    assert_eq!(failed.exit, Exit::Failure, "{}", failed.stdout);
+    assert!(!promoted.exists(), "bad bytes were promoted");
+    assert!(recovery.exists(), "the candidate was discarded");
+    served.stop.cancel();
+}
+
 struct Gateway {
     owner: gateway::local_owner::OwnerToken,
     stop: CancellationToken,
