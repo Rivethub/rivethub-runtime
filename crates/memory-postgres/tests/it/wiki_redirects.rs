@@ -1,6 +1,7 @@
 use jiff::Timestamp;
 use kernel::tenancy::Scope;
 use kernel::topics::TopicPageStore as _;
+use kernel::wiki::builder::WikiStoreError;
 use kernel::wiki::page::WikiSlug;
 use memory_postgres::PostgresMemory;
 use sqlx::PgPool;
@@ -174,13 +175,26 @@ async fn an_upgrade_keeps_legacy_wiki_redirects_writable_by_the_page_owner(
     };
     before.run(&pool).await?;
     sqlx::raw_sql(
-        "INSERT INTO rh_wiki_topics (slug, title, owner_user_id) VALUES ('page', 'Page', 'alice');
+        "INSERT INTO rh_spaces (id, kind, name) VALUES ('shared', 'team', 'Shared');
+         INSERT INTO rh_wiki_topics (slug, title, owner_user_id, visibility)
+         VALUES ('page', 'Page', 'alice', 'private'),
+                ('space-page', 'Space Page', 'shared', 'shared'),
+                ('member-page', 'Member Page', 'alice', 'shared');
          INSERT INTO rh_wiki_redirects (from_slug, to_slug, owner_user_id)
-         VALUES ('legacy', 'page', NULL)",
+         VALUES ('legacy', 'page', NULL),
+                ('space-legacy', 'space-page', NULL),
+                ('member-legacy', 'member-page', NULL)",
     )
     .execute(&pool)
     .await?;
     migrate::postgres_pool(&pool).await?;
+    for from in ["space-legacy", "member-legacy"] {
+        assert_eq!(
+            redirect_row(&pool, from).await?.1,
+            None,
+            "an alias of a shared page stays maintenance-only: {from}"
+        );
+    }
 
     let probe = probe(&pool).await?;
     Scope::Viewer(viewer("alice")?)
@@ -193,6 +207,164 @@ async fn an_upgrade_keeps_legacy_wiki_redirects_writable_by_the_page_owner(
     assert_eq!(
         redirect_row(&pool, "legacy").await?,
         ("page".to_owned(), Some("alice".to_owned()))
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn an_owner_writes_only_redirects_to_pages_they_can_see(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    sqlx::raw_sql(
+        "INSERT INTO rh_wiki_topics (slug, title, owner_user_id)
+         VALUES ('bob-desk', 'Desk', 'bob'), ('bob-shelf', 'Shelf', 'bob'),
+                ('alice-diary', 'Diary', 'alice');
+         INSERT INTO rh_wiki_redirects (from_slug, to_slug, owner_user_id)
+         VALUES ('old-desk', 'bob-desk', 'bob'), ('old-diary', 'alice-diary', 'bob')",
+    )
+    .execute(&pool)
+    .await?;
+    let bob = person(&pool, "bob").await?;
+
+    let seen: Vec<String> =
+        sqlx::query_scalar("SELECT from_slug FROM rh_wiki_redirects ORDER BY from_slug")
+            .fetch_all(&bob)
+            .await?;
+    assert_eq!(
+        seen,
+        vec!["old-desk".to_owned()],
+        "an owner does not read their redirect to a page they can no longer see"
+    );
+    for (name, sql) in [
+        (
+            "UPDATE",
+            "UPDATE rh_wiki_redirects SET to_slug = 'bob-desk' WHERE from_slug = 'old-diary'",
+        ),
+        (
+            "DELETE",
+            "DELETE FROM rh_wiki_redirects WHERE from_slug = 'old-diary'",
+        ),
+    ] {
+        let done = sqlx::query(sql).execute(&bob).await?;
+        assert_eq!(
+            done.rows_affected(),
+            0,
+            "{name} of a redirect to a hidden page changed it"
+        );
+    }
+    for (name, sql) in [
+        (
+            "INSERT to a hidden page",
+            "INSERT INTO rh_wiki_redirects (from_slug, to_slug) VALUES ('new-diary', 'alice-diary')",
+        ),
+        (
+            "UPDATE onto a hidden page",
+            "UPDATE rh_wiki_redirects SET to_slug = 'alice-diary' WHERE from_slug = 'old-desk'",
+        ),
+    ] {
+        let outcome = sqlx::query(sql).execute(&bob).await;
+        assert!(
+            outcome.as_ref().is_err_and(refused),
+            "{name} should fail with 42501, got {outcome:?}"
+        );
+    }
+    assert_eq!(
+        redirect_row(&pool, "old-diary").await?,
+        ("alice-diary".to_owned(), Some("bob".to_owned()))
+    );
+
+    let moved = sqlx::query(
+        "UPDATE rh_wiki_redirects SET to_slug = 'bob-shelf' WHERE from_slug = 'old-desk'",
+    )
+    .execute(&bob)
+    .await?;
+    assert_eq!(
+        moved.rows_affected(),
+        1,
+        "an owner moves a redirect between pages they see"
+    );
+    sqlx::query(
+        "INSERT INTO rh_wiki_redirects (from_slug, to_slug) VALUES ('new-desk', 'bob-desk')",
+    )
+    .execute(&bob)
+    .await?;
+    assert_eq!(
+        redirect_row(&pool, "new-desk").await?,
+        ("bob-desk".to_owned(), Some("bob".to_owned()))
+    );
+    let dropped = sqlx::query("DELETE FROM rh_wiki_redirects WHERE from_slug = 'new-desk'")
+        .execute(&bob)
+        .await?;
+    assert_eq!(
+        dropped.rows_affected(),
+        1,
+        "an owner deletes their redirect"
+    );
+    Ok(())
+}
+
+fn slug(text: &str) -> Result<WikiSlug, Box<dyn std::error::Error>> {
+    Ok(WikiSlug::try_from(text.to_owned())?)
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn topic_sync_leaves_an_alias_that_already_points_right(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    sqlx::raw_sql(
+        "INSERT INTO rh_wiki_topics (slug, title, owner_user_id, visibility)
+         VALUES ('shared-kitchen', 'Shared Kitchen', 'shared', 'shared'),
+                ('alice-desk', 'Desk', 'alice', 'private');
+         INSERT INTO rh_wiki_redirects (from_slug, to_slug, owner_user_id, created_at)
+         VALUES ('kitchen', 'shared-kitchen', NULL, '2026-01-01T00:00:00Z'),
+                ('cooking', 'shared-kitchen', 'bob', '2026-01-01T00:00:00Z'),
+                ('desk', 'alice-desk', 'alice', '2026-01-01T00:00:00Z'),
+                ('stale', 'alice-desk', 'bob', '2026-01-01T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await?;
+    let probe = probe(&pool).await?;
+    let store = PostgresMemory::new(probe);
+    let alice = Scope::Viewer(viewer("alice")?);
+    let later = Timestamp::now();
+    for (from, to) in [
+        ("kitchen", "shared-kitchen"),
+        ("cooking", "shared-kitchen"),
+        ("desk", "alice-desk"),
+    ] {
+        alice
+            .clone()
+            .run(store.redirect_page(&slug(from)?, &slug(to)?, later))
+            .await?;
+    }
+    let taken = alice
+        .run(store.redirect_page(&slug("stale")?, &slug("shared-kitchen")?, later))
+        .await;
+    assert!(
+        matches!(&taken, Err(WikiStoreError::Query(_))),
+        "topic sync does not take over bob's alias, got {taken:?}"
+    );
+    let rows: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT from_slug, to_slug, owner_user_id, created_at::date::text
+           FROM rh_wiki_redirects ORDER BY from_slug",
+    )
+    .fetch_all(&pool)
+    .await?;
+    let row = |from: &str, to: &str, owner: Option<&str>| {
+        (
+            from.to_owned(),
+            to.to_owned(),
+            owner.map(str::to_owned),
+            "2026-01-01".to_owned(),
+        )
+    };
+    assert_eq!(
+        rows,
+        vec![
+            row("cooking", "shared-kitchen", Some("bob")),
+            row("desk", "alice-desk", Some("alice")),
+            row("kitchen", "shared-kitchen", None),
+            row("stale", "alice-desk", Some("bob")),
+        ],
+        "an alias that already points at the page is left as it was"
     );
     Ok(())
 }

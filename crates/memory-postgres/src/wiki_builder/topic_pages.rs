@@ -137,6 +137,15 @@ impl TopicPageStore for PostgresMemory {
         to: &WikiSlug,
         now: Timestamp,
     ) -> Result<(), WikiStoreError> {
+        let current: Option<String> =
+            sqlx::query_scalar("SELECT to_slug FROM rh_wiki_redirects WHERE from_slug = $1")
+                .bind(from.as_ref())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(query_error)?;
+        if current.as_deref() == Some(to.as_ref()) {
+            return Ok(());
+        }
         sqlx::query(
             "INSERT INTO rh_wiki_redirects (from_slug, to_slug, created_at, owner_user_id)
              SELECT $1, $2, $3, coalesce(rh_scope_principal(),
@@ -144,8 +153,7 @@ impl TopicPageStore for PostgresMemory {
               WHERE NOT EXISTS (SELECT 1 FROM rh_wiki_topics WHERE slug = $1)
              ON CONFLICT (from_slug) DO UPDATE SET to_slug = EXCLUDED.to_slug,
                  owner_user_id = coalesce(rh_wiki_redirects.owner_user_id, EXCLUDED.owner_user_id)
-              WHERE rh_wiki_redirects.to_slug <> EXCLUDED.to_slug
-                 OR (rh_wiki_redirects.owner_user_id IS NULL AND EXCLUDED.owner_user_id IS NOT NULL)",
+              WHERE rh_wiki_redirects.to_slug <> EXCLUDED.to_slug",
         )
         .bind(from.as_ref())
         .bind(to.as_ref())

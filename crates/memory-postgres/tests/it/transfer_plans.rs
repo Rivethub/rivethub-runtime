@@ -151,9 +151,7 @@ async fn merging_entities_adopts_a_legacy_redirect(pool: PgPool) -> TestResult {
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn redirect_page_adopts_a_legacy_redirect_even_with_the_same_target(
-    pool: PgPool,
-) -> TestResult {
+async fn redirect_page_leaves_a_legacy_redirect_with_the_same_target(pool: PgPool) -> TestResult {
     use kernel::topics::TopicPageStore as _;
     use kernel::wiki::page::WikiSlug;
 
@@ -175,6 +173,9 @@ async fn redirect_page_adopts_a_legacy_redirect_even_with_the_same_target(
     )
     .fetch_one(&pool)
     .await?;
-    assert_eq!(owner.as_deref(), Some("alice"));
+    assert_eq!(
+        owner, None,
+        "redirect_page does not write an alias that already points at the page"
+    );
     Ok(())
 }
