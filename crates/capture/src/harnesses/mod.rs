@@ -14,6 +14,7 @@ mod registry;
 mod service;
 mod toml_text;
 mod version;
+mod yaml_text;
 
 pub use locate::Locator;
 pub use registry::HarnessSpec;
