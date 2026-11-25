@@ -9,6 +9,7 @@ use kernel::topics::SyncTopicPage;
 use kernel::topics::TopicId;
 use kernel::topics::TopicPageStore as _;
 use kernel::topics::sync_topic_page;
+use kernel::wiki::entity_pass::EntityPage;
 use kernel::wiki::entity_pass::EntityStore as _;
 use kernel::wiki::entity_pass::EntityView;
 use kernel::wiki::entity_pass::PreparedHistory;
@@ -338,18 +339,70 @@ async fn a_shared_entity_keeps_private_session_prose_out_of_the_space(pool: PgPo
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn a_space_page_bound_to_an_entity_moves_into_the_owners_wiki(pool: PgPool) -> TestResult {
+async fn a_space_page_bound_to_an_entity_stays_in_the_space(pool: PgPool) -> TestResult {
     let directory = tempfile::tempdir()?;
     let memory = shared_memory(&pool, directory.path()).await?;
-    sqlx::query(
-        "INSERT INTO rh_wiki_scopes (scope, owner_user_id, visibility, key_prefix, directory)
-         VALUES ('crew', 'crew', 'crew', 'crew-', 'spaces/crew')",
-    )
-    .execute(&pool)
-    .await?;
+    crew_scope(&pool).await?;
     let entity = Uuid::new_v4();
     let (conversation, leaf) = seed_session(&pool, "phil").await?;
     seed_entity(&pool, entity, "gpubox", "phil").await?;
+    apply(&memory, entity, &rewrite(leaf, conversation, "phil")).await?;
+    sqlx::query(
+        "UPDATE rh_wiki_topics
+            SET slug = 'crew-gpubox', scope = 'crew', owner_user_id = 'crew', visibility = 'crew'
+          WHERE topic_id = $1",
+    )
+    .bind(entity)
+    .execute(&pool)
+    .await?;
+    let space_file = directory.path().join("spaces/crew/topics/gpubox.md");
+    std::fs::create_dir_all(directory.path().join("spaces/crew/topics"))?;
+    std::fs::rename(directory.path().join("topics/gpubox.md"), &space_file)?;
+    let before = std::fs::read_to_string(&space_file)?;
+    let mut newer = rewrite(leaf, conversation, "phil");
+    newer.summary = "Private note.".to_owned();
+
+    let written = apply(&memory, entity, &newer).await;
+
+    assert!(
+        !directory.path().join("topics/gpubox.md").exists(),
+        "nothing is written into phil's wiki"
+    );
+    assert!(written.is_err(), "the write is refused, got {written:?}");
+    assert_eq!(
+        bound_row(&pool, entity).await?,
+        PageRow {
+            slug: "crew-gpubox".to_owned(),
+            owner_user_id: Some("crew".to_owned()),
+            scope: Some("crew".to_owned()),
+            local_slug: Some("gpubox".to_owned()),
+        }
+    );
+    assert_eq!(std::fs::read_to_string(&space_file)?, before);
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn an_entity_page_in_a_space_leaves_another_owners_unscoped_file_alone(
+    pool: PgPool,
+) -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let memory = shared_memory(&pool, directory.path()).await?;
+    crew_scope(&pool).await?;
+    let entity = Uuid::new_v4();
+    let (conversation, leaf) = seed_session(&pool, "phil").await?;
+    seed_entity(&pool, entity, "gpubox", "phil").await?;
+    let mut cocos = rewrite(leaf, conversation, "phil");
+    cocos.summary = "Coco's notes.".to_owned();
+    apply(&memory, entity, &cocos).await?;
+    sqlx::query(
+        "UPDATE rh_wiki_topics
+            SET scope = NULL, local_slug = NULL, owner_user_id = 'coco', topic_id = NULL
+          WHERE topic_id = $1",
+    )
+    .bind(entity)
+    .execute(&pool)
+    .await?;
     sqlx::query(
         "INSERT INTO rh_wiki_topics
             (slug, title, current_state, topic_id, owner_user_id, scope, local_slug, visibility)
@@ -358,34 +411,36 @@ async fn a_space_page_bound_to_an_entity_moves_into_the_owners_wiki(pool: PgPool
     .bind(entity)
     .execute(&pool)
     .await?;
+    let cocos_file = directory.path().join("topics/gpubox.md");
+    let before = std::fs::read_to_string(&cocos_file)?;
+    let mut private = rewrite(leaf, conversation, "phil");
+    private.summary = "Phil's private note.".to_owned();
 
-    apply(&memory, entity, &rewrite(leaf, conversation, "phil")).await?;
+    let written = apply(&memory, entity, &private).await;
 
-    let row: (String, Option<String>, String) =
-        sqlx::query_as("SELECT slug, scope, visibility FROM rh_wiki_topics WHERE topic_id = $1")
-            .bind(entity)
-            .fetch_one(&pool)
-            .await?;
     assert_eq!(
-        row,
-        (
-            "crew-gpubox".to_owned(),
-            Some("phil".to_owned()),
-            "private".to_owned()
-        )
+        std::fs::read_to_string(&cocos_file)?,
+        before,
+        "coco's file keeps coco's page"
     );
-    assert!(directory.path().join("topics/gpubox.md").exists());
-    assert!(
-        !directory
-            .path()
-            .join("spaces/crew/topics/gpubox.md")
-            .exists()
+    assert!(written.is_err(), "the write is refused, got {written:?}");
+    assert_eq!(
+        pages(&pool).await?,
+        vec![
+            StoredPage {
+                slug: "crew-gpubox".to_owned(),
+                owner_user_id: Some("crew".to_owned()),
+                current_state: String::new(),
+                topic_id: Some(entity),
+            },
+            stored("gpubox", "coco", "Coco's notes.", None),
+        ]
     );
     Ok(())
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn a_legacy_page_moves_into_its_owners_wiki_under_its_key(pool: PgPool) -> TestResult {
+async fn reading_a_misplaced_entity_page_moves_nothing(pool: PgPool) -> TestResult {
     let directory = tempfile::tempdir()?;
     let memory = shared_memory(&pool, directory.path()).await?;
     let entity = Uuid::new_v4();
@@ -393,35 +448,32 @@ async fn a_legacy_page_moves_into_its_owners_wiki_under_its_key(pool: PgPool) ->
     seed_entity(&pool, entity, "cocobox", "coco").await?;
     sqlx::query(
         "INSERT INTO rh_wiki_topics (slug, title, current_state, topic_id, owner_user_id, visibility)
-         VALUES ('cocobox', 'cocobox', 'Old summary.', $1, 'phil', 'private')",
+         VALUES ('cocobox', 'cocobox', 'Old summary.', $1, 'coco', 'private')",
     )
     .bind(entity)
     .execute(&pool)
     .await?;
 
-    apply(&memory, entity, &rewrite(leaf, conversation, "coco")).await?;
+    let read = read_page(&memory, entity).await;
+    let after_read = bound_row(&pool, entity).await?;
+    let written = apply(&memory, entity, &rewrite(leaf, conversation, "coco")).await;
 
-    let row = sqlx::query_as::<_, PageRow>(
-        "SELECT slug, owner_user_id, scope, local_slug FROM rh_wiki_topics WHERE topic_id = $1",
-    )
-    .bind(entity)
-    .fetch_one(&pool)
-    .await?;
-    assert_eq!(
-        row,
-        PageRow {
-            slug: "cocobox".to_owned(),
-            owner_user_id: Some("coco".to_owned()),
-            scope: Some("coco".to_owned()),
-            local_slug: Some("cocobox".to_owned()),
-        }
-    );
+    let legacy = PageRow {
+        slug: "cocobox".to_owned(),
+        owner_user_id: Some("coco".to_owned()),
+        scope: None,
+        local_slug: None,
+    };
+    assert_eq!(after_read, legacy, "the prose read leaves the binding");
+    assert!(read.is_err(), "the read is refused, got {read:?}");
+    assert!(written.is_err(), "the write is refused, got {written:?}");
+    assert_eq!(bound_row(&pool, entity).await?, legacy);
     assert_eq!(
         pages(&pool).await?,
-        vec![stored("cocobox", "coco", "GPU host.", Some(entity))]
+        vec![stored("cocobox", "coco", "Old summary.", Some(entity))]
     );
     assert!(
-        directory
+        !directory
             .path()
             .join("users/coco/topics/cocobox.md")
             .exists()
@@ -430,7 +482,61 @@ async fn a_legacy_page_moves_into_its_owners_wiki_under_its_key(pool: PgPool) ->
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn a_merge_of_legacy_pages_removes_the_absorbed_file(pool: PgPool) -> TestResult {
+async fn a_legacy_page_of_another_or_no_owner_stays_out_of_the_entity(pool: PgPool) -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let memory = shared_memory(&pool, directory.path()).await?;
+    let (conversation, leaf) = seed_session(&pool, "phil").await?;
+    for (slug, owner) in [("cocobox", Some("coco")), ("nobox", None)] {
+        let entity = Uuid::new_v4();
+        seed_entity(&pool, entity, slug, "phil").await?;
+        sqlx::query(
+            "INSERT INTO rh_wiki_topics
+                (slug, title, current_state, article, topic_id, owner_user_id, visibility)
+             VALUES ($1, $1, 'Their secret.', 'Their article.', $2, 'coco', 'private')",
+        )
+        .bind(slug)
+        .bind(entity)
+        .execute(&pool)
+        .await?;
+        sqlx::query("UPDATE rh_wiki_topics SET owner_user_id = $2 WHERE slug = $1")
+            .bind(slug)
+            .bind(owner)
+            .execute(&pool)
+            .await?;
+
+        let read = read_page(&memory, entity).await;
+        let written = apply(&memory, entity, &rewrite(leaf, conversation, "phil")).await;
+
+        assert!(
+            read.is_err(),
+            "{slug}: the read is refused, got {:?}",
+            read.map(|page| page.summary)
+        );
+        assert!(
+            written.is_err(),
+            "{slug}: the write is refused, got {written:?}"
+        );
+        assert_eq!(
+            bound_row(&pool, entity).await?,
+            PageRow {
+                slug: slug.to_owned(),
+                owner_user_id: owner.map(str::to_owned),
+                scope: None,
+                local_slug: None,
+            }
+        );
+        let state: String =
+            sqlx::query_scalar("SELECT current_state FROM rh_wiki_topics WHERE slug = $1")
+                .bind(slug)
+                .fetch_one(&pool)
+                .await?;
+        assert_eq!(state, "Their secret.");
+    }
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_merge_with_a_misplaced_legacy_page_keeps_both(pool: PgPool) -> TestResult {
     let directory = tempfile::tempdir()?;
     let memory = shared_memory(&pool, directory.path()).await?;
     let mut ids = [Uuid::new_v4(), Uuid::new_v4()];
@@ -439,6 +545,7 @@ async fn a_merge_of_legacy_pages_removes_the_absorbed_file(pool: PgPool) -> Test
     let (conversation, leaf) = seed_session(&pool, "coco").await?;
     seed_entity(&pool, survivor, "box_a", "coco").await?;
     seed_entity(&pool, absorbed, "g9", "coco").await?;
+    apply(&memory, survivor, &rewrite(leaf, conversation, "coco")).await?;
     apply(&memory, absorbed, &rewrite(leaf, conversation, "coco")).await?;
     sqlx::query(
         "UPDATE rh_wiki_topics SET slug = 'g9', scope = NULL, local_slug = NULL, owner_user_id = NULL
@@ -452,27 +559,16 @@ async fn a_merge_of_legacy_pages_removes_the_absorbed_file(pool: PgPool) -> Test
         directory.path().join("users/coco/topics/g9.md"),
         directory.path().join("topics/g9.md"),
     )?;
-    sqlx::query(
-        "INSERT INTO rh_wiki_topics (slug, title, current_state, topic_id, visibility)
-         VALUES ('box_a', 'box_a', 'Coco box.', $1, 'private')",
-    )
-    .bind(survivor)
-    .execute(&pool)
-    .await?;
+    let before = pages(&pool).await?;
 
-    Scope::Maintenance
+    let merged = Scope::Maintenance
         .run(memory.merge_entities(absorbed, survivor, at("2026-11-12T00:00:00Z")))
-        .await?
-        .ok_or("merge returned nothing")?;
+        .await;
 
-    assert_eq!(
-        pages(&pool).await?,
-        vec![stored("box_a", "coco", "Coco box.", Some(survivor))]
-    );
-    assert!(
-        !directory.path().join("topics/g9.md").exists(),
-        "the absorbed legacy file leaves the primary wiki"
-    );
+    assert!(merged.is_err(), "the merge is refused, got {merged:?}");
+    assert_eq!(pages(&pool).await?, before);
+    assert!(directory.path().join("topics/g9.md").exists());
+    assert!(directory.path().join("users/coco/topics/box_a.md").exists());
     Ok(())
 }
 
@@ -545,6 +641,39 @@ async fn apply(
             let applied = lease.apply(body, at("2026-11-07T01:00:00Z")).await;
             lease.release().await?;
             applied
+        })
+        .await
+}
+
+async fn crew_scope(pool: &PgPool) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO rh_wiki_scopes (scope, owner_user_id, visibility, key_prefix, directory)
+         VALUES ('crew', 'crew', 'crew', 'crew-', 'spaces/crew')",
+    )
+    .execute(pool)
+    .await
+    .map(drop)
+}
+
+async fn bound_row(pool: &PgPool, entity: Uuid) -> Result<PageRow, sqlx::Error> {
+    sqlx::query_as::<_, PageRow>(
+        "SELECT slug, owner_user_id, scope, local_slug FROM rh_wiki_topics WHERE topic_id = $1",
+    )
+    .bind(entity)
+    .fetch_one(pool)
+    .await
+}
+
+async fn read_page(
+    memory: &PostgresMemory,
+    entity: Uuid,
+) -> Result<EntityPage, kernel::wiki::entity_pass::EntityStoreError> {
+    Scope::Maintenance
+        .run(async {
+            let mut lease = memory.lease_entity(entity).await?;
+            let page = lease.page().await;
+            lease.release().await?;
+            page
         })
         .await
 }
