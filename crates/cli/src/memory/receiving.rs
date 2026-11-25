@@ -121,7 +121,7 @@ pub async fn fetch(
     env: &Environment,
     code: ShareCode,
     from: Option<ShareServer>,
-    downloading: impl FnOnce(&Source) -> std::io::Result<()>,
+    downloading: impl FnOnce(&Source),
 ) -> Result<Fetched, FetchError> {
     let inbox = Inbox::in_state(&capture::share::state_home(env)?);
     inbox.prune(SystemTime::now())?;
@@ -170,9 +170,10 @@ impl Wanted<'_> {
         env: &Environment,
         from: Option<ShareServer>,
         embedded: ShareServer,
-        downloading: impl FnOnce(&Source) -> std::io::Result<()>,
+        downloading: impl FnOnce(&Source),
     ) -> Result<Source, FetchError> {
         let partial = self.inbox.partial()?;
+        let mut sink = partial.as_file().try_clone()?;
         let local = match from {
             Some(_) => Local::NotHere,
             None => local_drop::locate(env, self.id).await?,
@@ -182,8 +183,8 @@ impl Wanted<'_> {
                 if bytes > MAX_DROP_BYTES as u64 {
                     return Err(DropError::TooLarge.into());
                 }
-                downloading(&Source::ThisNode)?;
-                std::io::copy(&mut file, &mut partial.as_file().try_clone()?)?;
+                downloading(&Source::ThisNode);
+                std::io::copy(&mut file, &mut sink)?;
                 self.inbox.keep(self.slot, partial)?;
                 return Ok(Source::ThisNode);
             }
@@ -193,27 +194,21 @@ impl Wanted<'_> {
         let servers = ShareServers::from_env(env)
             .await
             .map_err(|error| FetchError::Setup(Box::new(error)))?;
-        if gateway {
+        let here = if gateway {
             let drops = DropBox::on_this_node(env, &servers).await?;
-            if let Some(incoming) = served_here(drops.request(self.id).await)? {
-                return self.save(incoming, Source::ThisNode, downloading).await;
-            }
-        }
-        let host = from.unwrap_or(embedded);
-        let drops = DropBox::on(&servers, &host).await?;
-        let incoming = drops.request(self.id).await?;
-        self.save(incoming, Source::Server(host), downloading).await
-    }
-
-    async fn save(
-        &self,
-        incoming: Incoming,
-        source: Source,
-        downloading: impl FnOnce(&Source) -> std::io::Result<()>,
-    ) -> Result<Source, FetchError> {
-        downloading(&source)?;
-        let partial = self.inbox.partial()?;
-        incoming.save(partial.as_file().try_clone()?).await?;
+            served_here(drops.request(self.id).await)?
+        } else {
+            None
+        };
+        let (incoming, source) = if let Some(incoming) = here {
+            (incoming, Source::ThisNode)
+        } else {
+            let host = from.unwrap_or(embedded);
+            let drops = DropBox::on(&servers, &host).await?;
+            (drops.request(self.id).await?, Source::Server(host))
+        };
+        downloading(&source);
+        incoming.save(sink).await?;
         self.inbox.keep(self.slot, partial)?;
         Ok(source)
     }
