@@ -300,8 +300,10 @@ async fn text(
     slug: &str,
 ) -> Result<Option<TextRow>, WikiStoreError> {
     sqlx::query_as::<_, TextRow>(
-        "SELECT title, current_state, article, aliases, tags, entities, related
-           FROM rh_wiki_topics WHERE slug = $1",
+        "SELECT title, current_state, article, aliases, tags, entities,
+                ARRAY(SELECT coalesce((SELECT k.local_slug FROM rh_wiki_topics k WHERE k.slug = r.slug AND k.scope = t.scope), r.slug)
+                        FROM unnest(t.related) WITH ORDINALITY AS r(slug, n) ORDER BY r.n) AS related
+           FROM rh_wiki_topics t WHERE t.slug = $1",
     )
     .bind(slug)
     .fetch_optional(&mut **tx)

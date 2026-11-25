@@ -1195,3 +1195,37 @@ async fn a_child_created_in_another_wiki_while_a_fold_waits_is_refused(pool: PgP
     assert_eq!(redirects, 0, "the refused fold wrote no redirect");
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_rebuilt_parent_keeps_a_scoped_link_whose_key_is_another_local_slug(
+    pool: PgPool,
+) -> TestResult {
+    let wiki = tempfile::tempdir()?;
+    let root = wiki.path().join("wiki");
+    let pantry = kitchen_with_pantry(&pool, &root, true).await?;
+    std::fs::remove_file(topic_file(&root, true, "kitchen"))?;
+    sqlx::raw_sql(
+        "INSERT INTO rh_wiki_topics (slug, title, scope, local_slug, owner_user_id)
+         VALUES ('alice-dining', 'Dining Room', 'alice', 'dining', 'alice'),
+                ('alice-alice-dining', 'Alice Dining', 'alice', 'alice-dining', 'alice');
+         UPDATE rh_wiki_topics SET related = '{alice-dining}' WHERE slug = 'kitchen'",
+    )
+    .execute(&pool)
+    .await?;
+
+    let synced = sync_as_alice(&pool, &root, pantry, true).await?;
+    assert!(
+        synced.is_ok(),
+        "the sync folds the sub-topic, got {synced:?}"
+    );
+    let related: Vec<String> =
+        sqlx::query_scalar("SELECT related FROM rh_wiki_topics WHERE slug = 'kitchen'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(
+        related,
+        vec!["alice-dining".to_owned()],
+        "the rebuilt parent still links the page it linked before"
+    );
+    Ok(())
+}
