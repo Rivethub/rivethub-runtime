@@ -351,7 +351,7 @@ async fn a_viewer_cannot_retire_a_page_another_person_redirects_to(pool: PgPool)
         .await?;
     sqlx::raw_sql(
         "INSERT INTO rh_wiki_topics (slug, title, current_state, owner_user_id, visibility)
-         VALUES ('pantry', 'Pantry', 'Flour lives on the top shelf.', 'shared', 'shared');
+         VALUES ('pantry', 'Pantry', 'Flour lives on the top shelf.', 'alice', 'shared');
          INSERT INTO rh_wiki_redirects (from_slug, to_slug, owner_user_id)
          VALUES ('larder', 'pantry', 'bob')",
     )

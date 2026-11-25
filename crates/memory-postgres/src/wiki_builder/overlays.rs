@@ -1,3 +1,4 @@
+use kernel::tenancy::Scope;
 use kernel::topics::TopicPage;
 use kernel::wiki::builder::WikiStoreError;
 use kernel::wiki::origin::NoteOrigin;
@@ -8,7 +9,7 @@ use uuid::Uuid;
 use super::{query_error, settle};
 use crate::PostgresMemory;
 use crate::wiki_scope::{
-    WikiScope, choose, overlay, page_home, scope_named, summary_scope, topic_scope,
+    LegacyOwner, WikiScope, choose, overlay, page_home, scope_named, summary_scope, topic_scope,
 };
 use crate::wiki_writer::WikiRepository;
 
@@ -17,6 +18,7 @@ pub(super) struct Placed {
     pub(super) key: String,
     pub(super) local: String,
     pub(super) canonical: bool,
+    pub(super) fresh: bool,
     pub(super) bind: Option<Uuid>,
 }
 
@@ -35,6 +37,7 @@ impl PostgresMemory {
         conn: &mut PgConnection,
         slug: &str,
         topic: Option<Uuid>,
+        legacy: &LegacyOwner,
     ) -> Result<(Option<WikiScope>, String, bool), WikiStoreError> {
         let exists: bool =
             sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM rh_wiki_topics WHERE slug = $1)")
@@ -49,7 +52,11 @@ impl PostgresMemory {
                 false,
             ));
         }
-        let home = page_home(conn, slug).await?;
+        let home = match page_home(conn, slug, legacy).await? {
+            Some(home) => home,
+            None if exists => return Err(WikiStoreError::TopicMissing(slug.to_owned())),
+            None => return Ok((root(conn).await?, slug.to_owned(), false)),
+        };
         let scope = match &home.scope {
             Some(name) => scope_named(conn, name).await?,
             None => root(conn).await?,
@@ -62,13 +69,17 @@ impl PostgresMemory {
         slug: &WikiSlug,
         topic: Option<Uuid>,
     ) -> Result<Placed, WikiStoreError> {
+        let legacy = self.legacy_owner().await?;
         let mut conn = self.pool.acquire().await.map_err(query_error)?;
-        let (page, local, exists) = self.page_scope(&mut conn, slug.as_ref(), topic).await?;
+        let (page, local, exists) = self
+            .page_scope(&mut conn, slug.as_ref(), topic, &legacy)
+            .await?;
         let canonical = Placed {
             scope: page.clone(),
             key: slug.as_ref().to_owned(),
             local: local.clone(),
             canonical: true,
+            fresh: !exists && matches!(Scope::current(), Some(Scope::Viewer(_))),
             bind: topic,
         };
         let (true, Some(summary), Some(page)) = (exists, NoteOrigin::current(), page) else {
@@ -88,6 +99,7 @@ impl PostgresMemory {
             key,
             local,
             canonical: false,
+            fresh: false,
             bind: None,
         })
     }

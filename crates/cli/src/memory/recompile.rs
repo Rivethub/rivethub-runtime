@@ -2,6 +2,7 @@ use jiff::Timestamp;
 use std::path::Path;
 
 use kernel::queue::{FixedJob, Job, JobKeyMode, JobName, JobQueue};
+use kernel::tenancy::Scope;
 use kernel::wiki::page::WikiSlug;
 use kernel::wiki::recompile::RecompileWiki;
 use memory_postgres::PostgresMemory;
@@ -116,14 +117,36 @@ pub(super) async fn run(args: RecompileArgs, env: &Environment) -> Result<Report
         .filter(|_| matches!(&target, Ok(Target::Sqlite(_))))
         .unwrap_or_default()
         .wiki_directory(env);
-    let pages = planned(&directory.join("topics"), &args).await?;
+    let mut pages = planned(&directory.join("topics"), &args).await?;
     if !args.dry_run {
         match target? {
             Target::Postgres(url) => {
                 let memory = PostgresMemory::connect(&url).await?;
-                enqueue(&memory.queue().await?, &pages, args.since).await?;
+                let mut keyed = Vec::new();
+                for page in pages {
+                    let local = slug(&page.slug)?;
+                    if let Some(key) = Scope::Maintenance
+                        .run(memory.primary_page_key(&local))
+                        .await?
+                    {
+                        keyed.push((key, page));
+                    }
+                }
+                enqueue(
+                    &memory.queue().await?,
+                    keyed.iter().map(|(key, _)| key),
+                    args.since,
+                )
+                .await?;
+                pages = keyed.into_iter().map(|(_, page)| page).collect();
             }
-            Target::Sqlite(path) => enqueue(&open_sqlite(&path).await?, &pages, args.since).await?,
+            Target::Sqlite(path) => {
+                let locals = pages
+                    .iter()
+                    .map(|page| slug(&page.slug))
+                    .collect::<Result<Vec<_>, _>>()?;
+                enqueue(&open_sqlite(&path).await?, locals.iter(), args.since).await?;
+            }
         }
     }
     let body = Planned {
@@ -153,19 +176,25 @@ pub(super) async fn run(args: RecompileArgs, env: &Environment) -> Result<Report
     Ok(Report::success(text))
 }
 
+fn slug(text: &str) -> Result<WikiSlug, Error> {
+    WikiSlug::try_from(text.to_owned()).map_err(|_| Error::RecompileSlug(text.to_owned()))
+}
+
 async fn enqueue(
     queue: &impl JobQueue,
-    pages: &[PlannedPage],
+    keys: impl Iterator<Item = &WikiSlug>,
     since: Timestamp,
 ) -> Result<(), Error> {
-    for page in pages {
-        let slug = WikiSlug::try_from(page.slug.clone())
-            .map_err(|_| Error::RecompileSlug(page.slug.clone()))?;
+    for slug in keys {
+        let key = format!("wiki-recompile-{}", slug.as_ref());
         queue
             .enqueue(Job {
                 name: JobName::Fixed(FixedJob::RecompileWiki),
-                payload: wire::JsonObject::from_serialize(&RecompileWiki { slug, since })?,
-                key: Some(format!("wiki-recompile-{}", page.slug)),
+                payload: wire::JsonObject::from_serialize(&RecompileWiki {
+                    slug: slug.clone(),
+                    since,
+                })?,
+                key: Some(key),
                 key_mode: JobKeyMode::Replace,
                 priority: PRIORITY,
                 run_at: None,

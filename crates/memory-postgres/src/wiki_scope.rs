@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use kernel::tenancy::Scope;
 use kernel::wiki::builder::WikiStoreError;
 use sqlx::PgConnection;
 use uuid::Uuid;
@@ -43,23 +44,80 @@ fn failed(error: sqlx::Error) -> WikiStoreError {
     WikiStoreError::Query(Box::new(error))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LegacyOwner {
+    Owner(String),
+    Unknown,
+    Contested,
+}
+
+impl LegacyOwner {
+    pub(crate) fn owner(&self) -> Option<&str> {
+        match self {
+            Self::Owner(owner) => Some(owner),
+            Self::Unknown | Self::Contested => None,
+        }
+    }
+
+    pub(crate) fn open(&self) -> bool {
+        matches!(self, Self::Unknown) && !matches!(Scope::current(), Some(Scope::Viewer(_)))
+    }
+}
+
+const HOMES: &str = "WITH homes AS (
+         SELECT t.slug, t.scope, coalesce(s.directory, '') AS directory,
+                coalesce(t.local_slug, t.slug) AS local,
+                CASE WHEN t.scope IS NOT NULL
+                     THEN coalesce(t.owner_user_id
+                          = CASE WHEN s.visibility = 'private' THEN s.owner_user_id ELSE s.scope END, false)
+                     WHEN $1::text IS NULL THEN $2
+                     ELSE coalesce(t.owner_user_id = $1, false)
+                END AS homed
+           FROM rh_wiki_topics t LEFT JOIN rh_wiki_scopes s ON s.scope = t.scope)";
+
+pub(crate) fn with_homes(query: &str) -> sqlx::AssertSqlSafe<String> {
+    sqlx::AssertSqlSafe(format!("{HOMES} {query}"))
+}
+
 pub(crate) async fn page_home(
     conn: &mut PgConnection,
     key: &str,
-) -> Result<PageHome, WikiStoreError> {
-    let found = sqlx::query_as::<_, PageHome>(
-        "SELECT t.scope, coalesce(s.directory, '') AS directory, coalesce(t.local_slug, t.slug) AS local
-           FROM rh_wiki_topics t LEFT JOIN rh_wiki_scopes s ON s.scope = t.scope WHERE t.slug = $1",
+    legacy: &LegacyOwner,
+) -> Result<Option<PageHome>, WikiStoreError> {
+    sqlx::query_as::<_, PageHome>(with_homes(
+        "SELECT scope, directory, local FROM homes WHERE slug = $3 AND homed",
+    ))
+    .bind(legacy.owner())
+    .bind(legacy.open())
+    .bind(key)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(failed)
+}
+
+pub(crate) async fn primary_scope(
+    conn: &mut PgConnection,
+    legacy: &LegacyOwner,
+) -> Result<Option<WikiScope>, WikiStoreError> {
+    match legacy.owner() {
+        Some(owner) => scope_for(conn, owner, PRIVATE, Some(owner))
+            .await
+            .map(|scope| Some(scope).filter(WikiScope::primary)),
+        None => Ok(None),
+    }
+}
+
+pub(crate) async fn page_place(
+    conn: &mut PgConnection,
+    key: &str,
+) -> Result<Option<(Option<String>, String)>, WikiStoreError> {
+    sqlx::query_as::<_, (Option<String>, String)>(
+        "SELECT scope, coalesce(local_slug, slug) FROM rh_wiki_topics WHERE slug = $1",
     )
     .bind(key)
     .fetch_optional(&mut *conn)
     .await
-    .map_err(failed)?;
-    Ok(found.unwrap_or_else(|| PageHome {
-        scope: None,
-        directory: String::new(),
-        local: key.to_owned(),
-    }))
+    .map_err(failed)
 }
 
 async fn named(
@@ -259,5 +317,23 @@ impl PostgresMemory {
 
     pub(crate) fn wiki_primary(&self) -> Option<&str> {
         self.wiki_owner.as_ref().map(kernel::owner::Owner::as_str)
+    }
+
+    pub(crate) async fn legacy_owner(&self) -> Result<LegacyOwner, WikiStoreError> {
+        let recorded = Scope::Maintenance
+            .run(
+                sqlx::query_scalar::<_, String>(
+                    "SELECT owner_user_id FROM rh_wiki_scopes WHERE directory = ''",
+                )
+                .fetch_optional(&self.pool),
+            )
+            .await
+            .map_err(failed)?;
+        Ok(match (recorded, self.wiki_primary()) {
+            (Some(recorded), Some(configured)) if recorded != configured => LegacyOwner::Contested,
+            (Some(recorded), _) => LegacyOwner::Owner(recorded),
+            (None, Some(configured)) => LegacyOwner::Owner(configured.to_owned()),
+            (None, None) => LegacyOwner::Unknown,
+        })
     }
 }

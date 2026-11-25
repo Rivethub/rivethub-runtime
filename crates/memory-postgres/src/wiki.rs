@@ -101,6 +101,7 @@ impl PostgresMemory {
     }
 
     pub(crate) async fn read_wiki_page(&self, slug: &WikiSlug) -> Result<WikiLookup, Error> {
+        let legacy = self.legacy_owner().await.map_err(Error::WikiScope)?;
         let mut tx = self.pool.begin().await.map_err(Error::Connection)?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .execute(&mut *tx)
@@ -121,10 +122,10 @@ impl PostgresMemory {
         };
         let citations = Self::read_citations(&mut tx, &row.slug).await?;
         let sources = Self::wiki_sources(&mut tx, &row.slug).await?;
-        let markdown = if let Some(directory) = &self.wiki_directory {
-            let home = crate::wiki_scope::page_home(&mut tx, slug.as_ref())
-                .await
-                .map_err(Error::WikiScope)?;
+        let home = crate::wiki_scope::page_home(&mut tx, slug.as_ref(), &legacy)
+            .await
+            .map_err(Error::WikiScope)?;
+        let markdown = if let (Some(directory), Some(home)) = (&self.wiki_directory, home) {
             let markdown = read_markdown(&directory.join(&home.directory), &home.local).await?;
             references::project(markdown, &citations, &sources)
                 .map_err(|source| Error::stored("wiki page", source))?
@@ -158,13 +159,17 @@ impl PostgresMemory {
         })))
     }
 
-    async fn markdown_home(&self, slug: &WikiSlug) -> Result<crate::wiki_scope::PageHome, Error> {
+    async fn markdown_home(
+        &self,
+        slug: &WikiSlug,
+    ) -> Result<Option<crate::wiki_scope::PageHome>, Error> {
+        let legacy = self.legacy_owner().await.map_err(Error::WikiScope)?;
         let mut connection = self
             .pool
             .acquire()
             .await
             .map_err(|source| Error::operation("wiki page", source))?;
-        crate::wiki_scope::page_home(&mut connection, slug.as_ref())
+        crate::wiki_scope::page_home(&mut connection, slug.as_ref(), &legacy)
             .await
             .map_err(Error::WikiScope)
     }
@@ -275,7 +280,9 @@ impl PostgresMemory {
         let Some(directory) = self.wiki_directory.as_ref() else {
             return Ok(None);
         };
-        let home = self.markdown_home(slug).await?;
+        let Some(home) = self.markdown_home(slug).await? else {
+            return Ok(None);
+        };
         let root = tokio::fs::canonicalize(directory.join(&home.directory))
             .await
             .map_err(Error::WikiIo)?;
