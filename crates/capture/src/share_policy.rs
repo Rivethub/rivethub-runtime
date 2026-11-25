@@ -56,6 +56,11 @@ impl SharePolicy {
         })
     }
 
+    #[must_use]
+    pub const fn cloud_disabled(&self) -> bool {
+        self.cloud_disabled
+    }
+
     pub fn admit(&self, host: &ShareServer) -> Result<(), ShareRefused> {
         match (self.cloud_disabled, &self.allowed) {
             (true, None) => Err(ShareRefused::Off),

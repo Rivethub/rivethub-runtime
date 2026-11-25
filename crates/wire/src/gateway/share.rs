@@ -217,6 +217,30 @@ impl fmt::Debug for FlagState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BundlesReply {
+    pub bundles: Vec<ReadyBundle>,
+}
+
+#[serde_with::serde_as]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ReadyBundle {
+    pub name: String,
+    pub sessions: u32,
+    pub bytes: u64,
+    pub open_flags: u32,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub created_at: Timestamp,
+    pub sanitized: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BundleDraftRequest {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MarksRequest {
     pub marks: Vec<Mark>,
@@ -322,6 +346,7 @@ impl fmt::Debug for SentReply {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ServersReply {
     pub servers: Vec<ServerView>,
+    pub cloud_disabled: bool,
     pub logins_file: String,
     pub token_store: TokenStore,
 }
@@ -426,6 +451,7 @@ pub struct ShareRefusal {
 pub enum RefusalReason {
     NotLocal,
     UnknownDraft,
+    UnknownBundle,
     Full,
     Invalid,
     OpenFlags,

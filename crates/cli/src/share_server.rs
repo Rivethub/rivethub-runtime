@@ -369,6 +369,10 @@ impl ShareServers {
         self.policy.default_server(self.configured.clone())
     }
 
+    pub(crate) const fn policy(&self) -> &SharePolicy {
+        &self.policy
+    }
+
     pub(crate) const fn logins(&self) -> &LoginStore {
         &self.logins
     }

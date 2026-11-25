@@ -447,9 +447,17 @@ pub async fn servers(env: &Environment) -> Result<Servers, Error> {
             });
         }
     }
+    let policy = servers.policy();
+    views.retain(|view| {
+        view.origin
+            .as_str()
+            .parse::<ShareServer>()
+            .is_ok_and(|host| policy.admit(&host).is_ok())
+    });
     views.sort_by_key(|view| !view.default);
     Ok(Servers {
         servers: views,
+        cloud_disabled: policy.cloud_disabled(),
         logins_file: store.file().display().to_string(),
         token_store: store.kind(),
     })

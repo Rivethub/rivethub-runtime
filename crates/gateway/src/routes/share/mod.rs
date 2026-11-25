@@ -1,3 +1,4 @@
+mod bundles;
 mod send;
 mod servers;
 
@@ -41,6 +42,14 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
         .route(
             "/api/share/drafts",
             post(send::draft).fallback(super::method_not_allowed),
+        )
+        .route(
+            "/api/share/drafts/from-bundle",
+            post(bundles::draft).fallback(super::method_not_allowed),
+        )
+        .route(
+            "/api/share/bundles",
+            get(bundles::list).fallback(super::method_not_allowed),
         )
         .route(
             "/api/share/drafts/{id}",
@@ -121,11 +130,14 @@ impl From<DeskError> for Refusal {
         let message = error.to_string();
         let (status, reason, upstream_status) = match &error {
             DeskError::UnknownDraft => (StatusCode::NOT_FOUND, RefusalReason::UnknownDraft, None),
+            DeskError::UnknownBundle => (StatusCode::NOT_FOUND, RefusalReason::UnknownBundle, None),
             DeskError::UnknownLogin => (StatusCode::NOT_FOUND, RefusalReason::UnknownLogin, None),
             DeskError::UnknownSessions(_) => {
                 (StatusCode::NOT_FOUND, RefusalReason::UnknownSessions, None)
             }
-            DeskError::OpenFlags { .. } => (StatusCode::CONFLICT, RefusalReason::OpenFlags, None),
+            DeskError::OpenFlags { .. } | DeskError::BundleFlags { .. } => {
+                (StatusCode::CONFLICT, RefusalReason::OpenFlags, None)
+            }
             DeskError::Counts { .. } => (StatusCode::CONFLICT, RefusalReason::Counts, None),
             DeskError::DecideUnconfigured => (
                 StatusCode::CONFLICT,

@@ -10,14 +10,15 @@ use axum::http::{Method, Request, StatusCode};
 use gateway::Gateway;
 use gateway::tenancy::{Tenancy, UserId};
 use kernel::memory::share::desk::{
-    DeskError, Draft, DraftId, DraftRequest, DraftSession, DraftTotals, EscapedText, FindQuery,
-    FlagState, FlagView, Found, LoginId, LoginRequest, LoginStep, Mark, Marked, NodeKeyView,
-    PushRequest, Pushed, SendRequest, Sent, ServerOrigin, Servers, ShareDesk, TokenStore,
+    BundleName, DeskError, Draft, DraftId, DraftRequest, DraftSession, DraftTotals, EscapedText,
+    FindQuery, FlagState, FlagView, Found, LoginId, LoginRequest, LoginStep, Mark, Marked,
+    NodeKeyView, PushRequest, Pushed, ReadyBundle, SendRequest, Sent, ServerOrigin, Servers,
+    ShareDesk, TokenStore,
 };
 use parking_lot::Mutex;
 use tower::ServiceExt as _;
 use uuid::Uuid;
-use wire::gateway::share::{DraftReport, RefusalReason, ShareRefusal};
+use wire::gateway::share::{DraftReport, RefusalReason, ServersReply, ShareRefusal};
 use wire::plugin::manifest::Permission;
 
 use crate::common;
@@ -34,6 +35,7 @@ struct FakeDesk {
     calls: Mutex<Vec<&'static str>>,
     failure: Mutex<Option<DeskError>>,
     draft: Mutex<Option<DraftId>>,
+    named: Mutex<Vec<BundleName>>,
 }
 
 impl FakeDesk {
@@ -100,6 +102,23 @@ impl ShareDesk for FakeDesk {
         Ok(self.drafted())
     }
 
+    async fn bundles(&self) -> Result<Vec<ReadyBundle>, DeskError> {
+        self.enter("bundles")?;
+        Ok(vec![ReadyBundle {
+            name: "dana-auth-2026-11-24".parse()?,
+            sessions: 2,
+            bytes: 4096,
+            open_flags: 1,
+            created_at: expiry(),
+        }])
+    }
+
+    async fn draft_bundle(&self, name: BundleName) -> Result<Draft, DeskError> {
+        self.enter("draft_bundle")?;
+        self.named.lock().push(name);
+        Ok(self.drafted())
+    }
+
     async fn report(&self, _id: DraftId) -> Result<Draft, DeskError> {
         self.enter("report")?;
         Ok(self.drafted())
@@ -143,6 +162,7 @@ impl ShareDesk for FakeDesk {
         self.enter("servers")?;
         Ok(Servers {
             servers: Vec::new(),
+            cloud_disabled: true,
             logins_file: "share-logins.json".to_owned(),
             token_store: TokenStore::File,
         })
@@ -248,6 +268,12 @@ fn routes() -> Vec<Route> {
         ),
         discard_draft(),
         route(Method::GET, "/api/share/servers", None),
+        route(Method::GET, "/api/share/bundles", None),
+        route(
+            Method::POST,
+            "/api/share/drafts/from-bundle",
+            Some(r#"{"name":"dana-auth-2026-11-24"}"#),
+        ),
         route(
             Method::POST,
             "/api/share/servers/login",
@@ -473,6 +499,18 @@ fn request_mappings() -> Vec<Mapping> {
             None,
         ),
         (
+            DeskError::UnknownBundle,
+            404,
+            RefusalReason::UnknownBundle,
+            None,
+        ),
+        (
+            DeskError::BundleFlags { open: 1 },
+            409,
+            RefusalReason::OpenFlags,
+            None,
+        ),
+        (
             DeskError::UnknownLogin,
             404,
             RefusalReason::UnknownLogin,
@@ -630,6 +668,21 @@ async fn a_malformed_request_is_an_invalid_refusal_that_never_reaches_the_desk()
                 r#"{{"sessions":[{{"id":"{SESSION}","decision":"approve","redact":{{"terms":["a"]}}}}]}}"#
             ),
         ),
+        bad("/api/share/drafts/from-bundle", r#"{"name":"../x"}"#),
+        bad("/api/share/drafts/from-bundle", r#"{"name":"a/b"}"#),
+        bad("/api/share/drafts/from-bundle", r#"{"name":"/etc/passwd"}"#),
+        bad("/api/share/drafts/from-bundle", r#"{"name":"a\\b"}"#),
+        bad("/api/share/drafts/from-bundle", r#"{"name":"x..json"}"#),
+        bad("/api/share/drafts/from-bundle", r#"{"name":".hidden"}"#),
+        bad("/api/share/drafts/from-bundle", r#"{"name":""}"#),
+        bad(
+            "/api/share/drafts/from-bundle",
+            r#"{"name":"b.review.local"}"#,
+        ),
+        bad(
+            "/api/share/drafts/from-bundle",
+            r#"{"name":"b","path":"x"}"#,
+        ),
     ] {
         let (status, _, body) = call(&app, &route, LOOPBACK, &[]).await?;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
@@ -644,5 +697,66 @@ async fn a_malformed_request_is_an_invalid_refusal_that_never_reaches_the_desk()
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_eq!(refusal(&body)?.reason, RefusalReason::UnknownDraft);
     assert_eq!(desk.calls(), Vec::<&str>::new());
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ready_bundles_and_the_cloud_policy_reach_the_wire_by_name() -> TestResult {
+    let desk = Arc::new(FakeDesk::default());
+    let app = node(&desk)?;
+    let (status, headers, body) = call(
+        &app,
+        &route(Method::GET, "/api/share/bundles", None),
+        LOOPBACK,
+        &[],
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        headers
+            .get("cache-control")
+            .map(axum::http::HeaderValue::as_bytes),
+        Some(&b"no-store"[..])
+    );
+    assert_eq!(
+        body,
+        r#"{"bundles":[{"name":"dana-auth-2026-11-24","sessions":2,"bytes":4096,"open_flags":1,"created_at":"1970-01-01T00:00:00Z","sanitized":true}]}"#
+    );
+
+    let (status, _, body) = call(
+        &app,
+        &route(
+            Method::POST,
+            "/api/share/drafts/from-bundle",
+            Some(r#"{"name":"dana-auth-2026-11-24"}"#),
+        ),
+        LOOPBACK,
+        &[],
+    )
+    .await?;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let report: DraftReport = serde_json::from_str(&body)?;
+    assert_eq!(report.draft, desk.id().to_string());
+    assert_eq!(
+        desk.named
+            .lock()
+            .iter()
+            .map(BundleName::as_str)
+            .collect::<Vec<_>>(),
+        ["dana-auth-2026-11-24"]
+    );
+
+    let (status, _, body) = call(
+        &app,
+        &route(Method::GET, "/api/share/servers", None),
+        LOOPBACK,
+        &[],
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains(r#""cloud_disabled":true"#), "{body}");
+    let servers: ServersReply = serde_json::from_str(&body)?;
+    assert!(servers.cloud_disabled);
+    assert_eq!(desk.calls(), ["bundles", "draft_bundle", "servers"]);
     Ok(())
 }

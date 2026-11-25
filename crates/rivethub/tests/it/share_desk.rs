@@ -36,7 +36,7 @@ use crate::sessions::chosen;
 use crate::sessions::decide;
 use crate::sessions::sessions;
 
-async fn model() -> TestResult<testkit::Stub> {
+pub(crate) async fn model() -> TestResult<testkit::Stub> {
     Ok(testkit::stub_server(
         axum::Router::new()
             .route("/v1/decide", axum::routing::post(decide))
@@ -48,7 +48,7 @@ async fn model() -> TestResult<testkit::Stub> {
     .await?)
 }
 
-fn desk(node: &Node, block: bool) -> TestResult<NodeDesk> {
+pub(crate) fn desk(node: &Node, block: bool) -> TestResult<NodeDesk> {
     let (config, env) = node.loaded(block)?;
     let store = memory_sqlite::SqliteStore::open(&node.database)?;
     Ok(NodeDesk::new::<rivethub::service::StartupError>(
@@ -60,7 +60,7 @@ fn desk(node: &Node, block: bool) -> TestResult<NodeDesk> {
     )?)
 }
 
-fn request(ids: &[&str], decide: bool) -> TestResult<DraftRequest> {
+pub(crate) fn request(ids: &[&str], decide: bool) -> TestResult<DraftRequest> {
     let sessions: SessionChoices = kernel::memory::share::choices(
         ids.iter()
             .map(|id| Ok((id.parse::<Uuid>()?, Decision::Approve, None)))
@@ -129,9 +129,9 @@ async fn draft_writes_no_file() -> TestResult {
 }
 
 #[derive(Clone, Default)]
-struct Drops(Arc<Mutex<Vec<StatusCode>>>);
+pub(crate) struct Drops(pub(crate) Arc<Mutex<Vec<StatusCode>>>);
 
-async fn upload(
+pub(crate) async fn upload(
     axum::extract::State(drops): axum::extract::State<Drops>,
 ) -> axum::response::Response {
     let refused = drops.0.lock().pop();
@@ -145,7 +145,7 @@ async fn upload(
     }
 }
 
-fn sign_in(node: &Node, host: &str) -> TestResult {
+pub(crate) fn sign_in(node: &Node, host: &str) -> TestResult {
     let path = node
         .home
         .path()
@@ -161,7 +161,7 @@ fn sign_in(node: &Node, host: &str) -> TestResult {
     Ok(())
 }
 
-fn send(host: &str, sessions: usize, kept_flags: usize) -> SendRequest {
+pub(crate) fn send(host: &str, sessions: usize, kept_flags: usize) -> SendRequest {
     SendRequest {
         server: host.to_owned().into(),
         signed: true,
@@ -850,9 +850,9 @@ async fn a_login_stalled_on_one_origin_does_not_delay_logout_on_another() -> Tes
 }
 
 #[derive(Clone, Default)]
-struct Pushes(Arc<Mutex<Vec<(String, wire::capture::CaptureBatchRequest)>>>);
+pub(crate) struct Pushes(pub(crate) Arc<Mutex<Vec<(String, wire::capture::CaptureBatchRequest)>>>);
 
-async fn hub_me() -> axum::response::Response {
+pub(crate) async fn hub_me() -> axum::response::Response {
     let me = wire::gateway::tenancy::MeResponse {
         user: "fay".to_owned(),
         spaces: Vec::new(),
@@ -869,7 +869,7 @@ async fn hub_me() -> axum::response::Response {
     axum::Json(me).into_response()
 }
 
-async fn hub_capture(
+pub(crate) async fn hub_capture(
     axum::extract::State(pushes): axum::extract::State<Pushes>,
     headers: axum::http::HeaderMap,
     axum::Json(batch): axum::Json<wire::capture::CaptureBatchRequest>,
@@ -892,7 +892,7 @@ async fn hub_capture(
     .into_response()
 }
 
-fn add_hub(node: &Node, host: &str) -> TestResult {
+pub(crate) fn add_hub(node: &Node, host: &str) -> TestResult {
     let config = node.home.path().join(".rivethub/config.yaml");
     let text = std::fs::read_to_string(&config)?;
     let hubs = format!("hubs:\n  - name: team\n    url: http://{host}\n    kind: team\n");
@@ -900,7 +900,7 @@ fn add_hub(node: &Node, host: &str) -> TestResult {
     Ok(())
 }
 
-fn team_login(node: &Node, host: &str) -> TestResult {
+pub(crate) fn team_login(node: &Node, host: &str) -> TestResult {
     let logins = node
         .home
         .path()

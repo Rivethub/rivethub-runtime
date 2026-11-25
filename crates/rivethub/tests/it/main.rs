@@ -20,6 +20,7 @@ mod owner;
 mod pgdb;
 mod roots;
 mod sessions;
+mod share_bundles;
 mod share_desk;
 mod share_receive;
 mod sqlite_worker_pause;

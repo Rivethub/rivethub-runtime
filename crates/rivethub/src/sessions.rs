@@ -114,16 +114,20 @@ pub fn kit(
 ) -> Result<Sessions, StartupError> {
     let share = NodeShare::new::<StartupError>(config, env, owner.clone(), store)?;
     let home = config::Paths::new(env)?.home().to_path_buf();
-    let data = match env.text("XDG_DATA_HOME").filter(|text| !text.is_empty()) {
-        Some(text) => PathBuf::from(text),
-        None => home.join(".local").join("share"),
-    };
     Ok(Sessions {
         node: share.author.node.clone(),
         share: Arc::new(share),
-        files: ShareFiles::new(data.join(SHARE_DIR), home),
+        files: ShareFiles::new(share_dir(env)?, home),
         owner,
     })
+}
+
+pub(crate) fn share_dir(env: &Environment) -> Result<PathBuf, config::ConfigError> {
+    let data = match env.text("XDG_DATA_HOME").filter(|text| !text.is_empty()) {
+        Some(text) => PathBuf::from(text),
+        None => config::Paths::new(env)?.home().join(".local").join("share"),
+    };
+    Ok(data.join(SHARE_DIR))
 }
 
 #[async_trait]

@@ -37,6 +37,7 @@ pub(super) async fn list(
                 default: server.default,
             })
             .collect(),
+        cloud_disabled: servers.cloud_disabled,
         logins_file: servers.logins_file,
         token_store: match servers.token_store {
             desk::TokenStore::Keyring => body::TokenStore::Keyring,
