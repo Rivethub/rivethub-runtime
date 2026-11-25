@@ -22,6 +22,14 @@ pub(super) struct McpServer {
 }
 
 impl McpServer {
+    pub(super) fn from_command(command: &str, args: &[String]) -> Self {
+        Self {
+            command: Some(CommandField::Line(command.to_owned())),
+            args: args.to_vec(),
+            url: None,
+        }
+    }
+
     pub(super) fn invocation(&self) -> String {
         let mut parts: Vec<&str> = Vec::new();
         match &self.command {
@@ -132,12 +140,6 @@ fn is_rh(word: &str) -> bool {
     is_named(word, "rh")
 }
 
-pub(super) fn runs_rh_mcp(text: &str) -> bool {
-    words(text)
-        .windows(2)
-        .any(|pair| matches!(pair, [binary, sub] if is_rh(binary) && sub == "mcp"))
-}
-
 pub(super) fn capture_hook_harness(text: &str) -> Option<String> {
     let words = words(text);
     let at = words.windows(3).position(
@@ -169,14 +171,6 @@ impl HookGroup {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_bash_wrapper_that_execs_rh_mcp_counts() {
-        assert!(runs_rh_mcp(
-            "bash -c set -a; . \"$HOME/.rivethub/.env\"; set +a; exec \"$HOME/.local/bin/rh\" mcp"
-        ));
-        assert!(!runs_rh_mcp("node server.js mcp"));
-    }
 
     #[test]
     fn only_the_exact_generated_wrappers_count_as_running_rh_mcp() {

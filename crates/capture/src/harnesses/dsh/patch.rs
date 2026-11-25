@@ -5,7 +5,7 @@ use std::path::Path;
 use kernel::harness_setup::SetupError;
 use serde_yaml_ng::Value;
 
-use super::super::entries;
+use super::super::entries::McpServer;
 use super::super::recall::ENTRY_NAME;
 use super::BEGIN;
 use super::CAPTURE_ID;
@@ -269,12 +269,7 @@ pub(super) fn row_runs_rh(row: &Row) -> bool {
     let Some(fields) = &row.recall else {
         return false;
     };
-    let mut text = fields.command.clone();
-    for arg in &fields.args {
-        text.push(' ');
-        text.push_str(arg);
-    }
-    entries::runs_rh_mcp(&text)
+    McpServer::from_command(&fields.command, &fields.args).runs_rh_mcp()
 }
 
 pub(super) fn names_our_recall(row: &Row) -> bool {
