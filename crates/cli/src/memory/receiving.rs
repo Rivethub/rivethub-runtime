@@ -218,9 +218,17 @@ fn served_here(probe: Result<Incoming, DropError>) -> Result<Option<Incoming>, D
     match probe {
         Ok(incoming) => Ok(Some(incoming)),
         Err(DropError::Gone(_) | DropError::Server(ServerError::Answered(401))) => Ok(None),
-        Err(DropError::Server(ServerError::Http(error))) if error.is_connect() => Ok(None),
+        Err(DropError::Server(ServerError::Http(error))) if refused(&error) => Ok(None),
         Err(error) => Err(error),
     }
+}
+
+fn refused(error: &(dyn std::error::Error + 'static)) -> bool {
+    std::iter::successors(Some(error), |cause| cause.source()).any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::ConnectionRefused)
+    })
 }
 
 fn screen(bundle: &SessionBundle) -> Result<(), ShareError> {

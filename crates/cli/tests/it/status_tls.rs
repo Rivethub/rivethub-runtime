@@ -17,16 +17,16 @@ use wire::gateway::HealthzResponse;
 
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-struct Served {
-    port: u16,
+pub(crate) struct Served {
+    pub(crate) port: u16,
     ca_pem: String,
-    cert_pem: String,
-    key_pem: String,
+    pub(crate) cert_pem: String,
+    pub(crate) key_pem: String,
     hosts: Arc<parking_lot::Mutex<Vec<String>>>,
-    task: tokio::task::JoinHandle<()>,
+    pub(crate) task: tokio::task::JoinHandle<()>,
 }
 
-async fn tls_health(dns_name: &str) -> Result<Served> {
+pub(crate) async fn tls_health(dns_name: &str) -> Result<Served> {
     tls_health_named(&[dns_name]).await
 }
 

@@ -2130,6 +2130,38 @@ async fn a_local_gateway_that_answers_401_falls_back_to_the_embedded_server() {
 }
 
 #[tokio::test]
+async fn a_local_gateway_with_an_untrusted_certificate_is_an_error_not_a_fallback() {
+    let served = drop_box().await;
+    let (code, _) = shared_through(&served).await;
+    let gets = served.drops.0.lock().gets;
+    let gateway = crate::status_tls::tls_health("localhost")
+        .await
+        .expect("tls gateway");
+    let node = Node::new("ines", "https://team.example.com/", None);
+    let cert = node.home.path().join("node.pem");
+    let key = node.home.path().join("node.key");
+    std::fs::write(&cert, &gateway.cert_pem).expect("cert");
+    std::fs::write(&key, &gateway.key_pem).expect("key");
+    support::config(
+        &node.home,
+        &format!(
+            "gateway:\n  host: 127.0.0.1\n  port: {}\n  tls_cert: {}\n  tls_key: {}\n  drops:\n    enabled: true\n    root: {}\nmemory:\n  share:\n    server:\n      url: https://team.example.com/\n    allowed_servers:\n      - {}\n",
+            gateway.port,
+            cert.display(),
+            key.display(),
+            node.home.path().join("own-drops").display(),
+            host_of(&served.url),
+        ),
+    );
+    let received = node.run(&["memory", "receive", &code, "--dry-run"]).await;
+    let fetched = served.drops.0.lock().gets - gets;
+    gateway.task.abort();
+    served.stop.cancel();
+    assert_eq!(received.exit, Exit::Failure, "{}", received.stdout);
+    assert_eq!(fetched, 0, "the embedded server was not dialed");
+}
+
+#[tokio::test]
 async fn receive_never_sends_the_drop_id_to_the_gateway_flag() {
     let unrelated = drop_box().await;
     let (received, fetched) =
