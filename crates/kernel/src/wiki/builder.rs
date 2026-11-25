@@ -170,6 +170,8 @@ pub enum WikiStoreError {
         aliases.join(", ")
     )]
     RedirectsHeld { page: String, aliases: Vec<String> },
+    #[error("redirects onto wiki pages {} kept changing during a fold; retry it", .0.join(", "))]
+    RedirectsMoving(Vec<String>),
 }
 
 impl WikiStoreError {

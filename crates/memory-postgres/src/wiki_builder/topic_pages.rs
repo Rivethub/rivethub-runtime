@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use jiff::Timestamp;
 use kernel::topics::{
     PageChange, PageEdit, PageSection, Topic, TopicId, TopicPage, TopicPageStore,
-    fold_section_steps,
 };
 use kernel::wiki::builder::WikiStoreError;
 use kernel::wiki::consolidate::{WikiConsolidateStore, WikiFold};
@@ -202,15 +201,12 @@ impl TopicPageStore for PostgresMemory {
 
     async fn fold_section(
         &self,
-        root: &Topic,
+        _root: &Topic,
         topic: &Topic,
         child: &WikiSlug,
         into: &WikiSlug,
         now: Timestamp,
     ) -> Result<(), WikiStoreError> {
-        if !self.in_root(&[child, into]).await? {
-            return fold_section_steps(self, root, topic, child, into, now).await;
-        }
         let fold = WikiFold {
             cluster: into.as_ref().to_owned(),
             parent: into.as_ref().to_owned(),
@@ -281,17 +277,6 @@ impl PostgresMemory {
                 .await?;
         }
         tx.commit().await.map_err(query_error)
-    }
-
-    async fn in_root(&self, slugs: &[&WikiSlug]) -> Result<bool, WikiStoreError> {
-        let mut connection = self.pool.acquire().await.map_err(query_error)?;
-        for slug in slugs {
-            let home = page_home(&mut connection, slug.as_ref()).await?;
-            if !home.directory.is_empty() || home.local != slug.as_ref() {
-                return Ok(false);
-            }
-        }
-        Ok(true)
     }
 
     async fn row_page(&self, slug: &WikiSlug) -> Result<Option<TopicPage>, WikiStoreError> {

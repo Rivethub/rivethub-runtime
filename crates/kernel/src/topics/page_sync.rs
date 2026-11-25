@@ -156,7 +156,7 @@ async fn swept(
     Ok(())
 }
 
-pub async fn fold_section_steps<P: TopicPageStore + ?Sized>(
+pub(crate) async fn fold_section_steps<P: TopicPageStore + ?Sized>(
     pages: &P,
     root: &Topic,
     topic: &Topic,

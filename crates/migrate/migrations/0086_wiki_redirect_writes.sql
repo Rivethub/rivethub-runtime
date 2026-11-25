@@ -12,8 +12,8 @@ BEGIN
     END IF;
     PERFORM set_config('rh.maintenance', 'on', true);
 
-    LOCK TABLE rh_wiki_topics IN SHARE ROW EXCLUSIVE MODE;
     LOCK TABLE rh_wiki_redirects IN ACCESS EXCLUSIVE MODE;
+    LOCK TABLE rh_wiki_topics IN SHARE ROW EXCLUSIVE MODE;
 
     FOR cascade_key IN
         SELECT conname FROM pg_constraint
