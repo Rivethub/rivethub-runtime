@@ -124,7 +124,7 @@ impl PostgresMemory {
         for key in fold_keys(fold) {
             lock_slug(tx, key).await?;
         }
-        let legacy = self.legacy_owner().await?;
+        let legacy = self.held_legacy_owner(tx).await?;
         if read_homes(tx, fold, &legacy).await? != *homes {
             return Err(WikiStoreError::InvalidPatch(format!(
                 "the pages of the {} fold changed while it waited for them",

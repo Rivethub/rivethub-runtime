@@ -2,13 +2,14 @@ use std::path::PathBuf;
 
 use kernel::tenancy::Scope;
 use kernel::wiki::builder::WikiStoreError;
-use sqlx::PgConnection;
+use sqlx::{PgConnection, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::PostgresMemory;
 
 const PRIVATE: &str = "private";
 const KEY_ATTEMPTS: u32 = 9;
+const ROOT_OWNER: &str = "SELECT owner_user_id FROM rh_wiki_scopes WHERE directory = ''";
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub(crate) struct WikiScope {
@@ -249,6 +250,17 @@ async fn scope_for(
     )))
 }
 
+pub(crate) async fn every_owner<'c>(
+    tx: &'c mut Transaction<'_, Postgres>,
+) -> Result<Transaction<'c, Postgres>, WikiStoreError> {
+    let mut savepoint = sqlx::Connection::begin(&mut **tx).await.map_err(failed)?;
+    sqlx::query("SELECT set_config('rh.maintenance', 'on', true)")
+        .execute(&mut *savepoint)
+        .await
+        .map_err(failed)?;
+    Ok(savepoint)
+}
+
 pub(crate) async fn scope_named(
     conn: &mut PgConnection,
     scope: &str,
@@ -321,19 +333,31 @@ impl PostgresMemory {
 
     pub(crate) async fn legacy_owner(&self) -> Result<LegacyOwner, WikiStoreError> {
         let recorded = Scope::Maintenance
-            .run(
-                sqlx::query_scalar::<_, String>(
-                    "SELECT owner_user_id FROM rh_wiki_scopes WHERE directory = ''",
-                )
-                .fetch_optional(&self.pool),
-            )
+            .run(sqlx::query_scalar::<_, String>(ROOT_OWNER).fetch_optional(&self.pool))
             .await
             .map_err(failed)?;
-        Ok(match (recorded, self.wiki_primary()) {
+        Ok(self.legacy(recorded))
+    }
+
+    pub(crate) async fn held_legacy_owner(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<LegacyOwner, WikiStoreError> {
+        let mut every_owner = every_owner(tx).await?;
+        let recorded = sqlx::query_scalar::<_, String>(ROOT_OWNER)
+            .fetch_optional(&mut *every_owner)
+            .await
+            .map_err(failed)?;
+        every_owner.rollback().await.map_err(failed)?;
+        Ok(self.legacy(recorded))
+    }
+
+    fn legacy(&self, recorded: Option<String>) -> LegacyOwner {
+        match (recorded, self.wiki_primary()) {
             (Some(recorded), Some(configured)) if recorded != configured => LegacyOwner::Contested,
             (Some(recorded), _) => LegacyOwner::Owner(recorded),
             (None, Some(configured)) => LegacyOwner::Owner(configured.to_owned()),
             (None, None) => LegacyOwner::Unknown,
-        })
+        }
     }
 }

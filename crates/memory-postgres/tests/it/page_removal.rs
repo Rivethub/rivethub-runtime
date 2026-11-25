@@ -1,7 +1,9 @@
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use jiff::Timestamp;
+use kernel::owner::Owner;
 use kernel::tenancy::Scope;
 use kernel::topics::TopicPageStore as _;
 use kernel::wiki::builder::WikiStoreError;
@@ -9,7 +11,9 @@ use kernel::wiki::consolidate::WikiConsolidateStore as _;
 use kernel::wiki::consolidate::WikiFold;
 use kernel::wiki::page::FoldMark;
 use kernel::wiki::page::WikiSlug;
+use memory_postgres::PostgresMemory;
 use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 
 use crate::common;
 use crate::page_access::ALPHA;
@@ -268,6 +272,46 @@ async fn maintenance_folds_and_removes_space_pages_by_their_file_names(pool: PgP
     assert!(
         redirects(&pool).await?.is_empty(),
         "its redirects go with it"
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_fold_and_a_removal_finish_on_a_single_connection_pool(pool: PgPool) -> TestResult {
+    let directory = tempfile::tempdir()?;
+    hub(&pool, directory.path()).await?;
+    seed(&pool, directory.path(), &ALPHA).await?;
+    seed(&pool, directory.path(), &BETA).await?;
+    let single = common::probe_with(
+        &pool,
+        PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(Duration::from_secs(2)),
+    )
+    .await?;
+    let memory = PostgresMemory::new(single)
+        .with_wiki_directory(directory.path().to_path_buf())
+        .with_wiki_owner(Owner::new("phil".to_owned())?);
+    let fold = WikiFold {
+        cluster: ALPHA.key.to_owned(),
+        parent: ALPHA.key.to_owned(),
+        children: vec![BETA.key.to_owned()],
+        mark: FoldMark::Merged,
+    };
+
+    let folded = Scope::Maintenance
+        .run(memory.fold_wiki(&fold, Timestamp::now()))
+        .await?;
+    assert_eq!(folded, [BETA.key.to_owned()]);
+    assert_eq!(rows(&pool, BETA.key).await?, 0, "the child row is retired");
+
+    Scope::Maintenance
+        .run(memory.remove_page(&slug(ALPHA.key)?))
+        .await?;
+    assert_eq!(
+        rows(&pool, ALPHA.key).await?,
+        0,
+        "the parent row is removed"
     );
     Ok(())
 }

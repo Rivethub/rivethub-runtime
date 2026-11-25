@@ -12,7 +12,7 @@ use sqlx::{Postgres, Transaction};
 use super::overlays::Placed;
 use super::{lock_slug, query_error, settle, topics};
 use crate::PostgresMemory;
-use crate::wiki_scope::{PageHome, WikiScope, page_home, scope_named};
+use crate::wiki_scope::{PageHome, WikiScope, every_owner, page_home, scope_named};
 use crate::wiki_writer::{LockedRepository, WikiRepository};
 
 #[derive(Debug, sqlx::FromRow)]
@@ -261,7 +261,7 @@ impl PostgresMemory {
     ) -> Result<(), WikiStoreError> {
         let mut tx = self.pool.begin().await.map_err(query_error)?;
         crate::wiki_redirect::hold_pages(&mut tx, &[slug.as_ref()], None).await?;
-        let legacy = self.legacy_owner().await?;
+        let legacy = self.held_legacy_owner(&mut tx).await?;
         match page_home(&mut tx, slug.as_ref(), &legacy).await? {
             Some(held) if held == *home => {}
             None => return tx.rollback().await.map_err(query_error),
@@ -535,13 +535,7 @@ async fn vacant(
     placed: &Placed,
     local: &WikiSlug,
 ) -> Result<bool, WikiStoreError> {
-    let mut every_owner = sqlx::Connection::begin(&mut **tx)
-        .await
-        .map_err(query_error)?;
-    sqlx::query("SELECT set_config('rh.maintenance', 'on', true)")
-        .execute(&mut *every_owner)
-        .await
-        .map_err(query_error)?;
+    let mut every_owner = every_owner(tx).await?;
     let vacant = sqlx::query_scalar::<_, bool>(
         "SELECT NOT EXISTS (SELECT 1 FROM rh_wiki_topics
                              WHERE slug = $1 OR topic_id = $2
