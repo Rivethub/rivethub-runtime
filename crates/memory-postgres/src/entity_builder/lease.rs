@@ -20,6 +20,8 @@ use sqlx::Postgres;
 use sqlx::Transaction;
 use uuid::Uuid;
 
+use crate::PostgresMemory;
+use crate::wiki_scope::WikiScope;
 use crate::wiki_writer::{LockedRepository, WikiRepository};
 
 use super::error::query_error;
@@ -56,6 +58,7 @@ pub(super) fn hold_payload(prepared: &PreparedEntity) -> serde_json::Value {
 pub(super) struct PgLease {
     pub(super) conn: Option<PgConnection>,
     pub(super) id: Uuid,
+    pub(super) home: WikiScope,
     pub(super) directory: PathBuf,
 }
 
@@ -111,7 +114,8 @@ impl EntityLease for PgLease {
                 }
                 let fresh = load_view(&mut tx, self.id).await?;
                 let prose = chosen_prose(&mut tx, &view, body, older).await?;
-                let git_sha = write_page(&mut tx, &mut repository, &fresh, &prose, now).await?;
+                let git_sha =
+                    write_page(&mut tx, &mut repository, &fresh, &self.home, &prose, now).await?;
                 Ok(PublishOutcome::Stored {
                     git_sha,
                     slug: fresh.slug,
@@ -168,7 +172,8 @@ impl EntityLease for PgLease {
                     summary: stored.summary,
                     article: prose_article(&stored.article),
                 };
-                let git_sha = write_page(&mut tx, repository, &fresh, &prose, now).await?;
+                let git_sha =
+                    write_page(&mut tx, repository, &fresh, &self.home, &prose, now).await?;
                 Ok(Some(git_sha))
             }
             .await;
@@ -259,10 +264,26 @@ impl PageText {
     }
 }
 
+pub(super) async fn entity_home(
+    memory: &PostgresMemory,
+    conn: &mut PgConnection,
+    id: Uuid,
+) -> Result<WikiScope, EntityStoreError> {
+    crate::wiki_scope::topic_scope(conn, id, memory.wiki_primary())
+        .await
+        .map_err(store_error)?
+        .ok_or_else(|| {
+            store_error(kernel::wiki::builder::WikiStoreError::TopicMissing(
+                format!("entity {id} has no wiki home"),
+            ))
+        })
+}
+
 pub(super) async fn publish_current_page(
     tx: &mut Transaction<'_, Postgres>,
     repository: &mut LockedRepository,
     view: &EntityView,
+    home: &WikiScope,
     prose: &EntityProse,
     now: Timestamp,
 ) -> Result<PublishOutcome, EntityStoreError> {
@@ -274,7 +295,7 @@ pub(super) async fn publish_current_page(
     if fresh.snapshot != view.snapshot {
         return Ok(PublishOutcome::Stale(Box::new(fresh)));
     }
-    let git_sha = write_page(tx, repository, &fresh, prose, now).await?;
+    let git_sha = write_page(tx, repository, &fresh, home, prose, now).await?;
     Ok(PublishOutcome::Stored {
         git_sha,
         slug: fresh.slug,
@@ -285,13 +306,14 @@ async fn write_page(
     tx: &mut Transaction<'_, Postgres>,
     repository: &mut LockedRepository,
     view: &EntityView,
+    home: &WikiScope,
     prose: &EntityProse,
     now: Timestamp,
 ) -> Result<String, EntityStoreError> {
     let mut page = entity_page(view, prose)?;
     let message = format!("entity {}", view.slug);
     let sha = repository.fold(&mut page, &[], &message, now).await?;
-    crate::wiki_builder::store_wiki_page(tx, &page, &view.slug, None, &sha, now)
+    crate::wiki_builder::store_wiki_page(tx, &page, &view.slug, Some(home), &sha, now)
         .await
         .map_err(store_error)?;
     super::bind::bind_page(tx, view.id, &view.slug)

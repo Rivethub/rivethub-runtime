@@ -51,6 +51,7 @@ use super::identity::resolve;
 use super::identity::write_aliases;
 use super::known::known_entities;
 use super::lease::PgLease;
+use super::lease::entity_home;
 use super::lease::finish_page_write;
 use super::lease::hold_payload;
 use super::lease::ignore_idle_timeout;
@@ -254,19 +255,20 @@ impl EntityStore for PostgresMemory {
         prose: &EntityProse,
         now: Timestamp,
     ) -> Result<PublishOutcome, EntityStoreError> {
-        let directory = self.wiki_home("").map_err(store_error)?;
         let mut conn = self.pool.acquire().await.map_err(query_error)?.detach();
+        let home = entity_home(self, &mut conn, view.id).await?;
         let mut tx = conn.begin().await.map_err(query_error)?;
         lock_view(&mut tx, view).await?;
+        let directory = self.wiki_home(&home.directory).map_err(store_error)?;
         let mut repository = WikiRepository::new(directory).lock().await?;
-        let published = publish_current_page(&mut tx, &mut repository, view, prose, now).await;
+        let published =
+            publish_current_page(&mut tx, &mut repository, view, &home, prose, now).await;
         let published = finish_page_write(tx, published).await;
         drop(conn);
         release_page(repository, published).await
     }
 
     async fn lease_entity(&self, id: Uuid) -> Result<Box<dyn EntityLease>, EntityStoreError> {
-        let directory = self.wiki_home("").map_err(store_error)?;
         let options = self.pool.connect_options();
         let mut conn = sqlx::PgConnection::connect_with(options.as_ref())
             .await
@@ -280,9 +282,12 @@ impl EntityStore for PostgresMemory {
             .execute(&mut conn)
             .await
             .map_err(query_error)?;
+        let home = entity_home(self, &mut conn, id).await?;
+        let directory = self.wiki_home(&home.directory).map_err(store_error)?;
         Ok(Box::new(PgLease {
             conn: Some(conn),
             id,
+            home,
             directory,
         }))
     }
