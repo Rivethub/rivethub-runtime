@@ -7,6 +7,7 @@ use memory_postgres::CaptureOptions;
 use memory_postgres::PostgresMemory;
 use sqlx::PgPool;
 use uuid::Uuid;
+use wire::capture::BundleFilter;
 use wire::capture::BundledSession;
 use wire::capture::CaptureBatchRequest;
 use wire::capture::CaptureMessage;
@@ -437,6 +438,7 @@ async fn messages_sharing_a_millisecond_export_in_bundle_order(pool: PgPool) -> 
                 node: "team".to_owned(),
             },
             None,
+            &BundleFilter::default(),
         )
         .await?;
     assert_eq!(exported.len(), 2);
@@ -529,7 +531,7 @@ fn assert_in_order(order: &[String], expected: &[String]) {
 
 async fn exported_order(store: &PostgresMemory) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let [session] = store
-        .bundled_sessions(&team(), None)
+        .bundled_sessions(&team(), None, &BundleFilter::default())
         .await?
         .try_into()
         .map_err(|_| "one session")?;
@@ -663,9 +665,17 @@ async fn a_trashed_import_stays_trashed_on_reimport_and_exports_only_when_named(
         user: "ines".to_owned(),
         node: "team".to_owned(),
     };
-    assert_eq!(store.bundled_sessions(&ines, None).await?.len(), 0);
+    assert_eq!(
+        store
+            .bundled_sessions(&ines, None, &BundleFilter::default())
+            .await?
+            .len(),
+        0
+    );
     let id = Uuid::parse_str(&first.conversation_id)?;
-    let named = store.bundled_sessions(&ines, Some(&[id])).await?;
+    let named = store
+        .bundled_sessions(&ines, Some(&[id]), &BundleFilter::default())
+        .await?;
     let forwarded = named
         .into_iter()
         .next()

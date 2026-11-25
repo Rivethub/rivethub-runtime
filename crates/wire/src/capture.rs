@@ -149,6 +149,33 @@ pub struct BundleAuthor {
     pub node: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum OwnerScope {
+    #[default]
+    Node,
+    Listed(Vec<String>),
+    All,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BundleFilter {
+    pub owners: OwnerScope,
+    pub since: Option<Timestamp>,
+    pub until: Option<Timestamp>,
+    pub limit: Option<u32>,
+}
+
+impl BundleFilter {
+    #[must_use]
+    pub fn owner_list(&self, node_owner: &str) -> Option<Vec<String>> {
+        match &self.owners {
+            OwnerScope::Node => Some(vec![node_owner.to_owned()]),
+            OwnerScope::Listed(owners) => Some(owners.clone()),
+            OwnerScope::All => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum Sanitization {

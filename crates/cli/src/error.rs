@@ -295,6 +295,26 @@ pub enum Error {
     SessionRequired,
     #[error("no session this node can export has the id {0}")]
     BundleUnknown(String),
+    #[error(
+        "session {id} belongs to owner {owner}, not {exporting}; pass --owner {owner} or --all-owners"
+    )]
+    BundleWrongOwner {
+        id: String,
+        owner: String,
+        exporting: String,
+    },
+    #[error("--owner requires a user id")]
+    OwnerRequired,
+    #[error("--until requires an ISO timestamp")]
+    UntilRequired,
+    #[error("invalid {flag} timestamp: {text}")]
+    BundleTime { flag: &'static str, text: String },
+    #[error("--owner and --all-owners cannot be combined")]
+    BundleOwnerConflict,
+    #[error(
+        "--session names sessions directly and cannot be combined with --since, --until or --limit"
+    )]
+    BundleSessionWindow,
     #[error("--out {0} is a directory; name the bundle file")]
     BundleOutDirectory(String),
     #[error("the users file {path} is not a users registry: {source}")]

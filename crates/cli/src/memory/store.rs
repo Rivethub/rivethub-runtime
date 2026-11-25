@@ -10,6 +10,7 @@ use memory_postgres::PostgresMemory;
 use memory_sqlite::SqliteStore;
 use uuid::Uuid;
 use wire::capture::BundleAuthor;
+use wire::capture::BundleFilter;
 use wire::capture::BundledSession;
 
 #[derive(Debug, Clone)]
@@ -45,13 +46,14 @@ impl SessionStore {
         let ids: Vec<Uuid> = choices.ids().collect();
         let sessions = match self {
             Self::Postgres(store) => store
-                .bundled_sessions(author, Some(&ids))
+                .bundled_sessions(author, Some(&ids), &BundleFilter::default())
                 .await
                 .map_err(MemoryStoreError::from)?,
             Self::Sqlite(store) => store
                 .bundled_sessions(
                     author.clone(),
                     Some(ids.iter().map(ToString::to_string).collect()),
+                    BundleFilter::default(),
                 )
                 .await
                 .map_err(MemoryStoreError::from)?,
