@@ -1008,7 +1008,7 @@ async fn every_elevating_function_runs_as_its_owner_on_a_pinned_path(pool: PgPoo
     Ok(())
 }
 
-fn refused(error: &sqlx::Error) -> bool {
+pub(crate) fn refused(error: &sqlx::Error) -> bool {
     error
         .as_database_error()
         .and_then(sqlx::error::DatabaseError::code)
