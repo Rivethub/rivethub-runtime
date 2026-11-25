@@ -2,6 +2,7 @@ use rusqlite::Connection;
 use serde::Deserialize;
 use wire::JsonObject;
 use wire::capture::BundleAuthor;
+use wire::capture::BundleFilter;
 use wire::capture::BundledSession;
 use wire::capture::CaptureBatchRequest;
 use wire::capture::CaptureMessage;
@@ -12,15 +13,22 @@ use crate::SqliteStore;
 use crate::error::SqliteError;
 use crate::time;
 
-const SESSIONS: &str = "SELECT c.id, c.session_key, c.agent, c.channel, c.title, c.settings, \
+const SESSIONS: &str = "WITH picked AS (SELECT c.id FROM ros_conversations c \
+       WHERE (?7 IS NULL OR coalesce(c.owner_user_id, ?2) IN (SELECT value FROM json_each(?7))) \
+         AND (c.id IN (SELECT value FROM json_each(?1)) OR (?1 IS NULL AND NOT EXISTS \
+           (SELECT 1 FROM rh_session_trash tr WHERE tr.session_key = c.session_key))) \
+         AND (?4 IS NULL OR rh_instant(c.updated_at) >= ?4) \
+         AND (?5 IS NULL OR rh_instant(c.updated_at) < ?5) \
+         AND EXISTS (SELECT 1 FROM ros_messages x WHERE x.conversation_id = c.id) \
+       ORDER BY rh_instant(c.updated_at) DESC, c.id \
+       LIMIT coalesce(?6, -1)) \
+     SELECT c.id, c.session_key, c.agent, c.channel, c.title, c.settings, \
      c.created_at, c.updated_at, coalesce(c.owner_user_id, ?2), coalesce(n.node, ?3), \
      m.id, m.role, m.content, m.tool_name, m.tool_args, m.tool_result, m.metadata, m.created_at \
-     FROM ros_messages m \
-     JOIN ros_conversations c ON c.id = m.conversation_id \
+     FROM picked p \
+     JOIN ros_conversations c ON c.id = p.id \
+     JOIN ros_messages m ON m.conversation_id = c.id \
      LEFT JOIN rh_conversation_nodes n ON n.conversation_id = c.id \
-     WHERE (c.owner_user_id IS NULL OR c.owner_user_id = ?2) \
-       AND (c.id IN (SELECT value FROM json_each(?1)) OR (?1 IS NULL AND NOT EXISTS \
-         (SELECT 1 FROM rh_session_trash tr WHERE tr.session_key = c.session_key))) \
      ORDER BY m.conversation_id, m.created_at, m.rowid";
 
 struct StoredSession {
@@ -49,8 +57,9 @@ impl SqliteStore {
         &self,
         author: BundleAuthor,
         conversation_ids: Option<Vec<String>>,
+        filter: BundleFilter,
     ) -> Result<Vec<BundledSession>, SqliteError> {
-        self.with_conn(move |conn| read_bundle(conn, &author, conversation_ids.as_deref()))
+        self.with_conn(move |conn| read_bundle(conn, &author, conversation_ids.as_deref(), &filter))
             .await
     }
 }
@@ -59,20 +68,31 @@ fn read_bundle(
     conn: &Connection,
     author: &BundleAuthor,
     conversation_ids: Option<&[String]>,
+    filter: &BundleFilter,
 ) -> Result<Vec<BundledSession>, SqliteError> {
-    let wanted = conversation_ids
-        .map(serde_json::to_string)
-        .transpose()
-        .map_err(|source| SqliteError::StoredJson {
-            column: "conversation ids",
-            source,
-        })?;
+    let json = |column, list: Option<&[String]>| {
+        list.map(serde_json::to_string)
+            .transpose()
+            .map_err(|source| SqliteError::StoredJson { column, source })
+    };
+    let wanted = json("conversation ids", conversation_ids)?;
+    let owners = json("owners", filter.owner_list(&author.user).as_deref())?;
+    let since = filter.since.map(time::seek_key);
+    let until = filter.until.map(time::seek_key);
     let mut statement = conn
         .prepare(SESSIONS)
         .map_err(SqliteError::query("session bundle"))?;
     let rows = statement
         .query_map(
-            rusqlite::params![wanted, author.user, author.node],
+            rusqlite::params![
+                wanted,
+                author.user,
+                author.node,
+                since,
+                until,
+                filter.limit,
+                owners
+            ],
             stored_session,
         )
         .map_err(SqliteError::query("session bundle"))?;

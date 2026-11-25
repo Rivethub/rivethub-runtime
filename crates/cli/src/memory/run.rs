@@ -50,11 +50,7 @@ pub(super) async fn run(
         MemoryCommand::Export { out, since, sqlite } => {
             export(out, since, sqlite, env, shutdown, stdout_is_terminal).await
         }
-        MemoryCommand::Bundle {
-            out,
-            sessions,
-            sqlite,
-        } => super::bundle::share(out, sessions, sqlite, env).await,
+        MemoryCommand::Bundle(job) => super::bundle::share(job, env).await,
         MemoryCommand::IngestBundle {
             path,
             force,

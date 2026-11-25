@@ -10,7 +10,9 @@ use config::Environment;
 use memory_postgres::PostgresMemory;
 use uuid::Uuid;
 use wire::capture::BundleAuthor;
+use wire::capture::BundleFilter;
 use wire::capture::BundledSession;
+use wire::capture::OwnerScope;
 use wire::capture::Sanitization;
 use wire::capture::SessionBundle;
 use wire::gateway::users::DEFAULT_OWNER_ID;
@@ -19,7 +21,7 @@ use wire::gateway::users::UsersRegistry;
 use super::parse::MemoryCommand;
 use super::parse::nonempty;
 use super::parse::reject;
-use super::run::open_sqlite;
+use super::run::open_sqlite_read_only;
 use super::target::Kind;
 use super::target::Target;
 use super::target::resolve;
@@ -28,11 +30,23 @@ use crate::Report;
 use crate::argv::Scan;
 use crate::argv::Taken;
 
+pub(super) struct BundleJob {
+    out: Option<PathBuf>,
+    sessions: Vec<String>,
+    sqlite: Option<PathBuf>,
+    filter: BundleFilter,
+    dry_run: bool,
+}
+
 pub(super) fn args(args: &[String]) -> Result<MemoryCommand, Error> {
     let mut scan = Scan::new(args);
     let mut out = None;
     let mut sessions = Vec::new();
     let mut sqlite = None;
+    let mut owners = Vec::new();
+    let mut all_owners = false;
+    let mut filter = BundleFilter::default();
+    let mut dry_run = false;
     while scan.current().is_some() {
         match scan.option("--session", None) {
             Taken::Value(value) if !value.trim().is_empty() => {
@@ -41,6 +55,25 @@ pub(super) fn args(args: &[String]) -> Result<MemoryCommand, Error> {
             }
             Taken::Value(_) | Taken::Missing => return Err(Error::SessionRequired),
             Taken::Absent => {}
+        }
+        match scan.option("--owner", None) {
+            Taken::Value(value) if !value.trim().is_empty() => {
+                owners.push(value.trim().to_owned());
+                continue;
+            }
+            Taken::Value(_) | Taken::Missing => return Err(Error::OwnerRequired),
+            Taken::Absent => {}
+        }
+        if scan.flag("--all-owners") {
+            all_owners = true;
+            continue;
+        }
+        if scan.flag("--dry-run") {
+            dry_run = true;
+            continue;
+        }
+        if take_window(&mut scan, &mut filter)? {
+            continue;
         }
         match scan.option("--out", None) {
             Taken::Value(value) => {
@@ -60,13 +93,62 @@ pub(super) fn args(args: &[String]) -> Result<MemoryCommand, Error> {
         }
         return Err(reject(&scan));
     }
-    let Some(out) = out else {
-        return Err(Error::OutRequired);
+    filter.owners = match (all_owners, owners.is_empty()) {
+        (true, false) => return Err(Error::BundleOwnerConflict),
+        (true, true) => OwnerScope::All,
+        (false, false) => OwnerScope::Listed(owners),
+        (false, true) => OwnerScope::Node,
     };
-    Ok(MemoryCommand::Bundle {
+    let windowed = filter.since.is_some() || filter.until.is_some() || filter.limit.is_some();
+    if windowed && !sessions.is_empty() {
+        return Err(Error::BundleSessionWindow);
+    }
+    if out.is_none() && !dry_run {
+        return Err(Error::OutRequired);
+    }
+    Ok(MemoryCommand::Bundle(BundleJob {
         out,
         sessions,
         sqlite,
+        filter,
+        dry_run,
+    }))
+}
+
+fn take_window(scan: &mut Scan<'_>, filter: &mut BundleFilter) -> Result<bool, Error> {
+    match scan.option("--since", None) {
+        Taken::Value(value) => {
+            filter.since = Some(when("--since", &value)?);
+            return Ok(true);
+        }
+        Taken::Missing => return Err(Error::SinceRequired),
+        Taken::Absent => {}
+    }
+    match scan.option("--until", None) {
+        Taken::Value(value) => {
+            filter.until = Some(when("--until", &value)?);
+            return Ok(true);
+        }
+        Taken::Missing => return Err(Error::UntilRequired),
+        Taken::Absent => {}
+    }
+    match scan.option("--limit", None) {
+        Taken::Value(value) => {
+            filter.limit = Some(match value.parse::<u32>() {
+                Ok(count) if count > 0 => count,
+                _ => return Err(Error::LimitPositive),
+            });
+            Ok(true)
+        }
+        Taken::Missing => Err(Error::LimitInteger),
+        Taken::Absent => Ok(false),
+    }
+}
+
+fn when(flag: &'static str, text: &str) -> Result<Timestamp, Error> {
+    super::parse::timestamp(text).map_err(|_| Error::BundleTime {
+        flag,
+        text: text.to_owned(),
     })
 }
 
@@ -269,15 +351,18 @@ fn author_of(session: &BundledSession) -> &str {
     session.origin.known_author().unwrap_or("an unknown author")
 }
 
-pub(super) async fn share(
-    out: PathBuf,
-    wanted: Vec<String>,
-    sqlite: Option<PathBuf>,
-    env: &Environment,
-) -> Result<Report, Error> {
-    if tokio::fs::metadata(&out)
-        .await
-        .is_ok_and(|metadata| metadata.is_dir())
+pub(super) async fn share(job: BundleJob, env: &Environment) -> Result<Report, Error> {
+    let BundleJob {
+        out,
+        sessions: wanted,
+        sqlite,
+        filter,
+        dry_run,
+    } = job;
+    if let Some(out) = out.as_ref().filter(|_| !dry_run)
+        && tokio::fs::metadata(out)
+            .await
+            .is_ok_and(|metadata| metadata.is_dir())
     {
         return Err(Error::BundleOutDirectory(out.display().to_string()));
     }
@@ -285,38 +370,87 @@ pub(super) async fn share(
     let target = resolve(env, sqlite, Kind::Either)?;
     let author = exporter_from(env, explicit).await?;
     let named = (!wanted.is_empty()).then_some(wanted);
-    let sessions = match target {
-        Target::Postgres(url) => {
-            let ids = named.as_deref().map(conversation_ids).transpose()?;
-            PostgresMemory::connect(&url)
-                .await?
-                .bundled_sessions(&author, ids.as_deref())
-                .await?
-        }
-        Target::Sqlite(path) => {
-            open_sqlite(&path)
-                .await?
-                .bundled_sessions(author.clone(), named.clone())
-                .await?
-        }
-    };
-    if let Some(named) = &named {
-        refuse_missing(named, &sessions)?;
+    let sessions = read(&target, &author, named.as_deref(), &filter).await?;
+    if let Some(wanted) = &named
+        && !missing(wanted, &sessions).is_empty()
+    {
+        let everyone = read(
+            &target,
+            &author,
+            named.as_deref(),
+            &BundleFilter {
+                owners: OwnerScope::All,
+                ..BundleFilter::default()
+            },
+        )
+        .await?;
+        return Err(refusal(wanted, &sessions, &everyone, &filter, &author.user));
     }
+    let owners: Vec<String> = sessions
+        .iter()
+        .map(|session| session.origin.author.clone())
+        .collect();
     let sessions: Vec<BundledSession> = sessions
         .into_iter()
         .map(BundledSession::forwarding_stored_origin)
         .collect();
     let count = sessions.len();
+    let noun = if count == 1 { "session" } else { "sessions" };
+    if dry_run {
+        let owned: Vec<BundledSession> = sessions
+            .into_iter()
+            .zip(owners)
+            .map(|(mut session, owner)| {
+                session.origin.author = owner;
+                session
+            })
+            .collect();
+        let shown: Vec<&BundledSession> = owned.iter().collect();
+        let mut lines: Vec<String> = shown.iter().map(|session| listed(session)).collect();
+        lines.push(format!(
+            "would bundle {}; nothing written\n",
+            sessions_from(&shown)
+        ));
+        return Ok(Report::success(lines.concat()));
+    }
+    let Some(out) = out else {
+        return Err(Error::OutRequired);
+    };
     let mut text =
         capture::bundle::seal(author, Timestamp::now(), Sanitization::Raw, sessions)?.text;
     text.push(b'\n');
     capture::share::write_file(out.clone(), text, capture::share::Clobber::Replace).await?;
-    let noun = if count == 1 { "session" } else { "sessions" };
     Ok(Report::success(format!(
         "bundled {count} {noun} (raw, not sanitized) to {}\n",
         out.display()
     )))
+}
+
+async fn read(
+    target: &Target,
+    author: &BundleAuthor,
+    named: Option<&[String]>,
+    filter: &BundleFilter,
+) -> Result<Vec<BundledSession>, Error> {
+    Ok(match target {
+        Target::Postgres(url) => {
+            let ids = named.map(conversation_ids).transpose()?;
+            PostgresMemory::connect(url)
+                .await?
+                .bundled_sessions(author, ids.as_deref(), filter)
+                .await?
+        }
+        Target::Sqlite(path) => {
+            open_sqlite_read_only(path)
+                .await?
+                .bundled_sessions(
+                    author.clone(),
+                    named.map(<[String]>::to_vec),
+                    filter.clone(),
+                )
+                .await?
+        }
+    })
 }
 
 fn conversation_ids(wanted: &[String]) -> Result<Vec<Uuid>, Error> {
@@ -326,8 +460,8 @@ fn conversation_ids(wanted: &[String]) -> Result<Vec<Uuid>, Error> {
         .collect()
 }
 
-fn refuse_missing(wanted: &[String], sessions: &[BundledSession]) -> Result<(), Error> {
-    let missing: Vec<&str> = wanted
+fn missing<'a>(wanted: &'a [String], sessions: &[BundledSession]) -> Vec<&'a str> {
+    wanted
         .iter()
         .filter(|id| {
             !sessions
@@ -335,11 +469,30 @@ fn refuse_missing(wanted: &[String], sessions: &[BundledSession]) -> Result<(), 
                 .any(|session| session.origin.conversation_id.eq_ignore_ascii_case(id))
         })
         .map(String::as_str)
-        .collect();
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(Error::BundleUnknown(missing.join(", ")))
+        .collect()
+}
+
+fn refusal(
+    wanted: &[String],
+    sessions: &[BundledSession],
+    everyone: &[BundledSession],
+    filter: &BundleFilter,
+    node_owner: &str,
+) -> Error {
+    let absent = missing(wanted, sessions);
+    let elsewhere = absent.iter().find_map(|id| {
+        everyone
+            .iter()
+            .find(|session| session.origin.conversation_id.eq_ignore_ascii_case(id))
+            .map(|session| (*id, session.origin.author.clone()))
+    });
+    match elsewhere {
+        Some((id, owner)) => Error::BundleWrongOwner {
+            id: id.to_owned(),
+            exporting: filter.owner_list(node_owner).unwrap_or_default().join(", "),
+            owner,
+        },
+        None => Error::BundleUnknown(absent.join(", ")),
     }
 }
 
