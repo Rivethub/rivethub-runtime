@@ -22,6 +22,7 @@ use crate::wiki::WikiLookup;
 use crate::wiki::builder::WikiStoreError;
 use crate::wiki::builder::WikiWriteError;
 use crate::wiki::page::FoldMark;
+use crate::wiki::page::SLUG_LIMIT;
 use crate::wiki::page::WikiSlug;
 use crate::wiki::page::bound::rebase;
 use crate::wiki::page::lead::steady_lead;
@@ -583,10 +584,19 @@ fn allocated_page_slug(base: &str, kind: TopicKind, attempt: u32) -> Option<Stri
             if attempt == 1 {
                 base.to_owned()
             } else {
-                format!("{base}-{attempt}")
+                numbered(base, attempt)
             }
         }),
     }
+}
+
+fn numbered(base: &str, attempt: u32) -> String {
+    let suffix = format!("-{attempt}");
+    let stem: String = base
+        .chars()
+        .take(SLUG_LIMIT.saturating_sub(suffix.len()))
+        .collect();
+    format!("{}{suffix}", stem.trim_end_matches('-'))
 }
 
 fn page_slug_text(topic: &Slug) -> String {
@@ -621,5 +631,16 @@ mod tests {
             allocated_page_slug("tinbox", TopicKind::Work, 2).as_deref(),
             Some("tinbox-2")
         );
+    }
+
+    #[test]
+    fn a_numbered_slug_stays_within_the_slug_limit() {
+        let base = format!("{}-{}", "a".repeat(77), "b".repeat(10));
+        let base = crate::wiki::page::normalize_slug(&base);
+        for attempt in [2, 10, super::SLUG_ATTEMPTS] {
+            let slug = allocated_page_slug(&base, TopicKind::Work, attempt).unwrap_or_default();
+            assert_eq!(crate::wiki::page::normalize_slug(&slug), slug);
+            assert!(slug.ends_with(&format!("-{attempt}")), "{slug}");
+        }
     }
 }

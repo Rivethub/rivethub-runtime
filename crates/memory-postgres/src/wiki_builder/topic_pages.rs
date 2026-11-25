@@ -343,13 +343,14 @@ impl PostgresMemory {
                 .map_err(super::fence_error)?;
         }
         lock_slug(&mut tx, &placed.key).await?;
-        if !claim.allows(&mut tx, placed).await? {
+        let existing = repository.read(&placed.local).await?;
+        if !claim.allows(&mut tx, placed, existing.is_some()).await? {
             tx.rollback().await.map_err(query_error)?;
             return Ok(false);
         }
         let local = WikiSlug::try_from(placed.local.clone())
             .map_err(|error| WikiStoreError::InvalidPatch(error.to_string()))?;
-        let mut stored = match repository.read(&placed.local).await? {
+        let mut stored = match existing {
             Some(stored) => stored,
             None => WikiPage::empty(local, page.title.clone()),
         };
@@ -411,10 +412,11 @@ impl Claim {
         self,
         tx: &mut Transaction<'_, Postgres>,
         placed: &Placed,
+        filed: bool,
     ) -> Result<bool, WikiStoreError> {
         match self {
             Self::Overwrite => Ok(true),
-            Self::Vacant if !placed.canonical => Ok(false),
+            Self::Vacant if filed || !placed.canonical => Ok(false),
             Self::Vacant => vacant(tx, placed).await,
         }
     }

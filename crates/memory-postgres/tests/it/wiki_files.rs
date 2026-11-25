@@ -53,6 +53,28 @@ async fn a_late_sweep_keeps_the_entity_page(pool: PgPool) -> TestResult {
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_numbered_long_slug_keeps_the_page_it_shortens_to(pool: PgPool) -> TestResult {
+    let wiki = tempfile::tempdir()?;
+    let root = std::fs::canonicalize(wiki.path())?;
+    let store = PostgresMemory::new(pool).with_wiki_directory(root.clone());
+    Scope::Maintenance
+        .run(testkit::wiki_files::a_numbered_long_slug_keeps_the_page_it_shortens_to(&store, &root))
+        .await?;
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_sweep_skips_a_page_file_without_a_row(pool: PgPool) -> TestResult {
+    let wiki = tempfile::tempdir()?;
+    let root = std::fs::canonicalize(wiki.path())?;
+    let store = PostgresMemory::new(pool).with_wiki_directory(root.clone());
+    Scope::Maintenance
+        .run(testkit::wiki_files::a_sweep_skips_a_page_file_without_a_row(&store, &root))
+        .await?;
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn removing_a_missing_file_in_a_new_repository_deletes_the_row(pool: PgPool) -> TestResult {
     let wiki = tempfile::tempdir()?;
     let root = std::fs::canonicalize(wiki.path())?;

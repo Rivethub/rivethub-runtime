@@ -35,7 +35,10 @@ pub(crate) async fn save_filed(
         let mut held = crate::page_files::HeldTx::open(&path)?;
         let tx = held.immediate()?;
         share(&tx, origin)?;
-        if !claim.allows(&tx, topic, &page.slug)? {
+        let filed = tokio::runtime::Handle::current()
+            .block_on(locked.read(page.slug.as_ref()))?
+            .is_some();
+        if (filed && matches!(claim, Claim::Vacant)) || !claim.allows(&tx, topic, &page.slug)? {
             return Ok(false);
         }
         let existing = read(&tx, &page.slug)?;
