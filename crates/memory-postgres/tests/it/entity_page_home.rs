@@ -268,6 +268,98 @@ async fn a_merge_leaves_another_owners_pages_alone(pool: PgPool) -> TestResult {
     Ok(())
 }
 
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_legacy_page_moves_into_its_owners_wiki_under_its_key(pool: PgPool) -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let memory = shared_memory(&pool, directory.path()).await?;
+    let entity = Uuid::new_v4();
+    let (conversation, leaf) = seed_session(&pool, "coco").await?;
+    seed_entity(&pool, entity, "cocobox", "coco").await?;
+    sqlx::query(
+        "INSERT INTO rh_wiki_topics (slug, title, current_state, topic_id, owner_user_id, visibility)
+         VALUES ('cocobox', 'cocobox', 'Old summary.', $1, 'phil', 'private')",
+    )
+    .bind(entity)
+    .execute(&pool)
+    .await?;
+
+    apply(&memory, entity, &rewrite(leaf, conversation, "coco")).await?;
+
+    let row = sqlx::query_as::<_, PageRow>(
+        "SELECT slug, owner_user_id, scope, local_slug FROM rh_wiki_topics WHERE topic_id = $1",
+    )
+    .bind(entity)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        row,
+        PageRow {
+            slug: "cocobox".to_owned(),
+            owner_user_id: Some("coco".to_owned()),
+            scope: Some("coco".to_owned()),
+            local_slug: Some("cocobox".to_owned()),
+        }
+    );
+    assert_eq!(
+        pages(&pool).await?,
+        vec![stored("cocobox", "coco", "GPU host.", Some(entity))]
+    );
+    assert!(
+        directory
+            .path()
+            .join("users/coco/topics/cocobox.md")
+            .exists()
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_merge_of_legacy_pages_removes_the_absorbed_file(pool: PgPool) -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let memory = shared_memory(&pool, directory.path()).await?;
+    let mut ids = [Uuid::new_v4(), Uuid::new_v4()];
+    ids.sort_unstable();
+    let [survivor, absorbed] = ids;
+    let (conversation, leaf) = seed_session(&pool, "coco").await?;
+    seed_entity(&pool, survivor, "box_a", "coco").await?;
+    seed_entity(&pool, absorbed, "g9", "coco").await?;
+    apply(&memory, absorbed, &rewrite(leaf, conversation, "coco")).await?;
+    sqlx::query(
+        "UPDATE rh_wiki_topics SET slug = 'g9', scope = NULL, local_slug = NULL, owner_user_id = NULL
+          WHERE topic_id = $1",
+    )
+    .bind(absorbed)
+    .execute(&pool)
+    .await?;
+    std::fs::create_dir_all(directory.path().join("topics"))?;
+    std::fs::rename(
+        directory.path().join("users/coco/topics/g9.md"),
+        directory.path().join("topics/g9.md"),
+    )?;
+    sqlx::query(
+        "INSERT INTO rh_wiki_topics (slug, title, current_state, topic_id, visibility)
+         VALUES ('box_a', 'box_a', 'Coco box.', $1, 'private')",
+    )
+    .bind(survivor)
+    .execute(&pool)
+    .await?;
+
+    Scope::Maintenance
+        .run(memory.merge_entities(absorbed, survivor, at("2026-11-12T00:00:00Z")))
+        .await?
+        .ok_or("merge returned nothing")?;
+
+    assert_eq!(
+        pages(&pool).await?,
+        vec![stored("box_a", "coco", "Coco box.", Some(survivor))]
+    );
+    assert!(
+        !directory.path().join("topics/g9.md").exists(),
+        "the absorbed legacy file leaves the primary wiki"
+    );
+    Ok(())
+}
+
 async fn shared_memory(
     pool: &PgPool,
     directory: &std::path::Path,

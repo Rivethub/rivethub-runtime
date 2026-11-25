@@ -18,6 +18,22 @@ pub(super) struct PageFile {
     pub(super) local: String,
 }
 
+async fn bound_page(
+    tx: &mut Transaction<'_, Postgres>,
+    topic: uuid::Uuid,
+) -> Result<Option<PageFile>, sqlx::Error> {
+    sqlx::query_as::<_, PageFile>(
+        "SELECT coalesce(s.directory, '') AS directory,
+                coalesce(t.local_slug, t.slug) AS local
+           FROM rh_wiki_topics t
+           LEFT JOIN rh_wiki_scopes s ON s.scope = t.scope
+          WHERE t.topic_id = $1",
+    )
+    .bind(topic)
+    .fetch_optional(&mut **tx)
+    .await
+}
+
 async fn absorbed_page(
     tx: &mut Transaction<'_, Postgres>,
     key: &str,
@@ -44,8 +60,12 @@ pub(super) async fn redirect_wiki(
     let home = entity_home(tx, survivor.id, primary).await?;
     let into = page_key(tx, survivor.id, &survivor.slug, &home).await?;
     let absorbed_home = entity_home(tx, absorbed.id, primary).await?;
+    let bound = bound_page(tx, absorbed.id).await.map_err(query_error)?;
     let from = page_key(tx, absorbed.id, &absorbed.slug, &absorbed_home).await?;
-    let removed = absorbed_page(tx, &from.key).await.map_err(query_error)?;
+    let removed = match bound {
+        Some(file) => Some(file),
+        None => absorbed_page(tx, &from.key).await.map_err(query_error)?,
+    };
     ensure_page(tx, survivor, &into, &home)
         .await
         .map_err(query_error)?;
