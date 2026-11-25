@@ -228,6 +228,32 @@ pub(crate) async fn store(
     Ok(())
 }
 
+pub(crate) async fn claim(
+    tx: &mut Transaction<'_, Postgres>,
+    page: &WikiPage,
+    key: &str,
+    home: Option<&WikiScope>,
+    now: Timestamp,
+) -> Result<bool, WikiStoreError> {
+    let claimed = sqlx::query(
+        "INSERT INTO rh_wiki_topics (slug, title, created_at, updated_at, scope, local_slug,
+            owner_user_id, visibility)
+         VALUES ($1, $2, $3, $3, $4, $5, $6, coalesce($7, 'private'))
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(key)
+    .bind(&page.meta.title)
+    .bind(crate::time::BindTime::bind_time(now))
+    .bind(home.map(|home| home.scope.as_str()))
+    .bind(home.map(|_| page.meta.slug.as_ref()))
+    .bind(home.map(WikiScope::row_owner))
+    .bind(home.map(|home| home.visibility.as_str()))
+    .execute(&mut **tx)
+    .await
+    .map_err(query_error)?;
+    Ok(claimed.rows_affected() == 1)
+}
+
 pub(super) async fn cite(
     tx: &mut Transaction<'_, Postgres>,
     slug: &str,

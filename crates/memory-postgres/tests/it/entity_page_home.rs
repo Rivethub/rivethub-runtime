@@ -724,6 +724,16 @@ async fn a_work_page_steps_past_a_scoped_page_with_its_name(pool: PgPool) -> Tes
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn a_work_page_steps_past_a_key_its_owner_cannot_see(pool: PgPool) -> TestResult {
+    steps_past_a_hidden_key(&pool, false).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_pinned_login_steps_past_a_key_it_cannot_see(pool: PgPool) -> TestResult {
+    steps_past_a_hidden_key(&pool, true).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_pinned_login_refused_a_page_row_commits_no_file(pool: PgPool) -> TestResult {
     let directory = tempfile::tempdir()?;
     let memory = shared_memory(&pool, directory.path()).await?;
     seed_page(
@@ -739,6 +749,51 @@ async fn a_work_page_steps_past_a_key_its_owner_cannot_see(pool: PgPool) -> Test
     .await?;
     let work = Uuid::new_v4();
     seed_topic(&pool, work, "work", "mesh", "phil").await?;
+    sqlx::query("INSERT INTO rh_role_principals (role_name, user_id) VALUES ($1, 'phil')")
+        .bind(common::PROBE)
+        .execute(&pool)
+        .await?;
+    let phil = Scope::Viewer(Viewer::new(Owner::new("phil".to_owned())?, Vec::new()));
+    let page = kernel::topics::TopicPage::empty(WikiSlug::try_from("mesh".to_owned())?, "mesh");
+
+    let saved = phil
+        .run(memory.save_topic_page(TopicId::from_uuid(work), &page, at("2026-11-07T02:00:00Z")))
+        .await;
+
+    assert!(saved.is_err(), "the pinned login overwrote a hidden page");
+    assert!(
+        !directory.path().join("topics/mesh.md").exists(),
+        "the refused write left a committed file"
+    );
+    assert_eq!(
+        pages(&pool).await?,
+        vec![stored("mesh", "coco", "Coco's mesh.", None)]
+    );
+    Ok(())
+}
+
+async fn steps_past_a_hidden_key(pool: &PgPool, pinned: bool) -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let memory = shared_memory(pool, directory.path()).await?;
+    if pinned {
+        sqlx::query("INSERT INTO rh_role_principals (role_name, user_id) VALUES ($1, 'phil')")
+            .bind(common::PROBE)
+            .execute(pool)
+            .await?;
+    }
+    seed_page(
+        pool,
+        &SeededPage {
+            key: "mesh",
+            local: "mesh",
+            owner: "coco",
+            topic: None,
+            state: "Coco's mesh.",
+        },
+    )
+    .await?;
+    let work = Uuid::new_v4();
+    seed_topic(pool, work, "work", "mesh", "phil").await?;
     let phil = Scope::Viewer(Viewer::new(Owner::new("phil".to_owned())?, Vec::new()));
 
     let failures = phil
@@ -754,7 +809,7 @@ async fn a_work_page_steps_past_a_key_its_owner_cannot_see(pool: PgPool) -> Test
 
     assert!(failures.is_empty(), "the sweep failed: {failures:?}");
     assert_eq!(
-        pages(&pool).await?,
+        pages(pool).await?,
         vec![
             stored("mesh", "coco", "Coco's mesh.", None),
             stored("mesh-2", "phil", "", Some(work)),

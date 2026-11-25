@@ -375,20 +375,10 @@ impl PostgresMemory {
                 body: section.body.clone(),
             })
             .collect();
-        let message = format!("wiki({}): sync topic page\n\nPipeline: wiki-v7", placed.key);
-        let Some(git_sha) = claim.write(repository, &mut stored, &message, now).await? else {
+        if !claim.reserve(&mut tx, &stored, placed, now).await? {
             tx.rollback().await.map_err(query_error)?;
             return Ok(false);
-        };
-        topics::store(
-            &mut tx,
-            &stored,
-            &placed.key,
-            placed.scope.as_ref(),
-            &git_sha,
-            now,
-        )
-        .await?;
+        }
         if let Some(topic) = placed.bind {
             sqlx::query(
                 "UPDATE rh_wiki_topics SET topic_id = NULL WHERE topic_id = $1 AND slug <> $2",
@@ -405,6 +395,20 @@ impl PostgresMemory {
                 .await
                 .map_err(query_error)?;
         }
+        let message = format!("wiki({}): sync topic page\n\nPipeline: wiki-v7", placed.key);
+        let Some(git_sha) = claim.write(repository, &mut stored, &message, now).await? else {
+            tx.rollback().await.map_err(query_error)?;
+            return Ok(false);
+        };
+        topics::store(
+            &mut tx,
+            &stored,
+            &placed.key,
+            placed.scope.as_ref(),
+            &git_sha,
+            now,
+        )
+        .await?;
         tx.commit().await.map_err(query_error)?;
         Ok(true)
     }
@@ -421,6 +425,22 @@ impl Claim {
             Self::Overwrite => Ok(true),
             Self::Vacant if filed || !placed.canonical => Ok(false),
             Self::Vacant => vacant(tx, placed).await,
+        }
+    }
+
+    async fn reserve(
+        self,
+        tx: &mut Transaction<'_, Postgres>,
+        page: &WikiPage,
+        placed: &Placed,
+        now: Timestamp,
+    ) -> Result<bool, WikiStoreError> {
+        let home = placed.scope.as_ref();
+        match self {
+            Self::Overwrite => topics::store(tx, page, &placed.key, home, "", now)
+                .await
+                .map(|()| true),
+            Self::Vacant => topics::claim(tx, page, &placed.key, home, now).await,
         }
     }
 
