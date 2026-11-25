@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 use jiff::Timestamp;
 use kernel::topics::{Topic, TopicPage};
-use kernel::wiki::builder::{WikiStoreError, WikiWriteError};
+use kernel::wiki::builder::WikiStoreError;
 use kernel::wiki::consolidate::{WikiConsolidateStore, WikiFold, WikiTopicStats};
 use kernel::wiki::page::{FoldMark, FoldedTopic, WikiPage, WikiSlug, fold_page, fold_text};
 use sqlx::{Postgres, Transaction};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use super::{lock_slug, query_error, settle, topics};
 use crate::PostgresMemory;
@@ -78,11 +78,14 @@ impl PostgresMemory {
         now: Timestamp,
     ) -> Result<Vec<String>, WikiStoreError> {
         let homes = self.fold_homes(fold).await?;
-        let mut repositories = Repositories::lock(self, &homes).await?;
+        let directory = &home_of(&homes, &fold.parent)?.directory;
+        let mut repository = WikiRepository::for_store(self.wiki_home(directory)?)
+            .lock()
+            .await?;
         let folded = self
-            .fold_pages(&mut repositories, fold, &homes, section, now)
+            .fold_pages(&mut repository, fold, &homes, section, now)
             .await;
-        settle(folded, repositories.release().await)
+        settle(folded, repository.release().await)
     }
 
     async fn fold_homes(&self, fold: &WikiFold) -> Result<Homes, WikiStoreError> {
@@ -92,12 +95,30 @@ impl PostgresMemory {
             let home = page_home(&mut connection, key).await?;
             homes.insert(key.clone(), home);
         }
+        let keys: Vec<&str> = homes.keys().map(String::as_str).collect();
+        let existing: Vec<String> =
+            sqlx::query_scalar("SELECT slug FROM rh_wiki_topics WHERE slug = ANY($1)")
+                .bind(&keys)
+                .fetch_all(&mut *connection)
+                .await
+                .map_err(query_error)?;
+        let parent = home_of(&homes, &fold.parent)?;
+        if let Some(stray) = existing.iter().find(|key| {
+            homes
+                .get(*key)
+                .is_some_and(|home| home.directory != parent.directory)
+        }) {
+            return Err(WikiStoreError::InvalidPatch(format!(
+                "wiki page {stray} lives in a different wiki than {}; a fold cannot span wiki homes",
+                fold.parent
+            )));
+        }
         Ok(homes)
     }
 
     async fn fold_pages(
         &self,
-        repositories: &mut Repositories,
+        repository: &mut LockedRepository,
         fold: &WikiFold,
         homes: &Homes,
         section: Option<&Topic>,
@@ -123,30 +144,23 @@ impl PostgresMemory {
         let row = text(&mut tx, &fold.parent)
             .await?
             .ok_or_else(|| WikiStoreError::TopicMissing(fold.parent.clone()))?;
-        let mut page = match repositories
-            .at(&parent.directory)?
-            .read(&parent.local)
-            .await?
-        {
+        let mut page = match repository.read(&parent.local).await? {
             Some(page) => page,
             None => indexed_page(&parent.local, row)?,
         };
-        let mut removed = Removed::new();
+        let mut removed = Vec::new();
         let mut folded = Vec::new();
         for child in fold.children.iter().filter(|child| **child != fold.parent) {
             let Some(mut row) = text(&mut tx, child).await? else {
                 continue;
             };
             let home = home_of(homes, child)?;
-            let mut file = repositories.at(&home.directory)?.read(&home.local).await?;
+            let mut file = repository.read(&home.local).await?;
             if let Some(owner) = section {
                 take_section(&mut page, &mut row, file.as_mut(), owner)?;
             }
             if file.is_some() {
-                removed
-                    .entry(home.directory.clone())
-                    .or_default()
-                    .push(home.local.clone());
+                removed.push(home.local.clone());
             }
             absorb(&mut page, &home.local, row, file, fold.mark);
             folded.push(child.clone());
@@ -165,9 +179,7 @@ impl PostgresMemory {
             fold.parent,
             folded.join(", ")
         );
-        let git_sha = repositories
-            .write(&mut page, &parent.directory, removed, &message, now)
-            .await?;
+        let git_sha = repository.fold(&mut page, &removed, &message, now).await?;
         let scope = match &parent.scope {
             Some(name) => scope_named(&mut tx, name).await?,
             None => None,
@@ -179,7 +191,6 @@ impl PostgresMemory {
 }
 
 type Homes = BTreeMap<String, PageHome>;
-type Removed = BTreeMap<String, Vec<String>>;
 
 async fn lock_homes(
     tx: &mut Transaction<'_, Postgres>,
@@ -217,65 +228,6 @@ fn indexed_page(local: &str, row: TextRow) -> Result<WikiPage, WikiStoreError> {
     page.meta.entities = row.entities;
     page.meta.related = row.related;
     Ok(page)
-}
-
-struct Repositories(Vec<(String, LockedRepository)>);
-
-impl Repositories {
-    async fn lock(memory: &PostgresMemory, homes: &Homes) -> Result<Self, WikiStoreError> {
-        let directories: BTreeSet<&str> =
-            homes.values().map(|home| home.directory.as_str()).collect();
-        let mut locked = Self(Vec::new());
-        for directory in directories {
-            let repository = match memory.wiki_home(directory) {
-                Ok(path) => WikiRepository::for_store(path)
-                    .lock()
-                    .await
-                    .map_err(WikiStoreError::from),
-                Err(error) => Err(error),
-            };
-            match repository {
-                Ok(repository) => locked.0.push((directory.to_owned(), repository)),
-                Err(error) => return settle(Err(error), locked.release().await),
-            }
-        }
-        Ok(locked)
-    }
-
-    fn at(&mut self, directory: &str) -> Result<&mut LockedRepository, WikiStoreError> {
-        self.0
-            .iter_mut()
-            .find(|(held, _)| held == directory)
-            .map(|(_, repository)| repository)
-            .ok_or(WikiStoreError::DirectoryMissing)
-    }
-
-    async fn write(
-        &mut self,
-        page: &mut WikiPage,
-        directory: &str,
-        mut removed: Removed,
-        message: &str,
-        now: Timestamp,
-    ) -> Result<String, WikiStoreError> {
-        let beside = removed.remove(directory).unwrap_or_default();
-        let git_sha = self
-            .at(directory)?
-            .fold(page, &beside, message, now)
-            .await?;
-        for (elsewhere, locals) in removed {
-            self.at(&elsewhere)?.remove(&locals, message).await?;
-        }
-        Ok(git_sha)
-    }
-
-    async fn release(self) -> Result<(), WikiWriteError> {
-        let mut released = Ok(());
-        for (_, repository) in self.0 {
-            released = released.and(repository.release().await);
-        }
-        released
-    }
 }
 
 fn take_section(

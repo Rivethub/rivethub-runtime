@@ -1061,3 +1061,77 @@ async fn the_redirect_migration_and_a_fold_that_read_its_pages_both_finish(
     );
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_fold_across_wiki_homes_is_refused_and_changes_nothing(pool: PgPool) -> TestResult {
+    let wiki = tempfile::tempdir()?;
+    let root = wiki.path().join("wiki");
+    let (store, _) = seed(&pool).await?;
+    let now = Timestamp::now();
+    let kitchen = work_topic(&store, "Kitchen", None).await?;
+    let pantry = store
+        .create(Topic::create(
+            TopicId::random(),
+            NewTopic {
+                kind: TopicKind::Work,
+                name: TopicName::new("Pantry")?,
+                aliases: Vec::new(),
+                parent: Some(kitchen.id),
+                directory: None,
+                owner: Some(viewer("bob")?.principal().clone()),
+            },
+            now,
+        )?)
+        .await?;
+    let admin = wiki_store(pool.clone(), &root, true)?;
+    admin
+        .save_topic_page(
+            kitchen.id,
+            &TopicPage::empty(slug("kitchen")?, "Kitchen"),
+            now,
+        )
+        .await?;
+    admin
+        .save_topic_page(
+            pantry.id,
+            &TopicPage {
+                summary: "Flour lives on the top shelf.".to_owned(),
+                ..TopicPage::empty(slug("pantry")?, "Pantry")
+            },
+            now,
+        )
+        .await?;
+    let fold = WikiFold {
+        cluster: "kitchen".to_owned(),
+        parent: "kitchen".to_owned(),
+        children: vec!["pantry".to_owned()],
+        mark: FoldMark::Merged,
+    };
+    let folder = PostgresMemory::new(probe(&pool).await?).with_wiki_directory(root.clone());
+
+    let folded = Scope::Maintenance
+        .run(folder.fold_wiki(&fold, Timestamp::now()))
+        .await;
+    assert!(
+        matches!(&folded, Err(WikiStoreError::InvalidPatch(message)) if message.contains("pantry")),
+        "a fold whose pages live in two wikis is refused, got {folded:?}"
+    );
+    let pantry_text: String =
+        sqlx::query_scalar("SELECT current_state FROM rh_wiki_topics WHERE slug = 'pantry'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(pantry_text, "Flour lives on the top shelf.");
+    let redirects: i64 = sqlx::query_scalar("SELECT count(*) FROM rh_wiki_redirects")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(redirects, 0, "the refused fold wrote no redirect");
+    assert!(
+        !std::fs::read_to_string(topic_file(&root, true, "kitchen"))?.contains("Flour"),
+        "the refused fold did not write the parent file"
+    );
+    assert!(
+        root.join("users/bob/topics/pantry.md").exists(),
+        "the refused fold kept the child file"
+    );
+    Ok(())
+}
