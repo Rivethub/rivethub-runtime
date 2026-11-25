@@ -3,10 +3,12 @@ use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::io::Read as _;
 use std::os::unix::fs::MetadataExt as _;
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;
 
 use capture::bundle::Sealed;
+use capture::sanitize::LocalKey;
 use capture::sanitize::LocalReview;
 use capture::sanitize::Report;
 use capture::sanitize::Restored;
@@ -17,6 +19,7 @@ use kernel::memory::share::desk::DeskError;
 use kernel::memory::share::desk::Draft;
 use kernel::memory::share::desk::ReadyBundle;
 use uuid::Uuid;
+use wire::capture::FlagMark;
 use wire::capture::ReviewStamp;
 use wire::capture::Sanitization;
 use wire::capture::SessionBundle;
@@ -26,6 +29,7 @@ use super::drafts::DraftState;
 use super::drafts::Phase;
 
 const EXTENSION: &str = ".json";
+const SIDECAR_BYTES: usize = 16 << 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct BundleFile {
@@ -74,8 +78,8 @@ enum Unready {
     Flags(#[from] capture::sanitize::SanitizeError),
     #[error("it holds too many sessions to count")]
     Count(#[from] std::num::TryFromIntError),
-    #[error("it changed while it was read")]
-    Moved,
+    #[error("its text is not the sanitized bundle its digest covers")]
+    Altered,
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -97,14 +101,45 @@ struct Ready {
     review: Option<ReviewStamp>,
 }
 
-fn load(path: PathBuf) -> Result<Ready, Unready> {
-    let metadata = std::fs::symlink_metadata(&path)?;
-    if !metadata.is_file() || metadata.len() > MAX_BUNDLE_BYTES as u64 {
+fn regular(path: &Path, cap: usize) -> Result<(std::fs::File, std::fs::Metadata), Unready> {
+    let opened = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags((nix::fcntl::OFlag::O_NOFOLLOW | nix::fcntl::OFlag::O_NONBLOCK).bits())
+        .open(path)
+        .map_err(|error| {
+            if error.raw_os_error().map(nix::errno::Errno::from_raw)
+                == Some(nix::errno::Errno::ELOOP)
+            {
+                Unready::NotFile
+            } else {
+                Unready::Io(error)
+            }
+        })?;
+    let metadata = opened.metadata()?;
+    if !metadata.is_file() || metadata.len() > cap as u64 {
         return Err(Unready::NotFile);
     }
+    Ok((opened, metadata))
+}
+
+fn capped(opened: std::fs::File, cap: usize) -> Result<Vec<u8>, Unready> {
+    let mut text = Vec::new();
+    opened.take(cap as u64 + 1).read_to_end(&mut text)?;
+    if text.len() > cap {
+        return Err(Unready::NotFile);
+    }
+    Ok(text)
+}
+
+fn load(path: PathBuf) -> Result<Ready, Unready> {
+    let (opened, metadata) = regular(&path, MAX_BUNDLE_BYTES)?;
     let file = BundleFile::of(path, &metadata);
-    let text = read(&file)?;
+    let text = capped(opened, MAX_BUNDLE_BYTES)?;
     let bundle = capture::bundle::parse(std::str::from_utf8(&text)?)?;
+    let text = text.trim_ascii_end();
+    if capture::bundle::canonical_text(&bundle)? != text {
+        return Err(Unready::Altered);
+    }
     let (at, policy_sha256, review) = match &bundle.manifest.sanitization {
         Sanitization::Sanitized(stamp) => {
             (stamp.at, stamp.policy_sha256.clone(), stamp.review.clone())
@@ -114,7 +149,7 @@ fn load(path: PathBuf) -> Result<Ready, Unready> {
     let flags = capture::sanitize::open_flags(&bundle)?;
     Ok(Ready {
         file,
-        text: text.trim_ascii_end().to_vec(),
+        text: text.to_vec(),
         sessions: u32::try_from(bundle.sessions.len())?,
         open: u32::try_from(flags.withheld + flags.unreviewed)?,
         bundle,
@@ -122,21 +157,6 @@ fn load(path: PathBuf) -> Result<Ready, Unready> {
         policy_sha256,
         review,
     })
-}
-
-fn read(file: &BundleFile) -> Result<Vec<u8>, Unready> {
-    let mut opened = std::fs::File::open(&file.path)?;
-    if BundleFile::of(file.path.clone(), &opened.metadata()?) != *file {
-        return Err(Unready::Moved);
-    }
-    let mut text = Vec::new();
-    (&mut opened)
-        .take(MAX_BUNDLE_BYTES as u64 + 1)
-        .read_to_end(&mut text)?;
-    if text.len() > MAX_BUNDLE_BYTES {
-        return Err(Unready::NotFile);
-    }
-    Ok(text)
 }
 
 fn bundle_name(file: &OsStr) -> Option<BundleName> {
@@ -206,64 +226,89 @@ pub(super) async fn forget(file: Option<BundleFile>) {
     }
 }
 
-async fn sibling(path: &Path) -> Result<Option<Vec<u8>>, DeskError> {
-    match tokio::fs::read(path).await {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(super::failed(error)),
+fn sidecar(path: &Path) -> Result<Option<Vec<u8>>, Unready> {
+    match regular(path, SIDECAR_BYTES) {
+        Ok((opened, _)) => Ok(Some(capped(opened, SIDECAR_BYTES)?)),
+        Err(Unready::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(unready) => Err(unready),
     }
 }
 
-async fn reviewed(
+fn reviewed(
     dir: &Path,
     name: &BundleName,
     review: &ReviewStamp,
     at: Timestamp,
+    key: &Path,
 ) -> Result<Option<(LocalReview, Restored)>, DeskError> {
     let paths = BundlePaths::beside(&dir.join(format!("{name}{EXTENSION}")));
-    let (Some(report), Some(local)) = (sibling(&paths.report).await?, sibling(&paths.local).await?)
-    else {
-        return Ok(None);
-    };
     let refused = |error: &dyn std::fmt::Display| {
         DeskError::Refused(format!(
             "the review files beside {name} cannot be used: {error}"
         ))
     };
+    let report = sidecar(&paths.report).map_err(|error| refused(&error))?;
+    let local = sidecar(&paths.local).map_err(|error| refused(&error))?;
+    let (Some(report), Some(local)) = (report, local) else {
+        return Ok(None);
+    };
     let local: LocalReview = serde_json::from_slice(&local).map_err(|error| refused(&error))?;
+    let key = LocalKey::load_or_create(key).map_err(super::failed)?;
+    if !local.holds_its_seal(&key.in_format(local.mac_format)) {
+        return Err(refused(
+            &"the local review file is not sealed under this machine's key",
+        ));
+    }
     let report = String::from_utf8(report).map_err(|error| refused(&error))?;
     let restored =
         capture::sanitize::restore(review, at, &local, &report).map_err(|error| refused(&error))?;
     Ok(Some((local, restored)))
 }
 
+type Opened = (Ready, Option<(LocalReview, Restored)>);
+
+fn opened(dir: &Path, name: &BundleName, key: &Path) -> Result<Opened, DeskError> {
+    let ready = load(dir.join(format!("{name}{EXTENSION}"))).map_err(|unready| {
+        if unready.not_ready() {
+            DeskError::UnknownBundle
+        } else {
+            super::failed(unready)
+        }
+    })?;
+    let reviewed = match &ready.review {
+        Some(review) if !review.flags.is_empty() => reviewed(dir, name, review, ready.at, key)?,
+        Some(_) | None => None,
+    };
+    Ok((ready, reviewed))
+}
+
+fn unshown(ready: &Ready) -> Result<usize, DeskError> {
+    let shown = ready.review.as_ref().map_or(0, |review| {
+        review
+            .flags
+            .iter()
+            .filter(|flag| matches!(flag.mark, FlagMark::Open | FlagMark::Keep))
+            .count()
+    });
+    Ok(usize::try_from(ready.open)
+        .map_err(super::failed)?
+        .max(shown))
+}
+
 impl NodeDesk {
     pub(super) async fn draft_from(&self, name: &BundleName) -> Result<Draft, DeskError> {
-        let path = self.share_dir.join(format!("{name}{EXTENSION}"));
-        let ready = tokio::task::spawn_blocking(move || load(path))
+        let dir = self.share_dir.clone();
+        let key = self.share.key.clone();
+        let named = name.clone();
+        let (ready, reviewed) = tokio::task::spawn_blocking(move || opened(&dir, &named, &key))
             .await
-            .map_err(super::failed)?
-            .map_err(|unready| {
-                if unready.not_ready() {
-                    DeskError::UnknownBundle
-                } else {
-                    super::failed(unready)
-                }
-            })?;
-        let reviewed = match &ready.review {
-            Some(review) if !review.flags.is_empty() => {
-                reviewed(&self.share_dir, name, review, ready.at).await?
-            }
-            Some(_) | None => None,
-        };
+            .map_err(super::failed)??;
         let (local, decision, resolved) = match reviewed {
             Some((local, restored)) => (Some(local), Some(restored.decision), restored.resolved),
-            None if ready.open > 0 => {
-                return Err(DeskError::BundleFlags {
-                    open: usize::try_from(ready.open).map_err(super::failed)?,
-                });
-            }
-            None => (None, None, BTreeMap::new()),
+            None => match unshown(&ready)? {
+                0 => (None, None, BTreeMap::new()),
+                flags => return Err(DeskError::BundleFlags { flags }),
+            },
         };
         let conversations = ready
             .bundle

@@ -147,7 +147,7 @@ async fn only_sanitized_bundles_are_listed_as_ready() -> TestResult {
     std::fs::copy(share.join("flagged.json"), share.join("orphan.json"))?;
     let orphan = desk.draft_bundle(name("orphan")?).await;
     assert!(
-        matches!(orphan, Err(DeskError::BundleFlags { open: 1 })),
+        matches!(orphan, Err(DeskError::BundleFlags { flags: 1 })),
         "a bundle without its review files cannot be reviewed: {orphan:?}"
     );
     model.close().await?;
@@ -434,5 +434,184 @@ async fn servers_the_share_policy_refuses_are_not_offered() -> TestResult {
             true
         )
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn text_outside_the_digest_keeps_a_bundle_from_being_ready() -> TestResult {
+    let dana = Node::new("dana", "http://127.0.0.1:9", &sessions()).await?;
+    let (alpha, _, _) = chosen(&dana)?;
+    let desk = desk(&dana, false)?;
+    sanitize(&dana, &[&alpha], "ready.json", Review::Off).await?;
+    let share = share_dir(&dana);
+    let text = std::fs::read_to_string(share.join("ready.json"))?;
+    let leak = format!(r#""leak":"{RISKY} unsanitized","#);
+    for (at, anchor) in [
+        ("top", r#"{"manifest":{"#),
+        ("manifest", r#""exported_at":"#),
+        ("session", r#""sessions":[{"#),
+        ("batch", r#""batch":{"#),
+    ] {
+        let (before, after) = text.split_once(anchor).ok_or(anchor)?;
+        let (open, rest) = if anchor.ends_with('{') {
+            (anchor, "")
+        } else {
+            ("", anchor)
+        };
+        let padded = format!("{before}{open}{leak}{rest}{after}");
+        let with = format!("{at}.json");
+        std::fs::write(share.join(&with), &padded)?;
+        assert!(
+            capture::bundle::parse(&padded).is_ok(),
+            "{at}: the digest does not cover the extra field"
+        );
+        let drafted = desk.draft_bundle(name(at)?).await;
+        assert!(
+            matches!(drafted, Err(DeskError::UnknownBundle)),
+            "{at}: {drafted:?}"
+        );
+    }
+    assert_eq!(listed(&desk).await?, [("ready".to_owned(), 1, 0)]);
+    Ok(())
+}
+
+fn copied(share: &std::path::Path, from: &str, to: &str) -> TestResult {
+    for file in ["json", "report.md", "review.local.json"] {
+        std::fs::copy(
+            share.join(format!("{from}.{file}")),
+            share.join(format!("{to}.{file}")),
+        )?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn review_files_that_are_links_are_refused() -> TestResult {
+    let model = model().await?;
+    let dana = Node::new("dana", &format!("http://{}", model.addr), &sessions()).await?;
+    let (_, gamma, _) = chosen(&dana)?;
+    let desk = desk(&dana, false)?;
+    sanitize(&dana, &[&gamma], "flagged.json", Review::Advise).await?;
+    let share = share_dir(&dana);
+    let elsewhere = dana.home.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere)?;
+    desk.draft_bundle(name("flagged")?).await?;
+
+    for sidecar in ["report.md", "review.local.json"] {
+        let linked = format!("linked-{}", sidecar.replace('.', "-"));
+        copied(&share, "flagged", &linked)?;
+        let file = format!("{linked}.{sidecar}");
+        std::fs::rename(share.join(&file), elsewhere.join(&file))?;
+        std::os::unix::fs::symlink(elsewhere.join(&file), share.join(&file))?;
+        let drafted = desk.draft_bundle(name(&linked)?).await;
+        assert!(
+            matches!(drafted, Err(DeskError::Refused(_))),
+            "a linked {sidecar} is refused: {drafted:?}"
+        );
+    }
+    model.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_local_review_file_that_lost_its_seal_is_refused() -> TestResult {
+    let model = model().await?;
+    let dana = Node::new("dana", &format!("http://{}", model.addr), &sessions()).await?;
+    let (_, gamma, _) = chosen(&dana)?;
+    let desk = desk(&dana, false)?;
+    sanitize(&dana, &[&gamma], "flagged.json", Review::Advise).await?;
+    let share = share_dir(&dana);
+    copied(&share, "flagged", "forged")?;
+    let local = share.join("forged.review.local.json");
+    let mut review: capture::sanitize::LocalReview =
+        serde_json::from_slice(&std::fs::read(&local)?)?;
+    let flag = review
+        .flags
+        .first_mut()
+        .ok_or("the local review holds the flag's text")?;
+    "forged text to show".clone_into(&mut flag.text);
+    std::fs::write(&local, serde_json::to_vec(&review)?)?;
+
+    desk.draft_bundle(name("flagged")?).await?;
+    let drafted = desk.draft_bundle(name("forged")?).await;
+    assert!(
+        matches!(drafted, Err(DeskError::Refused(_))),
+        "a local review file without its seal is refused: {drafted:?}"
+    );
+    model.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_bundle_with_kept_flags_needs_its_review_files_and_the_kept_count() -> TestResult {
+    let model = model().await?;
+    let captured = Pushes::default();
+    let hub = testkit::stub_server(
+        axum::Router::new()
+            .route("/api/me", axum::routing::get(hub_me))
+            .route("/api/capture", axum::routing::post(hub_capture))
+            .with_state(captured.clone()),
+    )
+    .await?;
+    let host = hub.addr.to_string();
+    let dana = Node::new("dana", &format!("http://{}", model.addr), &sessions()).await?;
+    let (_, gamma, _) = chosen(&dana)?;
+    let desk = desk(&dana, false)?;
+    sanitize(&dana, &[&gamma], "flagged.json", Review::Advise).await?;
+    let (_, env) = dana.loaded(false)?;
+    add_hub(&dana, &host)?;
+    team_login(&dana, &host)?;
+    let share = share_dir(&dana);
+    let key = capture::sanitize::LocalKey::load_or_create(&capture::share::key_path(&env)?)?;
+    let bundle = capture::bundle::parse(&std::fs::read_to_string(share.join("flagged.json"))?)?;
+    let local: capture::sanitize::LocalReview =
+        serde_json::from_slice(&std::fs::read(share.join("flagged.review.local.json"))?)?;
+    let flags = capture::sanitize::ReportFlags::from_choices(
+        &local,
+        &std::collections::BTreeMap::new(),
+        &[Mark {
+            number: 1,
+            choice: FlagChoice::Keep,
+            learn: false,
+        }],
+    )?;
+    let kept = capture::sanitize::resolve(&bundle, &flags, &local, &key)?;
+    std::fs::write(share.join("kept.json"), &kept.sealed.text)?;
+    assert_eq!(listed(&desk).await?.len(), 2, "a kept flag is not open");
+
+    let drafted = desk.draft_bundle(name("kept")?).await;
+    assert!(
+        matches!(drafted, Err(DeskError::BundleFlags { .. })),
+        "a kept flag cannot be shown without the review files: {drafted:?}"
+    );
+
+    for file in ["report.md", "review.local.json"] {
+        std::fs::copy(
+            share.join(format!("flagged.{file}")),
+            share.join(format!("kept.{file}")),
+        )?;
+    }
+    let draft = desk.draft_bundle(name("kept")?).await?;
+    let shown = draft.flags.first().ok_or("the kept flag is shown")?;
+    assert_eq!(shown.state, FlagState::Keep);
+    assert!(shown.text.as_str().contains(RISKY), "{shown:?}");
+    let confirm = |kept_flags| PushRequest {
+        hub: "team".to_owned().into(),
+        confirm: SendConfirm {
+            sessions: 1,
+            kept_flags,
+        },
+    };
+    let unconfirmed = desk.push(draft.id, confirm(0)).await;
+    assert!(
+        matches!(unconfirmed, Err(DeskError::Counts { kept: 1, .. })),
+        "{unconfirmed:?}"
+    );
+    desk.push(draft.id, confirm(1)).await?;
+    let seen = captured.0.lock().clone();
+    let text = serde_json::to_string(&seen.iter().map(|(_, batch)| batch).collect::<Vec<_>>())?;
+    assert!(text.contains(RISKY), "the kept text was confirmed and sent");
+    model.close().await?;
+    hub.close().await?;
     Ok(())
 }

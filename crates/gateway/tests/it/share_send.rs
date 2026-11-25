@@ -524,7 +524,7 @@ fn request_mappings() -> Vec<Mapping> {
             None,
         ),
         (
-            DeskError::BundleFlags { open: 1 },
+            DeskError::BundleFlags { flags: 1 },
             409,
             RefusalReason::OpenFlags,
             None,

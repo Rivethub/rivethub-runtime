@@ -26,6 +26,8 @@ use kernel::memory::share::desk::RuleCount;
 use kernel::memory::share::desk::SendConfirm;
 use tokio::sync::Mutex;
 use uuid::Uuid;
+use wire::capture::FlagMark;
+use wire::capture::Sanitization;
 
 pub(super) struct Drafts {
     slots: parking_lot::Mutex<BTreeMap<DraftId, Slot>>,
@@ -78,23 +80,23 @@ impl DraftState {
         }
     }
 
+    fn marked(&self, mark: FlagMark) -> usize {
+        match &self.sealed.bundle.manifest.sanitization {
+            Sanitization::Sanitized(stamp) => stamp.review.as_ref().map_or(0, |review| {
+                review.flags.iter().filter(|flag| flag.mark == mark).count()
+            }),
+            Sanitization::Raw => 0,
+        }
+    }
+
     pub(super) fn confirm(&self, confirm: SendConfirm) -> Result<(), DeskError> {
         self.open()?;
-        let flags = self
-            .report
-            .decision
-            .as_ref()
-            .map_or(0, |decision| decision.flags.len());
-        let open = flags.saturating_sub(self.resolved.len());
+        let open = self.marked(FlagMark::Open);
         if open > 0 {
             return Err(DeskError::OpenFlags { open });
         }
         let sessions = self.sealed.bundle.sessions.len();
-        let kept = self
-            .resolved
-            .values()
-            .filter(|resolution| **resolution == Resolution::Keep)
-            .count();
+        let kept = self.marked(FlagMark::Keep);
         if confirm.sessions != sessions || confirm.kept_flags != kept {
             return Err(DeskError::Counts {
                 sessions,

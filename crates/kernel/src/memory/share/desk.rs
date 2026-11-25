@@ -548,9 +548,9 @@ pub enum DeskError {
     )]
     UnknownBundle,
     #[error(
-        "the bundle has {open} open flags, but its report or local review file is missing, so they cannot be reviewed; sanitize the sessions again"
+        "the bundle has {flags} open or kept flags, but its report or local review file is missing, so they cannot be reviewed; sanitize the sessions again"
     )]
-    BundleFlags { open: usize },
+    BundleFlags { flags: usize },
     #[error("rh already holds {MAX_DRAFTS} drafts or 256 MiB of them; send or discard one first")]
     Full,
     #[error("{0}")]
