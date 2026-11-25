@@ -46,6 +46,9 @@ pub(super) async fn redirect_wiki(
     let absorbed_home = entity_home(tx, absorbed.id, primary).await?;
     let from = page_key(tx, absorbed.id, &absorbed.slug, &absorbed_home).await?;
     let removed = absorbed_page(tx, &from.key).await.map_err(query_error)?;
+    crate::wiki_redirect::hold_page(tx, &from.key)
+        .await
+        .map_err(store_error)?;
     ensure_page(tx, survivor, &into, &home)
         .await
         .map_err(query_error)?;

@@ -181,31 +181,14 @@ impl TopicPageStore for PostgresMemory {
     }
 
     async fn remove_page(&self, slug: &WikiSlug) -> Result<(), WikiStoreError> {
-        let message = format!("wiki({}): removed after a tidy review", slug.as_ref());
-        let removed = {
-            let mut repository = self.repository().await?;
-            let present = repository
-                .read(slug.as_ref())
-                .await
-                .map_err(WikiStoreError::from);
-            let removed = match present {
-                Ok(None) => Ok(()),
-                Ok(Some(_)) => repository
-                    .remove(&[slug.as_ref().to_owned()], &message)
-                    .await
-                    .map(|_| ())
-                    .map_err(WikiStoreError::from),
-                Err(error) => Err(error),
-            };
-            settle(removed, repository.release().await)
-        };
-        removed?;
-        sqlx::query("DELETE FROM rh_wiki_topics WHERE slug = $1")
-            .bind(slug.as_ref())
-            .execute(&self.pool)
-            .await
-            .map_err(query_error)?;
-        Ok(())
+        let mut repository = self.repository().await?;
+        let removed = self.remove_locked(&mut repository, slug).await;
+        settle(removed, repository.release().await)
+    }
+
+    async fn check_retire(&self, slug: &WikiSlug) -> Result<(), WikiStoreError> {
+        let mut conn = self.pool.acquire().await.map_err(query_error)?;
+        crate::wiki_redirect::check_retire(&mut conn, slug.as_ref()).await
     }
 }
 
@@ -243,6 +226,27 @@ impl PostgresMemory {
             .as_ref()
             .ok_or(WikiStoreError::DirectoryMissing)?;
         Ok(WikiRepository::for_store(directory.clone()).lock().await?)
+    }
+
+    async fn remove_locked(
+        &self,
+        repository: &mut LockedRepository,
+        slug: &WikiSlug,
+    ) -> Result<(), WikiStoreError> {
+        let mut tx = self.pool.begin().await.map_err(query_error)?;
+        crate::wiki_redirect::hold_page(&mut tx, slug.as_ref()).await?;
+        if repository.read(slug.as_ref()).await?.is_some() {
+            let message = format!("wiki({}): removed after a tidy review", slug.as_ref());
+            repository
+                .remove(&[slug.as_ref().to_owned()], &message)
+                .await?;
+        }
+        sqlx::query("DELETE FROM rh_wiki_topics WHERE slug = $1")
+            .bind(slug.as_ref())
+            .execute(&mut *tx)
+            .await
+            .map_err(query_error)?;
+        tx.commit().await.map_err(query_error)
     }
 
     async fn row_page(&self, slug: &WikiSlug) -> Result<Option<TopicPage>, WikiStoreError> {

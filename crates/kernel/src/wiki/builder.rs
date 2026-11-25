@@ -165,6 +165,11 @@ pub enum WikiStoreError {
     TopicMissing(String),
     #[error("invalid wiki patch: {0}")]
     InvalidPatch(String),
+    #[error(
+        "wiki page {page} has redirects owned by someone else ({}); only a maintenance run may retire it",
+        aliases.join(", ")
+    )]
+    RedirectsHeld { page: String, aliases: Vec<String> },
 }
 
 impl WikiStoreError {

@@ -2,7 +2,9 @@
 
 use jiff::SignedDuration;
 use jiff::Timestamp;
+use kernel::owner::Owner;
 use kernel::tenancy::Scope;
+use kernel::tenancy::Viewer;
 use kernel::wiki::entity_pass::EntityStore;
 use memory_postgres::PostgresMemory;
 use pgvector::HalfVector;
@@ -114,6 +116,61 @@ async fn bind_survivor(pool: PgPool) -> TestResult {
             .fetch_one(&pool)
             .await?;
     assert_eq!(bound, older);
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_viewer_merge_keeps_another_persons_alias(pool: PgPool) -> TestResult {
+    let kind = seed_type(&pool).await?;
+    let older = Uuid::new_v4();
+    let younger = Uuid::new_v4();
+    seed_entity(
+        &pool,
+        older,
+        "box_a",
+        "box_a",
+        kind,
+        at("2026-10-01T00:00:00Z"),
+    )
+    .await?;
+    seed_entity(&pool, younger, "g9", "G9", kind, at("2026-11-01T00:00:00Z")).await?;
+    unbound_page(&pool, "box_a", "older host").await?;
+    unbound_page(&pool, "g9", "newer host").await?;
+    sqlx::query(
+        "INSERT INTO rh_wiki_redirects (from_slug, to_slug, owner_user_id) VALUES ('old-g9', 'g9', 'bob')",
+    )
+    .execute(&pool)
+    .await?;
+    let memory = PostgresMemory::new(crate::common::probe(&pool).await?);
+    let now = at("2026-11-12T00:00:00Z");
+    let owner = Scope::Viewer(Viewer::new(Owner::new("owner".to_owned())?, Vec::new()));
+    let refused = owner.run(memory.merge_entities(younger, older, now)).await;
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("old-g9")),
+        "a viewer merge over bob's alias is refused, got {refused:?}"
+    );
+    let alias = || async {
+        sqlx::query_scalar::<_, String>(
+            "SELECT to_slug FROM rh_wiki_redirects WHERE from_slug = 'old-g9'",
+        )
+        .fetch_one(&pool)
+        .await
+    };
+    assert_eq!(alias().await?, "g9");
+    let entities: i64 = sqlx::query_scalar("SELECT count(*) FROM rh_topics WHERE id = ANY($1)")
+        .bind([older, younger].as_slice())
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(entities, 2, "the refused merge kept both entities");
+
+    let done = Scope::Maintenance
+        .run(memory.merge_entities(younger, older, now))
+        .await?
+        .ok_or("merge returned nothing")?;
+    assert!(done.performed);
+    assert_eq!(alias().await?, "box_a");
     Ok(())
 }
 

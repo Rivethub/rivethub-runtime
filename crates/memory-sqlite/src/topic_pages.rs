@@ -242,6 +242,10 @@ impl TopicPageStore for SqliteStore {
         })
         .await
     }
+
+    async fn check_retire(&self, _slug: &WikiSlug) -> Result<(), WikiStoreError> {
+        Ok(())
+    }
 }
 
 async fn write_topic_page(

@@ -127,6 +127,9 @@ impl PostgresMemory {
             tx.commit().await.map_err(query_error)?;
             return Ok(folded);
         }
+        for child in &folded {
+            crate::wiki_redirect::hold_page(&mut tx, child).await?;
+        }
         let message = format!(
             "wiki({}): consolidate {}\n\nPipeline: wiki-v7",
             fold.parent,

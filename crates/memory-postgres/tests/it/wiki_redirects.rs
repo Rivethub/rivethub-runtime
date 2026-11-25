@@ -1,7 +1,17 @@
 use jiff::Timestamp;
 use kernel::tenancy::Scope;
+use kernel::topics::NewTopic;
+use kernel::topics::Topic;
+use kernel::topics::TopicId;
+use kernel::topics::TopicKind;
+use kernel::topics::TopicName;
+use kernel::topics::TopicPage;
 use kernel::topics::TopicPageStore as _;
+use kernel::topics::TopicStore as _;
 use kernel::wiki::builder::WikiStoreError;
+use kernel::wiki::consolidate::WikiConsolidateStore as _;
+use kernel::wiki::consolidate::WikiFold;
+use kernel::wiki::page::FoldMark;
 use kernel::wiki::page::WikiSlug;
 use memory_postgres::PostgresMemory;
 use sqlx::PgPool;
@@ -304,6 +314,100 @@ async fn an_owner_writes_only_redirects_to_pages_they_can_see(pool: PgPool) -> T
 
 fn slug(text: &str) -> Result<WikiSlug, Box<dyn std::error::Error>> {
     Ok(WikiSlug::try_from(text.to_owned())?)
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_viewer_cannot_retire_a_page_another_person_redirects_to(pool: PgPool) -> TestResult {
+    let (store, _) = seed(&pool).await?;
+    let wiki = tempfile::tempdir()?;
+    let root = wiki.path().join("wiki");
+    let alice = viewer("alice")?;
+    let now = Timestamp::now();
+    let kitchen = store
+        .create(Topic::create(
+            TopicId::random(),
+            NewTopic {
+                kind: TopicKind::Work,
+                name: TopicName::new("Kitchen")?,
+                aliases: Vec::new(),
+                parent: None,
+                directory: None,
+                owner: Some(alice.principal().clone()),
+            },
+            now,
+        )?)
+        .await?;
+    let admin = PostgresMemory::new(pool.clone()).with_wiki_directory(root.clone());
+    admin
+        .save_topic_page(
+            kitchen.id,
+            &TopicPage::empty(slug("kitchen")?, "Kitchen"),
+            now,
+        )
+        .await?;
+    sqlx::raw_sql(
+        "INSERT INTO rh_wiki_topics (slug, title, current_state, owner_user_id, visibility)
+         VALUES ('pantry', 'Pantry', 'Flour lives on the top shelf.', 'shared', 'shared');
+         INSERT INTO rh_wiki_redirects (from_slug, to_slug, owner_user_id)
+         VALUES ('larder', 'pantry', 'bob')",
+    )
+    .execute(&pool)
+    .await?;
+    let fold = WikiFold {
+        cluster: "kitchen".to_owned(),
+        parent: "kitchen".to_owned(),
+        children: vec!["pantry".to_owned()],
+        mark: FoldMark::Merged,
+    };
+
+    let probe = probe(&pool).await?;
+    let viewer_store = PostgresMemory::new(probe.clone()).with_wiki_directory(root.clone());
+    let owners = Scope::Viewer(alice);
+    let folded = owners.clone().run(viewer_store.fold_wiki(&fold, now)).await;
+    assert!(
+        matches!(&folded, Err(WikiStoreError::RedirectsHeld { page, aliases })
+            if page == "pantry" && aliases == &["larder".to_owned()]),
+        "a viewer fold over bob's alias is refused, got {folded:?}"
+    );
+    let removed = owners
+        .clone()
+        .run(viewer_store.remove_page(&slug("pantry")?))
+        .await;
+    assert!(
+        matches!(&removed, Err(WikiStoreError::RedirectsHeld { .. })),
+        "a viewer removal under bob's alias is refused, got {removed:?}"
+    );
+    let checked = owners
+        .run(viewer_store.check_retire(&slug("pantry")?))
+        .await;
+    assert!(
+        matches!(&checked, Err(WikiStoreError::RedirectsHeld { .. })),
+        "a topic sync learns it cannot retire the page, got {checked:?}"
+    );
+    assert_eq!(
+        redirect_row(&pool, "larder").await?,
+        ("pantry".to_owned(), Some("bob".to_owned()))
+    );
+    let pantry: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM rh_wiki_topics WHERE slug = 'pantry'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(pantry, 1, "the refused fold kept the page row");
+    let kitchen_text = std::fs::read_to_string(root.join("topics/kitchen.md"))?;
+    assert!(
+        !kitchen_text.contains("Flour"),
+        "the refused fold left the parent file alone"
+    );
+
+    let maintained = Scope::Maintenance
+        .run(viewer_store.fold_wiki(&fold, now))
+        .await?;
+    assert_eq!(maintained, vec!["pantry".to_owned()]);
+    assert_eq!(
+        redirect_row(&pool, "larder").await?,
+        ("kitchen".to_owned(), Some("bob".to_owned()))
+    );
+    Ok(())
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]

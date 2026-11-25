@@ -67,6 +67,7 @@ mod topics;
 mod wiki;
 mod wiki_builder;
 mod wiki_citations;
+mod wiki_redirect;
 mod wiki_scope;
 pub use wiki_files::wiki_writer;
 mod worker_pauses;

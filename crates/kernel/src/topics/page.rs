@@ -171,6 +171,8 @@ pub trait TopicPageStore: Send + Sync {
     ) -> Result<(), WikiStoreError>;
 
     async fn remove_page(&self, slug: &WikiSlug) -> Result<(), WikiStoreError>;
+
+    async fn check_retire(&self, slug: &WikiSlug) -> Result<(), WikiStoreError>;
 }
 
 #[derive(Debug, Error)]
@@ -354,6 +356,7 @@ impl PageSync<'_> {
         let Some(child) = self.pages.topic_page(own).await? else {
             return Ok(());
         };
+        self.pages.check_retire(own).await?;
         let text = child.text();
         if !text.is_empty() {
             let before = self.read(home).await?;
