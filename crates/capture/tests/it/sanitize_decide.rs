@@ -764,3 +764,96 @@ fn only_a_missing_mac_format_reads_as_v1() -> TestResult {
     assert_eq!(v2.mac_format, MacFormat::V2);
     Ok(())
 }
+
+fn review_of(
+    bundle: &SessionBundle,
+) -> Result<(wire::capture::ReviewStamp, Timestamp), &'static str> {
+    match &bundle.manifest.sanitization {
+        Sanitization::Sanitized(stamp) => Ok((stamp.review.clone().ok_or("no review")?, stamp.at)),
+        Sanitization::Raw => Err("raw"),
+    }
+}
+
+#[tokio::test]
+async fn a_review_restored_from_its_files_resolves_like_the_original() -> TestResult {
+    let (stub, _) = model().await?;
+    let sanitized = advisory(format!("http://{}", stub.addr)).await?;
+    let local = sanitized.local.clone().ok_or("no local review")?;
+    let original = sanitized.report.decision.clone().ok_or("no decision")?;
+    let report = sanitized.report.markdown("s.clean.json", "none");
+    let (review, at) = review_of(&sanitized.sealed.bundle)?;
+
+    let fresh = sanitize::restore(&review, at, &local, &report)?;
+    let restored = &fresh.decision;
+    assert!(fresh.resolved.is_empty());
+    assert_eq!(
+        (
+            restored.scored,
+            restored.trivial,
+            restored.calls,
+            &restored.model
+        ),
+        (
+            original.scored,
+            original.trivial,
+            original.calls,
+            &original.model
+        )
+    );
+    assert_eq!(
+        (restored.review.top, restored.review.mode),
+        (original.review.top, original.review.mode)
+    );
+    assert!((restored.review.threshold - original.review.threshold).abs() < 0.005);
+    assert_eq!(restored.flags.len(), original.flags.len());
+    for (restored, original) in restored.flags.iter().zip(&original.flags) {
+        assert_eq!(restored.number, original.number);
+        assert_eq!(restored.text, original.text);
+        assert_eq!(restored.places(), original.places());
+        assert!((restored.score - original.score).abs() < 0.005);
+    }
+
+    let report = mark(&report, 1, &format!("map {RISKY} as <customer>"));
+    let report = mark(&report, 2, "redact");
+    let flags = sanitize::marks::read_flags(&report)?;
+    let key = policy()?.key;
+    let partly = sanitize::resolve(&sanitized.sealed.bundle, &flags, &local, &key)?;
+    let applied: Vec<usize> = partly.applied.iter().map(|(number, _)| *number).collect();
+    let rewritten = flags.rewrite(&report, partly.open, partly.total, &applied);
+    let (review, at) = review_of(&partly.sealed.bundle)?;
+
+    let later = sanitize::restore(&review, at, &local, &rewritten)?;
+    assert_eq!(
+        later.resolved.into_iter().collect::<Vec<_>>(),
+        [
+            (
+                1,
+                sanitize::decide::Resolution::Map {
+                    term: RISKY.to_owned(),
+                    placeholder: "<customer>".to_owned()
+                }
+            ),
+            (2, sanitize::decide::Resolution::Redact),
+        ]
+    );
+    let resolved = partly.applied.iter().cloned().collect();
+    let desk = sanitize::ReportFlags::from_choices(
+        &local,
+        &resolved,
+        &[kernel::memory::share::desk::Mark {
+            number: 3,
+            choice: kernel::memory::share::desk::FlagChoice::Keep,
+            learn: false,
+        }],
+    )?;
+    let done = sanitize::resolve(&partly.sealed.bundle, &desk, &local, &key)?;
+    assert_eq!(done.open, 0);
+
+    assert_eq!(
+        sanitize::restore(&review, at, &local, &report).err(),
+        Some(sanitize::RestoreError::Lost(1)),
+        "a report from before the resolve has no Resolved line for the map"
+    );
+    stub.close().await?;
+    Ok(())
+}

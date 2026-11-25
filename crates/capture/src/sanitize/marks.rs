@@ -151,6 +151,7 @@ pub struct ReportFlag {
     pub shown: String,
     pub state: MarkState,
     line: Option<usize>,
+    score: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -224,6 +225,7 @@ struct Pending {
     mark: Option<(usize, String, bool)>,
     hidden: Option<String>,
     shown: Option<Vec<String>>,
+    score: Option<String>,
 }
 
 pub fn read_flags(report: &str) -> Result<ReportFlags, ReportError> {
@@ -269,6 +271,10 @@ pub fn read_flags(report: &str) -> Result<ReportFlags, ReportError> {
                 }
                 pending.push(Pending {
                     number,
+                    score: rest
+                        .split_once(" (score ")
+                        .and_then(|(_, score)| score.strip_suffix(')'))
+                        .map(str::to_owned),
                     ..Pending::default()
                 });
             }
@@ -300,6 +306,14 @@ pub fn read_flags(report: &str) -> Result<ReportFlags, ReportError> {
 }
 
 impl ReportFlag {
+    #[must_use]
+    pub fn score(&self) -> Option<f64> {
+        match self.score.as_deref().map(str::parse::<f64>) {
+            Some(Ok(score)) => Some(score),
+            Some(Err(_)) | None => None,
+        }
+    }
+
     fn read(pending: Pending) -> Result<Self, ReportError> {
         let number = pending.number;
         let (line, value, resolved) = pending.mark.ok_or(ReportError::NoMark { number })?;
@@ -325,6 +339,7 @@ impl ReportFlag {
             text,
             state,
             line: Some(line),
+            score: pending.score,
         })
     }
 
@@ -537,6 +552,7 @@ impl ReportFlags {
                     shown: flag.text.clone(),
                     state,
                     line: None,
+                    score: None,
                 })
             })
             .collect::<Result<_, _>>()?;

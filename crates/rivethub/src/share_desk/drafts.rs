@@ -6,16 +6,28 @@ use std::sync::Arc;
 use capture::bundle::Sealed;
 use capture::sanitize::LocalReview;
 use capture::sanitize::Report;
+use capture::sanitize::decide::Mode;
 use capture::sanitize::decide::Resolution;
+use capture::share;
+use kernel::memory::share::DecideMode;
 use kernel::memory::share::desk::DRAFT_IDLE;
 use kernel::memory::share::desk::DeskError;
 use kernel::memory::share::desk::Draft;
+use kernel::memory::share::desk::DraftDecision;
 use kernel::memory::share::desk::DraftId;
+use kernel::memory::share::desk::DraftSession;
+use kernel::memory::share::desk::DraftTotals;
+use kernel::memory::share::desk::EscapedText;
+use kernel::memory::share::desk::FlagState;
+use kernel::memory::share::desk::FlagView;
 use kernel::memory::share::desk::MAX_DRAFT_BYTES;
 use kernel::memory::share::desk::MAX_DRAFTS;
+use kernel::memory::share::desk::RuleCount;
 use kernel::memory::share::desk::SendConfirm;
 use tokio::sync::Mutex;
 use uuid::Uuid;
+use wire::capture::FlagMark;
+use wire::capture::Sanitization;
 
 pub(super) struct Drafts {
     slots: parking_lot::Mutex<BTreeMap<DraftId, Slot>>,
@@ -40,6 +52,7 @@ pub(super) struct DraftState {
     pub(super) report: Report,
     pub(super) resolved: BTreeMap<usize, Resolution>,
     pub(super) conversations: Vec<Uuid>,
+    pub(super) file: Option<super::bundles::BundleFile>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -57,23 +70,33 @@ impl DraftState {
         }
     }
 
+    pub(super) fn settle(&mut self, shared: bool) -> Option<super::bundles::BundleFile> {
+        if shared {
+            self.phase = Phase::Closed;
+            self.file.take()
+        } else {
+            self.phase = Phase::Open;
+            None
+        }
+    }
+
+    fn marked(&self, mark: FlagMark) -> usize {
+        match &self.sealed.bundle.manifest.sanitization {
+            Sanitization::Sanitized(stamp) => stamp.review.as_ref().map_or(0, |review| {
+                review.flags.iter().filter(|flag| flag.mark == mark).count()
+            }),
+            Sanitization::Raw => 0,
+        }
+    }
+
     pub(super) fn confirm(&self, confirm: SendConfirm) -> Result<(), DeskError> {
         self.open()?;
-        let flags = self
-            .report
-            .decision
-            .as_ref()
-            .map_or(0, |decision| decision.flags.len());
-        let open = flags.saturating_sub(self.resolved.len());
+        let open = self.marked(FlagMark::Open);
         if open > 0 {
             return Err(DeskError::OpenFlags { open });
         }
         let sessions = self.sealed.bundle.sessions.len();
-        let kept = self
-            .resolved
-            .values()
-            .filter(|resolution| **resolution == Resolution::Keep)
-            .count();
+        let kept = self.marked(FlagMark::Keep);
         if confirm.sessions != sessions || confirm.kept_flags != kept {
             return Err(DeskError::Counts {
                 sessions,
@@ -96,7 +119,7 @@ impl Reservation<'_> {
     pub(super) fn commit(mut self, state: DraftState, now: Timestamp) -> Result<Draft, DeskError> {
         let held = held_bytes(&state.sealed, state.local.as_ref(), &state.report)?;
         let expires_at = self.drafts.resize(self.id, held, now)?;
-        let draft = super::view(self.id, &state, expires_at);
+        let draft = view(self.id, &state, expires_at);
         if let Some(slot) = self.drafts.slots.lock().get_mut(&self.id) {
             slot.draft = Held::Ready(Arc::new(Mutex::new(state)));
         }
@@ -255,4 +278,84 @@ pub(super) fn held_bytes(
         None => 0,
     };
     Ok(2 * sealed.text.len() + local + debug_size(report)?)
+}
+
+pub(super) fn view(id: DraftId, state: &DraftState, expires_at: Timestamp) -> Draft {
+    let report = &state.report;
+    let totals = report.totals();
+    let decision = report.decision.as_ref();
+    Draft {
+        id,
+        expires_at,
+        totals: DraftTotals {
+            secrets: totals.secrets,
+            mapped: totals.mapped,
+            redacted: totals.redacted,
+            escaped: totals.escaped,
+            rechecked: report.rechecked,
+        },
+        rules: share::rule_totals(report)
+            .into_iter()
+            .map(|(rule, count)| RuleCount { rule, count })
+            .collect(),
+        sessions: state
+            .sealed
+            .bundle
+            .sessions
+            .iter()
+            .zip(&state.conversations)
+            .map(|(session, id)| DraftSession {
+                id: *id,
+                agent: session.origin.agent.clone(),
+                messages: session.batch.messages.len(),
+            })
+            .collect(),
+        not_scanned: share::NOT_SCANNED.to_owned(),
+        best_effort: share::BEST_EFFORT.to_owned(),
+        decision: decision.map(|decision| DraftDecision {
+            model: decision.model.clone(),
+            scored: decision.scored,
+            calls: decision.calls,
+            trivial: decision.trivial,
+            mode: match decision.review.mode {
+                Mode::Advisory => DecideMode::Advisory,
+                Mode::Block => DecideMode::Block,
+            },
+        }),
+        flags: decision
+            .map(|decision| {
+                decision
+                    .flags
+                    .iter()
+                    .map(|flag| {
+                        let place = crate::sessions::flag_place(flag);
+                        FlagView {
+                            number: flag.number,
+                            score: flag.score,
+                            session: place
+                                .as_ref()
+                                .and_then(|place| state.conversations.get(place.session))
+                                .copied(),
+                            place,
+                            length: flag.text.chars().count(),
+                            text: EscapedText::escape(&flag.text),
+                            state: flag_state(state.resolved.get(&flag.number)),
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+fn flag_state(resolution: Option<&Resolution>) -> FlagState {
+    match resolution {
+        None => FlagState::Open,
+        Some(Resolution::Keep) => FlagState::Keep,
+        Some(Resolution::Redact) => FlagState::Redact,
+        Some(Resolution::Map { term, placeholder }) => FlagState::Map {
+            term: term.clone(),
+            placeholder: placeholder.clone(),
+        },
+    }
 }

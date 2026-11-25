@@ -19,6 +19,10 @@ pub trait ShareDesk: Send + Sync + fmt::Debug {
 
     async fn draft(&self, request: DraftRequest) -> Result<Draft, DeskError>;
 
+    async fn bundles(&self) -> Result<Vec<ReadyBundle>, DeskError>;
+
+    async fn draft_bundle(&self, name: BundleName) -> Result<Draft, DeskError>;
+
     async fn report(&self, id: DraftId) -> Result<Draft, DeskError>;
 
     async fn mark(&self, id: DraftId, marks: Vec<Mark>) -> Result<Marked, DeskError>;
@@ -86,6 +90,56 @@ impl FromStr for LoginId {
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         text.parse().map(Self).map_err(|_| DeskError::UnknownLogin)
     }
+}
+
+pub const BUNDLE_NAME_MAX: usize = 200;
+const REVIEW_SUFFIX: &str = ".review.local";
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct BundleName(String);
+
+impl BundleName {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for BundleName {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl FromStr for BundleName {
+    type Err = DeskError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let mut chars = text.chars();
+        let plain = chars
+            .next()
+            .is_some_and(|first| first.is_ascii_alphanumeric())
+            && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+            && text.len() <= BUNDLE_NAME_MAX
+            && !text.contains("..")
+            && !text.ends_with(REVIEW_SUFFIX);
+        if plain {
+            Ok(Self(text.to_owned()))
+        } else {
+            Err(DeskError::Choices(format!(
+                "name must be a bundle name from the listing: letters, digits, '.', '_' and '-', starting with a letter or digit, at most {BUNDLE_NAME_MAX} bytes, without the .json extension"
+            )))
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadyBundle {
+    pub name: BundleName,
+    pub sessions: u32,
+    pub bytes: u64,
+    pub open_flags: u32,
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -418,6 +472,7 @@ pub enum ServerKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Servers {
     pub servers: Vec<ServerView>,
+    pub cloud_disabled: bool,
     pub logins_file: String,
     pub token_store: TokenStore,
 }
@@ -432,10 +487,17 @@ pub enum TokenStore {
 pub struct ServerView {
     pub origin: ServerOrigin,
     pub kind: ServerKind,
-    pub hub: Option<String>,
+    pub delivery: Delivery,
     pub user: Option<String>,
     pub signed_in: bool,
     pub default: bool,
+    pub needs_reauth: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Delivery {
+    Push { hub: String },
+    Code,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -482,6 +544,14 @@ pub struct NodeKeyView {
 pub enum DeskError {
     #[error("no draft has that id; it was sent, discarded, idle for 30 minutes, or rh restarted")]
     UnknownDraft,
+    #[error(
+        "no sanitized bundle in the share folder has that name; it was shared, removed, or is not a sanitized bundle"
+    )]
+    UnknownBundle,
+    #[error(
+        "the bundle has {flags} open or kept flags, but its report or local review file is missing, so they cannot be reviewed; sanitize the sessions again"
+    )]
+    BundleFlags { flags: usize },
     #[error("rh already holds {MAX_DRAFTS} drafts or 256 MiB of them; send or discard one first")]
     Full,
     #[error("{0}")]

@@ -306,6 +306,18 @@
       ],
       "type": "object"
     },
+    "BundleDraftRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
     "BundleManifest": {
       "properties": {
         "bundle_sha256": {
@@ -363,6 +375,20 @@
       "required": [
         "origin",
         "batch"
+      ],
+      "type": "object"
+    },
+    "BundlesReply": {
+      "properties": {
+        "bundles": {
+          "items": {
+            "$ref": "#/$defs/ReadyBundle"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "bundles"
       ],
       "type": "object"
     },
@@ -1982,6 +2008,13 @@
         "reason"
       ],
       "type": "object"
+    },
+    "Delivery": {
+      "enum": [
+        "push",
+        "code"
+      ],
+      "type": "string"
     },
     "DraftReport": {
       "properties": {
@@ -7716,6 +7749,44 @@
       ],
       "type": "string"
     },
+    "ReadyBundle": {
+      "properties": {
+        "bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "open_flags": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sanitized": {
+          "type": "boolean"
+        },
+        "sessions": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "sessions",
+        "bytes",
+        "open_flags",
+        "created_at",
+        "sanitized"
+      ],
+      "type": "object"
+    },
     "Receipt": {
       "properties": {
         "bundle_id": {
@@ -7995,6 +8066,7 @@
       "enum": [
         "not_local",
         "unknown_draft",
+        "unknown_bundle",
         "full",
         "invalid",
         "open_flags",
@@ -8511,6 +8583,9 @@
         "default": {
           "type": "boolean"
         },
+        "delivery": {
+          "$ref": "#/$defs/Delivery"
+        },
         "hub": {
           "type": [
             "string",
@@ -8519,6 +8594,9 @@
         },
         "kind": {
           "$ref": "#/$defs/ServerKind"
+        },
+        "needs_reauth": {
+          "type": "boolean"
         },
         "origin": {
           "type": "string"
@@ -8537,12 +8615,16 @@
         "origin",
         "kind",
         "signed_in",
-        "default"
+        "default",
+        "delivery"
       ],
       "type": "object"
     },
     "ServersReply": {
       "properties": {
+        "cloud_disabled": {
+          "type": "boolean"
+        },
         "logins_file": {
           "type": "string"
         },
@@ -8558,6 +8640,7 @@
       },
       "required": [
         "servers",
+        "cloud_disabled",
         "logins_file",
         "token_store"
       ],

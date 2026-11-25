@@ -24,6 +24,7 @@ use reqwest::header::HeaderMap;
 use reqwest::header::RETRY_AFTER;
 use serde::Deserialize;
 use url::Url;
+use wire::gateway::users::TokenScope;
 
 use super::CLIENT_ID;
 use super::LIFETIME_WHEN_UNSTATED;
@@ -37,6 +38,7 @@ impl Tokens {
     pub(crate) fn issued(
         issued: &BasicTokenResponse,
         previous: Option<&Self>,
+        asked: &str,
     ) -> Result<Self, ServerError> {
         let refresh_token = issued
             .refresh_token()
@@ -53,7 +55,7 @@ impl Tokens {
                     .join(" ")
             })
             .or_else(|| previous.map(|tokens| tokens.scope.clone()))
-            .unwrap_or_else(|| SCOPE.to_owned());
+            .unwrap_or_else(|| asked.to_owned());
         let lifetime = issued.expires_in().unwrap_or(LIFETIME_WHEN_UNSTATED);
         let expires_at = Timestamp::now()
             .saturating_add(lifetime)
@@ -77,6 +79,13 @@ pub(crate) struct Endpoints {
     device: DeviceAuthorizationUrl,
     token: TokenUrl,
     revocation: Url,
+    scope: String,
+}
+
+impl Endpoints {
+    pub(crate) fn scope(&self) -> &str {
+        &self.scope
+    }
 }
 
 #[derive(Deserialize)]
@@ -87,6 +96,8 @@ struct Metadata {
     device: Url,
     #[serde(rename = "revocation_endpoint")]
     revocation: Url,
+    #[serde(default, rename = "scopes_supported")]
+    scopes: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -182,7 +193,14 @@ impl Server {
                 "its OAuth metadata sends sign-in to another origin",
             ));
         }
+        let import = TokenScope::MemoryImport.to_string();
+        let scope = if !self.host.is_cloud() && metadata.scopes.contains(&import) {
+            format!("{SCOPE} {import}")
+        } else {
+            SCOPE.to_owned()
+        };
         Ok(Endpoints {
+            scope,
             device: DeviceAuthorizationUrl::from_url(metadata.device),
             token: TokenUrl::from_url(metadata.token),
             revocation: metadata.revocation,

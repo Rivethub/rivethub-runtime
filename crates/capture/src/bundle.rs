@@ -115,6 +115,10 @@ struct CoveredManifest<'a> {
     session_count: usize,
 }
 
+pub fn canonical_text(bundle: &SessionBundle) -> Result<Vec<u8>, BundleError> {
+    with_digest_first_in_manifest(&covered_json(bundle)?, &bundle.manifest.bundle_sha256)
+}
+
 pub fn bundle_sha256(bundle: &SessionBundle) -> Result<String, BundleError> {
     Ok(hex::encode(Sha256::digest(covered_json(bundle)?)))
 }

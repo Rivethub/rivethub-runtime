@@ -96,6 +96,11 @@ impl LocalKey {
         state_dir.join(DIR_NAME).join(FILE_NAME)
     }
 
+    pub fn load(path: &Path) -> Result<Self, KeyError> {
+        let found = PrivateFile::new(path, NAME, READ_CAP).read()?;
+        Self::from_found(path, &found)
+    }
+
     pub fn load_or_create(path: &Path) -> Result<Self, KeyError> {
         let found = PrivateFile::new(path, NAME, READ_CAP).load_or_create(|| {
             let mut bytes = [0u8; KEY_BYTES];
@@ -105,7 +110,11 @@ impl LocalKey {
             })?;
             Ok(bytes.to_vec())
         })?;
-        let bytes: [u8; KEY_BYTES] = found.as_slice().try_into().map_err(|_| KeyError::Length {
+        Self::from_found(path, &found)
+    }
+
+    fn from_found(path: &Path, found: &[u8]) -> Result<Self, KeyError> {
+        let bytes: [u8; KEY_BYTES] = found.try_into().map_err(|_| KeyError::Length {
             name: NAME,
             path: path.to_path_buf(),
             found: found.len(),

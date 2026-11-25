@@ -14,6 +14,7 @@ use capture::sign::NodeKey;
 use capture::sign::PublicKey;
 use config::Environment;
 use config::MappingFile;
+use kernel::memory::share::desk::Delivery;
 use kernel::memory::share::desk::ServerKind;
 use kernel::memory::share::desk::ServerView;
 use kernel::memory::share::desk::Servers;
@@ -25,6 +26,8 @@ use reqwest::StatusCode;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
+use wire::gateway::users::TokenScope;
+use wire::gateway::users::TokenScopes;
 
 pub use super::desk_error::desk_error;
 use super::dropbox::DropBox;
@@ -34,7 +37,6 @@ use crate::Error;
 use crate::share_server::Login;
 use crate::share_server::ME_PATH;
 use crate::share_server::REQUEST_TIMEOUT;
-use crate::share_server::SCOPE;
 use crate::share_server::Server;
 use crate::share_server::ServerError;
 use crate::share_server::ShareServers;
@@ -202,7 +204,12 @@ pub async fn start(
     let oauth = Server::oauth_client(&endpoints);
     let details: StandardDeviceAuthorizationResponse = oauth
         .exchange_device_code()
-        .add_scopes(SCOPE.split(' ').map(|scope| Scope::new(scope.to_owned())))
+        .add_scopes(
+            endpoints
+                .scope()
+                .split(' ')
+                .map(|scope| Scope::new(scope.to_owned())),
+        )
         .add_extra_param("client_name", format!("{client} on {}", host_name()?))
         .request_async(&server)
         .await
@@ -224,6 +231,7 @@ pub async fn start(
         server,
         oauth,
         details,
+        endpoints.scope().to_owned(),
         Arc::clone(&interval),
         cancel.clone(),
     ));
@@ -268,6 +276,7 @@ async fn approval(
     server: Server,
     oauth: oauth::OauthClient,
     details: StandardDeviceAuthorizationResponse,
+    requested: String,
     interval: Arc<AtomicU64>,
     cancel: CancellationToken,
 ) -> Result<Approval, Error> {
@@ -296,7 +305,7 @@ async fn approval(
         },
         Err(other) => return Err(oauth::failed(other).into()),
     };
-    let tokens = Tokens::issued(&issued, None)?;
+    let tokens = Tokens::issued(&issued, None, &requested)?;
     let scope = tokens.scope.clone();
     let _lock = server.lock().await?;
     if cancel.is_cancelled() {
@@ -414,20 +423,29 @@ pub async fn servers(env: &Environment) -> Result<Servers, Error> {
         views.push(ServerView {
             origin: default.clone().into(),
             kind: ServerKind::Cloud,
-            hub: servers.hub_named(default),
+            delivery: delivery(&servers, Some(default), default, false),
             user: None,
             signed_in: false,
             default: true,
+            needs_reauth: false,
         });
     }
     for (host, login) in logins {
-        let (kind, user) = match login {
-            Listed::Device { .. } => (ServerKind::Cloud, None),
-            Listed::Team { user } => (ServerKind::Team, Some(user)),
+        let (kind, user, scope) = match login {
+            Listed::Device { scope, .. } => (ServerKind::Cloud, None, Some(scope)),
+            Listed::Team { user } => (ServerKind::Team, Some(user), None),
         };
+        let delivery = delivery(
+            &servers,
+            default.as_deref(),
+            &host,
+            kind == ServerKind::Team,
+        );
         views.push(ServerView {
             default: default.as_deref() == Some(host.as_str()),
-            hub: servers.hub_named(&host),
+            needs_reauth: matches!(delivery, Delivery::Push { .. })
+                && scope.as_deref().is_some_and(cannot_import),
+            delivery,
             origin: host.into(),
             kind,
             user,
@@ -439,20 +457,55 @@ pub async fn servers(env: &Environment) -> Result<Servers, Error> {
         if views.iter().all(|view| view.origin.as_str() != host) {
             views.push(ServerView {
                 default: default.as_deref() == Some(host.as_str()),
-                origin: host.into(),
                 kind: ServerKind::Team,
-                hub: hub.name,
+                delivery: delivery(&servers, default.as_deref(), &host, true),
+                origin: host.into(),
                 user: None,
                 signed_in: false,
+                needs_reauth: false,
             });
         }
     }
+    let policy = servers.policy();
+    views.retain(|view| {
+        view.origin
+            .as_str()
+            .parse::<ShareServer>()
+            .is_ok_and(|host| policy.admit(&host).is_ok())
+    });
     views.sort_by_key(|view| !view.default);
     Ok(Servers {
         servers: views,
+        cloud_disabled: policy.cloud_disabled(),
         logins_file: store.file().display().to_string(),
         token_store: store.kind(),
     })
+}
+
+fn cannot_import(scope: &str) -> bool {
+    let granted: Vec<TokenScope> = scope
+        .split_whitespace()
+        .filter_map(TokenScope::named)
+        .collect();
+    !scope.trim().is_empty()
+        && !TokenScopes::of(&granted).is_some_and(|scopes| scopes.allows(TokenScope::MemoryImport))
+}
+
+fn delivery(servers: &ShareServers, default: Option<&str>, host: &str, team: bool) -> Delivery {
+    if let Some(name) = servers.hub_named(host) {
+        return Delivery::Push { hub: name };
+    }
+    let drop_box = default == Some(host)
+        || host
+            .parse::<ShareServer>()
+            .is_ok_and(|server| server.is_cloud());
+    if team || !drop_box {
+        Delivery::Push {
+            hub: host.to_owned(),
+        }
+    } else {
+        Delivery::Code
+    }
 }
 
 pub(crate) fn host_name() -> Result<String, Error> {

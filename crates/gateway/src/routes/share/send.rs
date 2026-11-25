@@ -200,7 +200,7 @@ pub(super) async fn discard(
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn report_body(draft: desk::Draft) -> body::DraftReport {
+pub(super) fn report_body(draft: desk::Draft) -> body::DraftReport {
     body::DraftReport {
         draft: draft.id.to_string(),
         expires_at: draft.expires_at,
