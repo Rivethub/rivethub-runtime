@@ -28,6 +28,10 @@ struct TextRow {
     title: String,
     current_state: String,
     article: String,
+    aliases: Vec<String>,
+    tags: Vec<String>,
+    entities: Vec<String>,
+    related: Vec<String>,
 }
 
 #[async_trait]
@@ -203,11 +207,16 @@ fn home_of<'a>(homes: &'a Homes, key: &str) -> Result<&'a PageHome, WikiStoreErr
 fn indexed_page(local: &str, row: TextRow) -> Result<WikiPage, WikiStoreError> {
     let slug = WikiSlug::try_from(local.to_owned())
         .map_err(|error| WikiStoreError::InvalidPatch(error.to_string()))?;
-    Ok(WikiPage {
+    let mut page = WikiPage {
         current_state: row.current_state,
         article: row.article,
         ..WikiPage::empty(slug, row.title)
-    })
+    };
+    page.meta.aliases = row.aliases;
+    page.meta.tags = row.tags;
+    page.meta.entities = row.entities;
+    page.meta.related = row.related;
+    Ok(page)
 }
 
 struct Repositories(Vec<(String, LockedRepository)>);
@@ -322,7 +331,8 @@ async fn text(
     slug: &str,
 ) -> Result<Option<TextRow>, WikiStoreError> {
     sqlx::query_as::<_, TextRow>(
-        "SELECT title, current_state, article FROM rh_wiki_topics WHERE slug = $1",
+        "SELECT title, current_state, article, aliases, tags, entities, related
+           FROM rh_wiki_topics WHERE slug = $1",
     )
     .bind(slug)
     .fetch_optional(&mut **tx)

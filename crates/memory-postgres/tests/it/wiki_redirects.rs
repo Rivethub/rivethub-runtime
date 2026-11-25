@@ -801,7 +801,9 @@ async fn a_topic_sync_fold_rebuilds_a_parent_file_from_its_indexed_row(pool: PgP
     let pantry = kitchen_with_pantry(&pool, &root, false).await?;
     std::fs::remove_file(topic_file(&root, false, "kitchen"))?;
     sqlx::query(
-        "UPDATE rh_wiki_topics SET article = 'Pots hang by the stove.' WHERE slug = 'kitchen'",
+        "UPDATE rh_wiki_topics SET article = 'Pots hang by the stove.', aliases = '{cookhouse}',
+                tags = '{rooms}', entities = '{stove}', related = '{dining-room}'
+          WHERE slug = 'kitchen'",
     )
     .execute(&pool)
     .await?;
@@ -819,6 +821,29 @@ async fn a_topic_sync_fold_rebuilds_a_parent_file_from_its_indexed_row(pool: PgP
     assert!(
         kitchen_text.contains("Pots hang by the stove."),
         "the rebuilt parent page keeps its indexed text"
+    );
+    let (aliases, tags, entities, related): (Vec<String>, Vec<String>, Vec<String>, Vec<String>) =
+        sqlx::query_as(
+            "SELECT aliases, tags, entities, related FROM rh_wiki_topics WHERE slug = 'kitchen'",
+        )
+        .fetch_one(&pool)
+        .await?;
+    assert!(
+        aliases.contains(&"cookhouse".to_owned()),
+        "the rebuilt parent keeps its aliases, got {aliases:?}"
+    );
+    assert_eq!(
+        tags,
+        vec!["rooms".to_owned()],
+        "the rebuilt parent keeps its tags"
+    );
+    assert!(
+        entities.contains(&"stove".to_owned()),
+        "the rebuilt parent keeps its entities, got {entities:?}"
+    );
+    assert!(
+        related.contains(&"dining-room".to_owned()),
+        "the rebuilt parent keeps its related pages, got {related:?}"
     );
     let pantry_rows: i64 =
         sqlx::query_scalar("SELECT count(*) FROM rh_wiki_topics WHERE slug = 'pantry'")
