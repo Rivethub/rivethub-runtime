@@ -28,7 +28,7 @@ use crate::wiki::page::bound::rebase;
 use crate::wiki::page::lead::steady_lead;
 use crate::wiki::page::normalize_slug;
 
-const SLUG_ATTEMPTS: u32 = 1000;
+pub const SLUG_ATTEMPTS: u32 = 1000;
 const UNNAMED_PAGE: &str = "topic";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
