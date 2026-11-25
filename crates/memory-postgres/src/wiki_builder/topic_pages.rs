@@ -437,7 +437,7 @@ impl Claim {
     ) -> Result<bool, WikiStoreError> {
         let home = placed.scope.as_ref();
         match self {
-            Self::Overwrite => topics::store(tx, page, &placed.key, home, "", now)
+            Self::Overwrite => topics::reserve(tx, page, &placed.key, home, now)
                 .await
                 .map(|()| true),
             Self::Vacant => topics::claim(tx, page, &placed.key, home, now).await,
