@@ -11,6 +11,7 @@ mod digest;
 mod embedding_store;
 mod entity_match;
 mod entity_merge;
+mod entity_page_home;
 mod entity_rewrite;
 mod flagged;
 mod import;
