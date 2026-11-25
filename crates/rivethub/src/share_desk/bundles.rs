@@ -253,7 +253,7 @@ fn reviewed(
         return Ok(None);
     };
     let local: LocalReview = serde_json::from_slice(&local).map_err(|error| refused(&error))?;
-    let key = LocalKey::load_or_create(key).map_err(super::failed)?;
+    let key = LocalKey::load(key).map_err(|error| refused(&error))?;
     if !local.holds_its_seal(&key.in_format(local.mac_format)) {
         return Err(refused(
             &"the local review file is not sealed under this machine's key",

@@ -561,6 +561,34 @@ async fn a_local_review_file_that_lost_its_seal_is_refused() -> TestResult {
 }
 
 #[tokio::test]
+async fn a_missing_or_broken_local_key_refuses_the_review_without_making_a_key() -> TestResult {
+    let model = model().await?;
+    let dana = Node::new("dana", &format!("http://{}", model.addr), &sessions()).await?;
+    let (_, gamma, _) = chosen(&dana)?;
+    let desk = desk(&dana, false)?;
+    sanitize(&dana, &[&gamma], "flagged.json", Review::Advise).await?;
+    let (_, env) = dana.loaded(false)?;
+    let key = capture::share::key_path(&env)?;
+
+    std::fs::write(&key, b"not a key")?;
+    let broken = desk.draft_bundle(name("flagged")?).await;
+    assert!(
+        matches!(broken, Err(DeskError::Refused(_))),
+        "a malformed local key refuses the review: {broken:?}"
+    );
+
+    std::fs::remove_file(&key)?;
+    let missing = desk.draft_bundle(name("flagged")?).await;
+    assert!(
+        matches!(missing, Err(DeskError::Refused(_))),
+        "a missing local key refuses the review: {missing:?}"
+    );
+    assert!(!key.exists(), "opening a draft never makes a local key");
+    model.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_bundle_with_kept_flags_needs_its_review_files_and_the_kept_count() -> TestResult {
     let model = model().await?;
     let captured = Pushes::default();
