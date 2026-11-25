@@ -2,6 +2,7 @@ use jiff::SignedDuration;
 use jiff::Timestamp;
 use kernel::owner::Owner;
 use kernel::tenancy::Scope;
+use kernel::tenancy::SpaceId;
 use kernel::tenancy::Viewer;
 use kernel::topics::SweepOwners;
 use kernel::topics::SyncTopicPage;
@@ -264,6 +265,119 @@ async fn a_merge_leaves_another_owners_pages_alone(pool: PgPool) -> TestResult {
     assert_eq!(
         redirects,
         vec![("coco-g9".to_owned(), "coco-box_a".to_owned())]
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_shared_entity_keeps_private_session_prose_out_of_the_space(pool: PgPool) -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let memory = shared_memory(&pool, directory.path()).await?;
+    sqlx::query("INSERT INTO rh_spaces (id, kind, name) VALUES ('crew', 'team', 'Crew')")
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "INSERT INTO rh_space_members (space_id, user_id) VALUES ('crew', 'phil'), ('crew', 'coco')",
+    )
+    .execute(&pool)
+    .await?;
+    let entity = Uuid::new_v4();
+    let (conversation, leaf) = seed_session(&pool, "phil").await?;
+    seed_entity(&pool, entity, "gpubox", "phil").await?;
+    sqlx::query("UPDATE rh_topics SET visibility_mark = 'crew' WHERE id = $1")
+        .bind(entity)
+        .execute(&pool)
+        .await?;
+
+    Scope::Maintenance
+        .run(sync_topic_page(
+            &memory,
+            &memory,
+            &memory,
+            &SyncTopicPage::topic(TopicId::from_uuid(entity)),
+            SweepOwners::All,
+            at("2026-11-07T00:30:00Z"),
+        ))
+        .await?;
+    apply(&memory, entity, &rewrite(leaf, conversation, "phil")).await?;
+
+    let visibility: String =
+        sqlx::query_scalar("SELECT visibility FROM rh_wiki_topics WHERE topic_id = $1")
+            .bind(entity)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(
+        visibility, "private",
+        "the page stays in phil's private wiki"
+    );
+    assert!(directory.path().join("topics/gpubox.md").exists());
+    assert!(
+        !directory
+            .path()
+            .join("spaces/crew/topics/gpubox.md")
+            .exists()
+    );
+    let crewmate = Scope::Viewer(Viewer::new(
+        Owner::new("coco".to_owned())?,
+        vec![SpaceId::new("crew".to_owned())?],
+    ));
+    let seen: i64 = crewmate
+        .run(
+            sqlx::query_scalar("SELECT count(*) FROM rh_wiki_topics WHERE topic_id = $1")
+                .bind(entity)
+                .fetch_one(memory.pool()),
+        )
+        .await?;
+    assert_eq!(
+        seen, 0,
+        "a crew member does not read the private session's prose"
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_space_page_bound_to_an_entity_moves_into_the_owners_wiki(pool: PgPool) -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let memory = shared_memory(&pool, directory.path()).await?;
+    sqlx::query(
+        "INSERT INTO rh_wiki_scopes (scope, owner_user_id, visibility, key_prefix, directory)
+         VALUES ('crew', 'crew', 'crew', 'crew-', 'spaces/crew')",
+    )
+    .execute(&pool)
+    .await?;
+    let entity = Uuid::new_v4();
+    let (conversation, leaf) = seed_session(&pool, "phil").await?;
+    seed_entity(&pool, entity, "gpubox", "phil").await?;
+    sqlx::query(
+        "INSERT INTO rh_wiki_topics
+            (slug, title, current_state, topic_id, owner_user_id, scope, local_slug, visibility)
+         VALUES ('crew-gpubox', 'gpubox', '', $1, 'crew', 'crew', 'gpubox', 'crew')",
+    )
+    .bind(entity)
+    .execute(&pool)
+    .await?;
+
+    apply(&memory, entity, &rewrite(leaf, conversation, "phil")).await?;
+
+    let row: (String, Option<String>, String) =
+        sqlx::query_as("SELECT slug, scope, visibility FROM rh_wiki_topics WHERE topic_id = $1")
+            .bind(entity)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(
+        row,
+        (
+            "crew-gpubox".to_owned(),
+            Some("phil".to_owned()),
+            "private".to_owned()
+        )
+    );
+    assert!(directory.path().join("topics/gpubox.md").exists());
+    assert!(
+        !directory
+            .path()
+            .join("spaces/crew/topics/gpubox.md")
+            .exists()
     );
     Ok(())
 }

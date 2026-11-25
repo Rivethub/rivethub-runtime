@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::PostgresMemory;
 
-const PRIVATE: &str = "private";
+pub(crate) const PRIVATE: &str = "private";
 const KEY_ATTEMPTS: u32 = 9;
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
@@ -101,7 +101,9 @@ pub(crate) async fn topic_scope(
     primary: Option<&str>,
 ) -> Result<Option<WikiScope>, WikiStoreError> {
     let found: Option<(Option<String>, String)> = sqlx::query_as(
-        "SELECT owner_user_id, rh_topic_visibility(id) FROM rh_topics WHERE id = $1",
+        "SELECT owner_user_id,
+                CASE WHEN kind = 'entity' THEN 'private' ELSE rh_topic_visibility(id) END
+           FROM rh_topics WHERE id = $1",
     )
     .bind(topic)
     .fetch_optional(&mut *conn)

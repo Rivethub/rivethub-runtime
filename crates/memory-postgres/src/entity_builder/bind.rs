@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use super::error::query_error;
 use super::error::store_error;
+use crate::wiki_scope::PRIVATE;
 use crate::wiki_scope::WikiScope;
 
 const LOCAL_ATTEMPTS: u32 = 9;
@@ -20,6 +21,7 @@ struct BoundPage {
     local: String,
     owner_user_id: Option<String>,
     scope: Option<String>,
+    visibility: String,
 }
 
 impl BoundPage {
@@ -29,7 +31,7 @@ impl BoundPage {
     }
 
     fn movable(&self) -> bool {
-        self.scope.is_none()
+        self.scope.is_none() || self.visibility != PRIVATE
     }
 }
 
@@ -40,7 +42,7 @@ pub(super) async fn page_key(
     home: &WikiScope,
 ) -> Result<PageKey, EntityStoreError> {
     let bound = sqlx::query_as::<_, BoundPage>(
-        "SELECT slug, coalesce(local_slug, slug) AS local, owner_user_id, scope
+        "SELECT slug, coalesce(local_slug, slug) AS local, owner_user_id, scope, visibility
            FROM rh_wiki_topics WHERE topic_id = $1",
     )
     .bind(topic)
