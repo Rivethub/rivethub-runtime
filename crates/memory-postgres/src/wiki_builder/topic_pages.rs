@@ -12,7 +12,7 @@ use sqlx::{Postgres, Transaction};
 use super::overlays::Placed;
 use super::{lock_slug, query_error, settle, topics};
 use crate::PostgresMemory;
-use crate::wiki_scope::{LegacyOwner, PageHome, WikiScope, page_home, scope_named};
+use crate::wiki_scope::{PageHome, WikiScope, page_home, scope_named};
 use crate::wiki_writer::{LockedRepository, WikiRepository};
 
 #[derive(Debug, sqlx::FromRow)]
@@ -202,9 +202,7 @@ impl TopicPageStore for PostgresMemory {
         let mut repository = WikiRepository::for_store(self.wiki_home(&home.directory)?)
             .lock()
             .await?;
-        let removed = self
-            .remove_locked(&mut repository, slug, &home, &legacy)
-            .await;
+        let removed = self.remove_locked(&mut repository, slug, &home).await;
         settle(removed, repository.release().await)
     }
 
@@ -260,11 +258,11 @@ impl PostgresMemory {
         repository: &mut LockedRepository,
         slug: &WikiSlug,
         home: &PageHome,
-        legacy: &LegacyOwner,
     ) -> Result<(), WikiStoreError> {
         let mut tx = self.pool.begin().await.map_err(query_error)?;
         crate::wiki_redirect::hold_pages(&mut tx, &[slug.as_ref()], None).await?;
-        match page_home(&mut tx, slug.as_ref(), legacy).await? {
+        let legacy = self.legacy_owner().await?;
+        match page_home(&mut tx, slug.as_ref(), &legacy).await? {
             Some(held) if held == *home => {}
             None => return tx.rollback().await.map_err(query_error),
             Some(_) => {
@@ -274,15 +272,22 @@ impl PostgresMemory {
                 )));
             }
         }
-        for statement in [
-            "DELETE FROM rh_wiki_redirects WHERE to_slug = $1",
-            "DELETE FROM rh_wiki_topics WHERE slug = $1",
-        ] {
-            sqlx::query(statement)
-                .bind(slug.as_ref())
-                .execute(&mut *tx)
-                .await
-                .map_err(query_error)?;
+        sqlx::query("DELETE FROM rh_wiki_redirects WHERE to_slug = $1")
+            .bind(slug.as_ref())
+            .execute(&mut *tx)
+            .await
+            .map_err(query_error)?;
+        let deleted = sqlx::query("DELETE FROM rh_wiki_topics WHERE slug = $1")
+            .bind(slug.as_ref())
+            .execute(&mut *tx)
+            .await
+            .map_err(query_error)?;
+        if deleted.rows_affected() != 1 {
+            tx.rollback().await.map_err(query_error)?;
+            return Err(WikiStoreError::InvalidPatch(format!(
+                "wiki page {} is not yours to remove",
+                slug.as_ref()
+            )));
         }
         if repository.read(&home.local).await?.is_some() {
             let message = format!("wiki({}): removed after a tidy review", slug.as_ref());

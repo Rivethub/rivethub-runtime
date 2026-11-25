@@ -720,7 +720,7 @@ async fn synced_fold(pool: PgPool, scoped: bool) -> TestResult {
     Ok(())
 }
 
-async fn blocked_by(pool: &PgPool, blocker: i32) -> Result<(), sqlx::Error> {
+pub(crate) async fn blocked_by(pool: &PgPool, blocker: i32) -> Result<(), sqlx::Error> {
     let mut interval = tokio::time::interval(std::time::Duration::from_millis(10));
     loop {
         interval.tick().await;
@@ -868,7 +868,7 @@ async fn waiting(pool: &PgPool, pid: i32) -> Result<(), sqlx::Error> {
     }
 }
 
-async fn within<T>(
+pub(crate) async fn within<T>(
     wait: impl std::future::Future<Output = Result<T, sqlx::Error>>,
 ) -> Result<T, sqlx::Error> {
     tokio::time::timeout(std::time::Duration::from_secs(10), wait)

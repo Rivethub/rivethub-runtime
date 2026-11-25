@@ -33,18 +33,18 @@ use crate::common;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-struct Page<'a> {
-    key: &'a str,
-    local: &'a str,
-    scope: &'a str,
-    owner: &'a str,
-    visibility: &'a str,
-    directory: &'a str,
-    prose: &'a str,
-    row: &'a str,
+pub(crate) struct Page<'a> {
+    pub(crate) key: &'a str,
+    pub(crate) local: &'a str,
+    pub(crate) scope: &'a str,
+    pub(crate) owner: &'a str,
+    pub(crate) visibility: &'a str,
+    pub(crate) directory: &'a str,
+    pub(crate) prose: &'a str,
+    pub(crate) row: &'a str,
 }
 
-const GPUBOX: Page<'static> = Page {
+pub(crate) const GPUBOX: Page<'static> = Page {
     key: "gpubox",
     local: "gpubox",
     scope: "phil",
@@ -218,7 +218,7 @@ async fn a_legacy_row_reads_the_primary_wiki_only_for_its_owner(pool: PgPool) ->
     Ok(())
 }
 
-const ALPHA: Page<'static> = Page {
+pub(crate) const ALPHA: Page<'static> = Page {
     key: "crew-alpha",
     local: "alpha",
     scope: "crew",
@@ -229,7 +229,7 @@ const ALPHA: Page<'static> = Page {
     row: "Alpha row.",
 };
 
-const BETA: Page<'static> = Page {
+pub(crate) const BETA: Page<'static> = Page {
     key: "crew-beta",
     local: "beta",
     scope: "crew",
@@ -882,7 +882,7 @@ async fn consolidation_skips_a_page_without_a_verified_home(pool: PgPool) -> Tes
     Ok(())
 }
 
-async fn legacy_row(
+pub(crate) async fn legacy_row(
     pool: &PgPool,
     key: &str,
     owner: &str,
@@ -944,7 +944,7 @@ fn git(directory: &Path, args: &[&str]) -> TestResult {
     Ok(())
 }
 
-async fn hub(
+pub(crate) async fn hub(
     pool: &PgPool,
     directory: &Path,
 ) -> Result<PostgresMemory, Box<dyn std::error::Error>> {
@@ -986,7 +986,7 @@ async fn hub_rooted(
         .with_wiki_owner(Owner::new("phil".to_owned())?))
 }
 
-async fn seed(pool: &PgPool, wiki: &Path, page: &Page<'_>) -> TestResult {
+pub(crate) async fn seed(pool: &PgPool, wiki: &Path, page: &Page<'_>) -> TestResult {
     let mut tx = pool.begin().await?;
     sqlx::query("SELECT set_config('rivet.defer_embed_enqueue', 'on', true)")
         .execute(&mut *tx)
@@ -1008,7 +1008,7 @@ async fn seed(pool: &PgPool, wiki: &Path, page: &Page<'_>) -> TestResult {
     write_file(wiki, page.directory, page.local, page.prose)
 }
 
-fn write_file(wiki: &Path, directory: &str, local: &str, prose: &str) -> TestResult {
+pub(crate) fn write_file(wiki: &Path, directory: &str, local: &str, prose: &str) -> TestResult {
     let topics = wiki.join(directory).join("topics");
     std::fs::create_dir_all(&topics)?;
     let mut file = WikiPage::empty(WikiSlug::try_from(local.to_owned())?, local.to_owned());
@@ -1087,7 +1087,7 @@ async fn summary(
     Ok(read.map(|page| page.summary))
 }
 
-fn viewer(name: &str) -> Result<Scope, Box<dyn std::error::Error>> {
+pub(crate) fn viewer(name: &str) -> Result<Scope, Box<dyn std::error::Error>> {
     let spaces = match name {
         "dana" => Vec::new(),
         _ => vec![SpaceId::new("crew".to_owned())?],

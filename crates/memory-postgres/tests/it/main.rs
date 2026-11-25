@@ -28,6 +28,7 @@ mod model_calls;
 mod named_queues;
 mod owners;
 mod page_access;
+mod page_removal;
 mod queue;
 mod queue_admin;
 mod queue_notifications;
