@@ -573,7 +573,7 @@ async fn a_database_error_retries_the_session_without_rewriting_the_applied_enti
     assert!(
         second
             .iter()
-            .any(|page| page.slug == "keptbox" && page.git_sha.is_empty())
+            .any(|page| page.slug == "owner-keptbox" && page.git_sha.is_empty())
     );
     assert!(second.iter().any(|page| !page.git_sha.is_empty()));
     assert_eq!(store.applies(kept).await, 1);
@@ -1005,6 +1005,10 @@ impl EntityLease for MarkLease {
         _now: Timestamp,
     ) -> Result<Option<String>, EntityStoreError> {
         Ok(None)
+    }
+
+    async fn page_slug(&mut self, view: &EntityView) -> Result<Option<String>, EntityStoreError> {
+        Ok(Some(format!("owner-{}", view.slug)))
     }
 
     async fn release(&mut self) -> Result<(), EntityStoreError> {

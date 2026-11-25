@@ -10,7 +10,9 @@ use kernel::topics::TopicId;
 use kernel::topics::TopicPageStore as _;
 use kernel::topics::sync_topic_page;
 use kernel::wiki::entity_pass::EntityStore as _;
+use kernel::wiki::entity_pass::EntityView;
 use kernel::wiki::entity_pass::PreparedHistory;
+use kernel::wiki::entity_pass::PublishOutcome;
 use kernel::wiki::entity_pass::StoredRewrite;
 use kernel::wiki::page::WikiSlug;
 use memory_postgres::PostgresMemory;
@@ -474,6 +476,44 @@ async fn a_merge_of_legacy_pages_removes_the_absorbed_file(pool: PgPool) -> Test
     Ok(())
 }
 
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn an_entity_write_names_the_page_key_it_wrote(pool: PgPool) -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let memory = shared_memory(&pool, directory.path()).await?;
+    let entity = Uuid::new_v4();
+    let (conversation, leaf) = seed_session(&pool, "coco").await?;
+    seed_entity(&pool, entity, "cocobox", "coco").await?;
+
+    let outcome = apply(&memory, entity, &rewrite(leaf, conversation, "coco")).await?;
+
+    let PublishOutcome::Stored { slug, .. } = outcome else {
+        return Err("the rewrite was stale".into());
+    };
+    assert_eq!(slug, "coco-cocobox");
+    let bound = Scope::Maintenance
+        .run(async {
+            let mut lease = memory.lease_entity(entity).await?;
+            let view = EntityView {
+                id: entity,
+                name: "cocobox".to_owned(),
+                slug: "cocobox".to_owned(),
+                type_name: String::new(),
+                type_slug: String::new(),
+                aliases: Vec::new(),
+                facts: Vec::new(),
+                history: Vec::new(),
+                snapshot: String::new(),
+                owner: Some("coco".to_owned()),
+            };
+            let bound = lease.page_slug(&view).await;
+            lease.release().await?;
+            bound
+        })
+        .await?;
+    assert_eq!(bound.as_deref(), Some("coco-cocobox"));
+    Ok(())
+}
+
 async fn shared_memory(
     pool: &PgPool,
     directory: &std::path::Path,
@@ -498,13 +538,13 @@ async fn apply(
     memory: &PostgresMemory,
     entity: Uuid,
     body: &StoredRewrite,
-) -> Result<(), kernel::wiki::entity_pass::EntityStoreError> {
+) -> Result<PublishOutcome, kernel::wiki::entity_pass::EntityStoreError> {
     Scope::Maintenance
         .run(async {
             let mut lease = memory.lease_entity(entity).await?;
             let applied = lease.apply(body, at("2026-11-07T01:00:00Z")).await;
             lease.release().await?;
-            applied.map(drop)
+            applied
         })
         .await
 }

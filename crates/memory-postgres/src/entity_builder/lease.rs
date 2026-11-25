@@ -115,12 +115,9 @@ impl EntityLease for PgLease {
                 }
                 let fresh = load_view(&mut tx, self.id).await?;
                 let prose = chosen_prose(&mut tx, &view, &self.home, body, older).await?;
-                let git_sha =
-                    write_page(&mut tx, &mut repository, &fresh, &self.home, &prose, now).await?;
-                Ok(PublishOutcome::Stored {
-                    git_sha,
-                    slug: fresh.slug,
-                })
+                write_page(&mut tx, &mut repository, &fresh, &self.home, &prose, now)
+                    .await
+                    .map(PublishOutcome::from)
             }
             .await;
             finish_page_write(tx, written).await
@@ -173,9 +170,9 @@ impl EntityLease for PgLease {
                     summary: stored.summary,
                     article: prose_article(&stored.article),
                 };
-                let git_sha =
+                let written =
                     write_page(&mut tx, repository, &fresh, &self.home, &prose, now).await?;
-                Ok(Some(git_sha))
+                Ok(Some(written.git_sha))
             }
             .await;
             finish_page_write(tx, written).await
@@ -185,6 +182,15 @@ impl EntityLease for PgLease {
             Some(repository) => release_page(repository, recorded).await,
             None => recorded,
         }
+    }
+
+    async fn page_slug(&mut self, _view: &EntityView) -> Result<Option<String>, EntityStoreError> {
+        let conn = held(&mut self.conn)?;
+        sqlx::query_scalar("SELECT slug FROM rh_wiki_topics WHERE topic_id = $1")
+            .bind(self.id)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(query_error)
     }
 
     async fn release(&mut self) -> Result<(), EntityStoreError> {
@@ -294,11 +300,9 @@ pub(super) async fn publish_current_page(
     if fresh.snapshot != view.snapshot {
         return Ok(PublishOutcome::Stale(Box::new(fresh)));
     }
-    let git_sha = write_page(tx, repository, &fresh, home, prose, now).await?;
-    Ok(PublishOutcome::Stored {
-        git_sha,
-        slug: fresh.slug,
-    })
+    write_page(tx, repository, &fresh, home, prose, now)
+        .await
+        .map(PublishOutcome::from)
 }
 
 async fn write_page(
@@ -308,7 +312,7 @@ async fn write_page(
     home: &WikiScope,
     prose: &EntityProse,
     now: Timestamp,
-) -> Result<String, EntityStoreError> {
+) -> Result<WrittenPage, EntityStoreError> {
     let target = page_key(tx, view.id, &view.slug, home).await?;
     let mut page = entity_page(view, prose)?;
     page.meta.slug = WikiSlug::try_from(target.local.clone())
@@ -321,7 +325,24 @@ async fn write_page(
     super::bind::bind_page(tx, view.id, &target.key)
         .await
         .map_err(query_error)?;
-    Ok(sha)
+    Ok(WrittenPage {
+        git_sha: sha,
+        slug: target.key,
+    })
+}
+
+struct WrittenPage {
+    git_sha: String,
+    slug: String,
+}
+
+impl From<WrittenPage> for PublishOutcome {
+    fn from(page: WrittenPage) -> Self {
+        Self::Stored {
+            git_sha: page.git_sha,
+            slug: page.slug,
+        }
+    }
 }
 
 pub(super) async fn finish_page_write<T>(
