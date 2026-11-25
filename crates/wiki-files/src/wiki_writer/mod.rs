@@ -150,6 +150,24 @@ impl LockedRepository {
         .await
     }
 
+    pub async fn create(
+        &mut self,
+        page: &mut WikiPage,
+        message: &str,
+        now: Timestamp,
+    ) -> Result<Option<String>, WikiWriteError> {
+        sync(&self.root).await?;
+        if read_page(&self.root, &page.meta.slug, self.sql_references)
+            .await?
+            .is_some()
+        {
+            return Ok(None);
+        }
+        let mut paths = archive::bound(&self.root, None, page, now, Vec::new()).await?;
+        paths.insert(0, store_page(&self.root, page).await?);
+        commit(&self.root, &paths, message).await.map(Some)
+    }
+
     pub async fn recompile(
         &mut self,
         page: &mut WikiPage,

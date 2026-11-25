@@ -19,6 +19,7 @@ use kernel::wiki::page::WikiSlug;
 use memory_postgres::PostgresMemory;
 use memory_postgres::time::PgTimestamp;
 use sqlx::PgPool;
+use testkit::wiki_files::RacingEntity;
 use uuid::Uuid;
 use wire::time::TimestampFormat as _;
 
@@ -643,6 +644,184 @@ async fn an_entity_write_names_the_page_key_it_wrote(pool: PgPool) -> TestResult
     Ok(())
 }
 
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_late_sweep_keeps_another_scopes_entity_page(pool: PgPool) -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let memory = shared_memory(&pool, directory.path()).await?;
+    let entity = Uuid::new_v4();
+    let (conversation, leaf) = seed_session(&pool, "coco").await?;
+    seed_entity(&pool, entity, "cocobox", "coco").await?;
+    let racing = RacingEntity::new(
+        &memory,
+        entity,
+        rewrite(leaf, conversation, "coco"),
+        at("2026-11-07T01:00:00Z"),
+    );
+
+    Scope::Maintenance
+        .run(sync_topic_page(
+            &memory,
+            &racing,
+            &memory,
+            &SyncTopicPage::topic(TopicId::from_uuid(entity)),
+            SweepOwners::All,
+            at("2026-11-07T02:00:00Z"),
+        ))
+        .await?;
+
+    assert!(racing.fired(), "the entity builder ran inside the sweep");
+    assert_eq!(
+        pages(&pool).await?,
+        vec![stored("coco-cocobox", "coco", "GPU host.", Some(entity))]
+    );
+    let file = std::fs::read_to_string(directory.path().join("users/coco/topics/cocobox.md"))?;
+    assert!(
+        file.contains("GPU host."),
+        "the sweep blanked the file: {file}"
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_work_page_steps_past_a_scoped_page_with_its_name(pool: PgPool) -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let memory = shared_memory(&pool, directory.path()).await?;
+    seed_page(
+        &pool,
+        &SeededPage {
+            key: "coco-mesh",
+            local: "mesh",
+            owner: "coco",
+            topic: None,
+            state: "Coco's mesh.",
+        },
+    )
+    .await?;
+    let work = Uuid::new_v4();
+    seed_topic(&pool, work, "work", "mesh", "coco").await?;
+
+    let failures = Scope::Maintenance
+        .run(sync_topic_page(
+            &memory,
+            &memory,
+            &memory,
+            &SyncTopicPage::topic(TopicId::from_uuid(work)),
+            SweepOwners::All,
+            at("2026-11-07T02:00:00Z"),
+        ))
+        .await?;
+
+    assert!(failures.is_empty(), "the sweep failed: {failures:?}");
+    assert_eq!(
+        pages(&pool).await?,
+        vec![
+            stored("coco-mesh", "coco", "Coco's mesh.", None),
+            stored("mesh-2", "coco", "", Some(work)),
+        ]
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_work_page_steps_past_a_key_its_owner_cannot_see(pool: PgPool) -> TestResult {
+    steps_past_a_hidden_key(&pool, false).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_pinned_login_steps_past_a_key_it_cannot_see(pool: PgPool) -> TestResult {
+    steps_past_a_hidden_key(&pool, true).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_pinned_login_refused_a_page_row_commits_no_file(pool: PgPool) -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let memory = shared_memory(&pool, directory.path()).await?;
+    seed_page(
+        &pool,
+        &SeededPage {
+            key: "mesh",
+            local: "mesh",
+            owner: "coco",
+            topic: None,
+            state: "Coco's mesh.",
+        },
+    )
+    .await?;
+    let work = Uuid::new_v4();
+    seed_topic(&pool, work, "work", "mesh", "phil").await?;
+    sqlx::query("INSERT INTO rh_role_principals (role_name, user_id) VALUES ($1, 'phil')")
+        .bind(common::PROBE)
+        .execute(&pool)
+        .await?;
+    let phil = Scope::Viewer(Viewer::new(Owner::new("phil".to_owned())?, Vec::new()));
+    let page = kernel::topics::TopicPage::empty(WikiSlug::try_from("mesh".to_owned())?, "mesh");
+
+    let saved = phil
+        .run(memory.save_topic_page(TopicId::from_uuid(work), &page, at("2026-11-07T02:00:00Z")))
+        .await;
+
+    assert!(saved.is_err(), "the pinned login overwrote a hidden page");
+    assert!(
+        !directory.path().join("topics/mesh.md").exists(),
+        "the refused write left a committed file"
+    );
+    assert_eq!(
+        pages(&pool).await?,
+        vec![stored("mesh", "coco", "Coco's mesh.", None)]
+    );
+    Ok(())
+}
+
+async fn steps_past_a_hidden_key(pool: &PgPool, pinned: bool) -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let memory = shared_memory(pool, directory.path()).await?;
+    if pinned {
+        sqlx::query("INSERT INTO rh_role_principals (role_name, user_id) VALUES ($1, 'phil')")
+            .bind(common::PROBE)
+            .execute(pool)
+            .await?;
+    }
+    seed_page(
+        pool,
+        &SeededPage {
+            key: "mesh",
+            local: "mesh",
+            owner: "coco",
+            topic: None,
+            state: "Coco's mesh.",
+        },
+    )
+    .await?;
+    let work = Uuid::new_v4();
+    seed_topic(pool, work, "work", "mesh", "phil").await?;
+    let phil = Scope::Viewer(Viewer::new(Owner::new("phil".to_owned())?, Vec::new()));
+
+    let failures = phil
+        .run(sync_topic_page(
+            &memory,
+            &memory,
+            &memory,
+            &SyncTopicPage::topic(TopicId::from_uuid(work)),
+            SweepOwners::All,
+            at("2026-11-07T02:00:00Z"),
+        ))
+        .await?;
+
+    assert!(failures.is_empty(), "the sweep failed: {failures:?}");
+    assert_eq!(
+        pages(pool).await?,
+        vec![
+            stored("mesh", "coco", "Coco's mesh.", None),
+            stored("mesh-2", "phil", "", Some(work)),
+        ]
+    );
+    assert!(
+        !directory.path().join("topics/mesh.md").exists(),
+        "the sweep wrote a file for a key it could not claim"
+    );
+    Ok(())
+}
+
 async fn shared_memory(
     pool: &PgPool,
     directory: &std::path::Path,
@@ -777,11 +956,22 @@ async fn seed_session(pool: &PgPool, owner: &str) -> Result<(Uuid, Uuid), sqlx::
 }
 
 async fn seed_entity(pool: &PgPool, id: Uuid, slug: &str, owner: &str) -> Result<(), sqlx::Error> {
+    seed_topic(pool, id, "entity", slug, owner).await
+}
+
+async fn seed_topic(
+    pool: &PgPool,
+    id: Uuid,
+    kind: &str,
+    slug: &str,
+    owner: &str,
+) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO rh_topics (id, kind, slug, name, created_at, updated_at, owner_user_id)
-         VALUES ($1, 'entity', $2, $2, $3, $3, $4)",
+         VALUES ($1, $2, $3, $3, $4, $4, $5)",
     )
     .bind(id)
+    .bind(kind)
     .bind(slug)
     .bind(PgTimestamp::from(at("2026-11-01T00:00:00Z")))
     .bind(owner)

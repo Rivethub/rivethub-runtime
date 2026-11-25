@@ -6,14 +6,14 @@ use kernel::owner::Owner;
 use kernel::queue::JobQueue;
 use kernel::tenancy::{Scope, TenancyStore as _};
 use kernel::topics::{
-    NewTopic, SyncTopicPage, Topic, TopicId, TopicKind, TopicName, TopicStore as _,
+    NewTopic, SLUG_ATTEMPTS, SyncTopicPage, Topic, TopicId, TopicKind, TopicName, TopicStore as _,
 };
 use memory_postgres::{PostgresMemory, PostgresTenancy};
 use testkit::fakes::{FakeJobQueue, FakeProvider};
 use tokio_util::sync::CancellationToken;
 use workers::{EmbedSettings, OwnerScopes, ProcessRole, RoleModel, Runner, RunnerConfig};
 
-use super::{DANA, Hub, INES, TOM, TestResult};
+use super::{DANA, Hub, INES, TestResult};
 
 struct Worker {
     store: Arc<PostgresMemory>,
@@ -174,7 +174,7 @@ async fn a_sweep_queues_a_failing_topic_on_its_own_and_syncs_the_rest() -> TestR
     let blocked = worker.private_root(INES, "Ines boat repairs").await?;
     let iness = worker.private_root(INES, "Ines zoo trip").await?;
     let pool = sqlx::PgPool::connect(&hub.url).await?;
-    held_by_another_person(&pool, &[blocked]).await?;
+    every_slug_held(&pool, &[blocked]).await?;
     let queue = Arc::new(worker.store.queue().await?);
     let sweep = queue.enqueue(SyncTopicPage::every_topic().job()?).await?;
     worker.drain(&queue, vec![sweep]).await?;
@@ -200,7 +200,7 @@ async fn a_sweep_leaves_a_flagged_topic_with_its_flag() -> TestResult {
     let open = worker.private_root(INES, "Ines kite build").await?;
     let dismissed = worker.private_root(INES, "Ines tent patch").await?;
     let pool = sqlx::PgPool::connect(&hub.url).await?;
-    held_by_another_person(&pool, &[fresh, open, dismissed]).await?;
+    every_slug_held(&pool, &[fresh, open, dismissed]).await?;
     let mut tx = pool.begin().await?;
     sqlx::query("SELECT set_config('rh.maintenance', 'on', true)")
         .execute(&mut *tx)
@@ -257,7 +257,7 @@ async fn a_sweep_leaves_a_flagged_topic_with_its_flag() -> TestResult {
 
 const FLAGGED_AT: &str = "2026-11-01T00:00:00Z";
 
-async fn held_by_another_person(pool: &sqlx::PgPool, topics: &[TopicId]) -> TestResult {
+async fn every_slug_held(pool: &sqlx::PgPool, topics: &[TopicId]) -> TestResult {
     let mut tx = pool.begin().await?;
     sqlx::query("SELECT set_config('rh.maintenance', 'on', true)")
         .execute(&mut *tx)
@@ -265,16 +265,17 @@ async fn held_by_another_person(pool: &sqlx::PgPool, topics: &[TopicId]) -> Test
     for topic in topics {
         let held = sqlx::query(
             "INSERT INTO rh_wiki_topics (slug, title, owner_user_id)
-             SELECT slug, name, $2 FROM rh_topics WHERE id = $1",
+             SELECT CASE WHEN n = 1 THEN slug ELSE slug || '-' || n END, name, owner_user_id
+               FROM rh_topics, generate_series(1, $2) AS n WHERE id = $1",
         )
         .bind(topic.uuid())
-        .bind(TOM)
+        .bind(i32::try_from(SLUG_ATTEMPTS)?)
         .execute(&mut *tx)
         .await?;
         assert_eq!(
             held.rows_affected(),
-            1,
-            "another person's row holds the page slug"
+            u64::from(SLUG_ATTEMPTS),
+            "other pages hold every page slug the sweep can try"
         );
     }
     sqlx::query("DELETE FROM graphile_worker._private_jobs")

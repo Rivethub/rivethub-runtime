@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-const SLUG_LIMIT: usize = 80;
+pub const SLUG_LIMIT: usize = 80;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(try_from = "String", into = "String")]

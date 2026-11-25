@@ -22,12 +22,13 @@ use crate::wiki::WikiLookup;
 use crate::wiki::builder::WikiStoreError;
 use crate::wiki::builder::WikiWriteError;
 use crate::wiki::page::FoldMark;
+use crate::wiki::page::SLUG_LIMIT;
 use crate::wiki::page::WikiSlug;
 use crate::wiki::page::bound::rebase;
 use crate::wiki::page::lead::steady_lead;
 use crate::wiki::page::normalize_slug;
 
-const SLUG_ATTEMPTS: u32 = 1000;
+pub const SLUG_ATTEMPTS: u32 = 1000;
 const UNNAMED_PAGE: &str = "topic";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,6 +132,13 @@ pub trait TopicPageStore: Send + Sync {
         page: &TopicPage,
         now: Timestamp,
     ) -> Result<(), WikiStoreError>;
+
+    async fn create_topic_page(
+        &self,
+        topic: TopicId,
+        page: &TopicPage,
+        now: Timestamp,
+    ) -> Result<bool, WikiStoreError>;
 
     async fn edit_page(
         &self,
@@ -273,10 +281,20 @@ impl PageSync<'_> {
         if root.kind == TopicKind::Entity {
             return self.ensure_entity(root).await;
         }
-        let slug = self.free_slug(&root.slug).await?;
-        let page = TopicPage::empty(slug.clone(), root.name.as_str());
-        self.pages.save_topic_page(root.id, &page, self.now).await?;
-        Ok(slug)
+        let base = page_slug_text(&root.slug);
+        for attempt in 1..=SLUG_ATTEMPTS {
+            let Some(text) = allocated_page_slug(&base, TopicKind::Work, attempt) else {
+                break;
+            };
+            let slug = wiki_slug(text)?;
+            if self.pages.page_taken(&slug).await? {
+                continue;
+            }
+            if let Some(home) = self.create(root, slug).await? {
+                return Ok(home);
+            }
+        }
+        Err(WikiStoreError::SlugConflict(base).into())
     }
 
     async fn ensure_entity(&self, root: &Topic) -> Result<WikiSlug, TopicPageError> {
@@ -288,23 +306,23 @@ impl PageSync<'_> {
         if self.pages.page_taken(&slug).await? {
             return Ok(slug);
         }
-        let page = TopicPage::empty(slug.clone(), root.name.as_str());
-        self.pages.save_topic_page(root.id, &page, self.now).await?;
-        Ok(slug)
+        Ok(self.create(root, slug.clone()).await?.unwrap_or(slug))
     }
 
-    async fn free_slug(&self, topic: &Slug) -> Result<WikiSlug, TopicPageError> {
-        let base = page_slug_text(topic);
-        for attempt in 1..=SLUG_ATTEMPTS {
-            let Some(text) = allocated_page_slug(&base, TopicKind::Work, attempt) else {
-                break;
-            };
-            let slug = wiki_slug(text)?;
-            if !self.pages.page_taken(&slug).await? {
-                return Ok(slug);
-            }
+    async fn create(
+        &self,
+        root: &Topic,
+        slug: WikiSlug,
+    ) -> Result<Option<WikiSlug>, TopicPageError> {
+        let page = TopicPage::empty(slug.clone(), root.name.as_str());
+        if self
+            .pages
+            .create_topic_page(root.id, &page, self.now)
+            .await?
+        {
+            return Ok(Some(slug));
         }
-        Err(WikiStoreError::SlugConflict(base).into())
+        Ok(self.topics.page_slug(root.id).await?)
     }
 
     async fn read(&self, slug: &WikiSlug) -> Result<TopicPage, TopicPageError> {
@@ -566,10 +584,19 @@ fn allocated_page_slug(base: &str, kind: TopicKind, attempt: u32) -> Option<Stri
             if attempt == 1 {
                 base.to_owned()
             } else {
-                format!("{base}-{attempt}")
+                numbered(base, attempt)
             }
         }),
     }
+}
+
+fn numbered(base: &str, attempt: u32) -> String {
+    let suffix = format!("-{attempt}");
+    let stem: String = base
+        .chars()
+        .take(SLUG_LIMIT.saturating_sub(suffix.len()))
+        .collect();
+    format!("{}{suffix}", stem.trim_end_matches('-'))
 }
 
 fn page_slug_text(topic: &Slug) -> String {
@@ -604,5 +631,16 @@ mod tests {
             allocated_page_slug("tinbox", TopicKind::Work, 2).as_deref(),
             Some("tinbox-2")
         );
+    }
+
+    #[test]
+    fn a_numbered_slug_stays_within_the_slug_limit() {
+        let base = format!("{}-{}", "a".repeat(77), "b".repeat(10));
+        let base = crate::wiki::page::normalize_slug(&base);
+        for attempt in [2, 10, super::SLUG_ATTEMPTS] {
+            let slug = allocated_page_slug(&base, TopicKind::Work, attempt).unwrap_or_default();
+            assert_eq!(crate::wiki::page::normalize_slug(&slug), slug);
+            assert!(slug.ends_with(&format!("-{attempt}")), "{slug}");
+        }
     }
 }

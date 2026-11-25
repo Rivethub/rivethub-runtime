@@ -351,6 +351,18 @@ impl TopicPageStore for RefusingPages<'_> {
         self.inner.save_topic_page(topic, page, now).await
     }
 
+    async fn create_topic_page(
+        &self,
+        topic: TopicId,
+        page: &TopicPage,
+        now: Timestamp,
+    ) -> Result<bool, WikiStoreError> {
+        if topic == self.refused {
+            return Err(WikiStoreError::InvalidPatch("refused".to_owned()));
+        }
+        self.inner.create_topic_page(topic, page, now).await
+    }
+
     async fn edit_page(
         &self,
         slug: &WikiSlug,
