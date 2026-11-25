@@ -5,10 +5,7 @@ fn failed(error: sqlx::Error) -> WikiStoreError {
     WikiStoreError::Query(Box::new(error))
 }
 
-pub(crate) async fn check_retire(
-    conn: &mut PgConnection,
-    page: &str,
-) -> Result<(), WikiStoreError> {
+async fn check_retire(conn: &mut PgConnection, page: &str) -> Result<(), WikiStoreError> {
     let aliases: Vec<String> = sqlx::query_scalar(
         "SELECT from_slug FROM rh_wiki_redirects
           WHERE to_slug = $1
@@ -30,11 +27,28 @@ pub(crate) async fn check_retire(
     })
 }
 
-pub(crate) async fn hold_page(conn: &mut PgConnection, page: &str) -> Result<(), WikiStoreError> {
-    sqlx::query("SELECT 1 FROM rh_wiki_topics WHERE slug = $1 FOR UPDATE")
-        .bind(page)
+pub(crate) async fn hold_pages(
+    conn: &mut PgConnection,
+    retired: &[&str],
+    into: Option<&str>,
+) -> Result<(), WikiStoreError> {
+    sqlx::query(
+        "SELECT 1 FROM rh_wiki_redirects
+          WHERE to_slug = ANY($1) OR from_slug = ANY($1) OR from_slug = $2
+          ORDER BY from_slug FOR UPDATE",
+    )
+    .bind(retired)
+    .bind(into)
+    .execute(&mut *conn)
+    .await
+    .map_err(failed)?;
+    sqlx::query("SELECT 1 FROM rh_wiki_topics WHERE slug = ANY($1) ORDER BY slug FOR UPDATE")
+        .bind(retired)
         .execute(&mut *conn)
         .await
         .map_err(failed)?;
-    check_retire(conn, page).await
+    for page in retired {
+        check_retire(conn, page).await?;
+    }
+    Ok(())
 }

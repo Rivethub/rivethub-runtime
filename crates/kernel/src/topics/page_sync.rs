@@ -17,6 +17,8 @@ use crate::queue::Job;
 use crate::queue::JobKeyMode;
 use crate::queue::JobName;
 use crate::queue::MAINTENANCE_PRIORITY;
+use crate::wiki::builder::WikiStoreError;
+use crate::wiki::page::FoldMark;
 use crate::wiki::page::WikiSlug;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -152,4 +154,31 @@ async fn swept(
         sync.topic(topic.id, &[], decisions).await?;
     }
     Ok(())
+}
+
+pub async fn fold_section_steps<P: TopicPageStore + ?Sized>(
+    pages: &P,
+    root: &Topic,
+    topic: &Topic,
+    child: &WikiSlug,
+    into: &WikiSlug,
+    now: Timestamp,
+) -> Result<(), WikiStoreError> {
+    let Some(before) = pages.topic_page(child).await? else {
+        return Ok(());
+    };
+    if !before.text().is_empty() {
+        let parent = pages
+            .topic_page(into)
+            .await?
+            .ok_or_else(|| WikiStoreError::TopicMissing(into.as_ref().to_owned()))?;
+        let mut after = parent.clone();
+        let mut emptied = before.clone();
+        after.take_text(&mut emptied, topic.id, topic.name.as_str());
+        if after != parent {
+            pages.save_topic_page(root.id, &after, now).await?;
+        }
+        pages.save_topic_page(topic.id, &emptied, now).await?;
+    }
+    pages.fold_page(child, into, FoldMark::Section, now).await
 }

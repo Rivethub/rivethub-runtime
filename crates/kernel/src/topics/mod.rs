@@ -41,6 +41,7 @@ pub use page_edit::PageEdit;
 pub use page_edit::edit_topic_page;
 pub use page_sync::SweepFailure;
 pub use page_sync::SyncTopicPage;
+pub use page_sync::fold_section_steps;
 pub use page_sync::sync_topic_page;
 pub use placement::HistoryMark;
 pub use placement::Lineage;

@@ -1,4 +1,6 @@
 DO $rivet$
+DECLARE
+    cascade_key name;
 BEGIN
     SET LOCAL lock_timeout = '10s';
     IF to_regclass('_rivetos_migrations') IS NOT NULL THEN
@@ -10,7 +12,18 @@ BEGIN
     END IF;
     PERFORM set_config('rh.maintenance', 'on', true);
 
+    LOCK TABLE rh_wiki_topics IN SHARE ROW EXCLUSIVE MODE;
     LOCK TABLE rh_wiki_redirects IN ACCESS EXCLUSIVE MODE;
+
+    FOR cascade_key IN
+        SELECT conname FROM pg_constraint
+         WHERE conrelid = 'rh_wiki_redirects'::regclass AND contype = 'f'
+           AND confrelid = 'rh_wiki_topics'::regclass
+    LOOP
+        EXECUTE format('ALTER TABLE rh_wiki_redirects DROP CONSTRAINT %I', cascade_key);
+    END LOOP;
+    ALTER TABLE rh_wiki_redirects ADD CONSTRAINT rh_wiki_redirects_to_slug_fkey
+        FOREIGN KEY (to_slug) REFERENCES rh_wiki_topics (slug) ON DELETE RESTRICT;
 
     UPDATE rh_wiki_redirects r SET owner_user_id = w.owner_user_id
       FROM rh_wiki_topics w

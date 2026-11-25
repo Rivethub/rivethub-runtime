@@ -46,7 +46,7 @@ pub(super) async fn redirect_wiki(
     let absorbed_home = entity_home(tx, absorbed.id, primary).await?;
     let from = page_key(tx, absorbed.id, &absorbed.slug, &absorbed_home).await?;
     let removed = absorbed_page(tx, &from.key).await.map_err(query_error)?;
-    crate::wiki_redirect::hold_page(tx, &from.key)
+    crate::wiki_redirect::hold_pages(tx, &[from.key.as_str()], Some(&into.key))
         .await
         .map_err(store_error)?;
     ensure_page(tx, survivor, &into, &home)
@@ -71,10 +71,12 @@ async fn move_page(
         .bind(into)
         .execute(&mut **tx)
         .await?;
-    sqlx::query("DELETE FROM rh_wiki_topics WHERE slug = $1")
-        .bind(from)
-        .execute(&mut **tx)
-        .await?;
+    for statement in [
+        "DELETE FROM rh_wiki_redirects WHERE to_slug = $1",
+        "DELETE FROM rh_wiki_topics WHERE slug = $1",
+    ] {
+        sqlx::query(statement).bind(from).execute(&mut **tx).await?;
+    }
     sqlx::query!(
         "INSERT INTO rh_wiki_redirects (from_slug, to_slug, created_at, owner_user_id)
          VALUES ($1, $2, $3, coalesce(rh_scope_principal(), nullif($4, '')))

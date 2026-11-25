@@ -1,6 +1,9 @@
 use async_trait::async_trait;
 use jiff::Timestamp;
-use kernel::topics::{PageChange, PageEdit, PageSection, TopicId, TopicPage, TopicPageStore};
+use kernel::topics::{
+    PageChange, PageEdit, PageSection, Topic, TopicId, TopicPage, TopicPageStore,
+    fold_section_steps,
+};
 use kernel::wiki::builder::WikiStoreError;
 use kernel::wiki::consolidate::{WikiConsolidateStore, WikiFold};
 use kernel::wiki::page::WikiSlug;
@@ -144,6 +147,17 @@ impl TopicPageStore for PostgresMemory {
                 .await
                 .map_err(query_error)?;
         if current.as_deref() == Some(to.as_ref()) {
+            sqlx::query(
+                "UPDATE rh_wiki_redirects r SET owner_user_id = w.owner_user_id
+                   FROM rh_wiki_topics w
+                  WHERE r.from_slug = $1 AND r.owner_user_id IS NULL AND w.slug = r.to_slug
+                    AND w.visibility = 'private' AND w.owner_user_id IS NOT NULL
+                    AND NOT EXISTS (SELECT 1 FROM rh_spaces s WHERE s.id = w.owner_user_id)",
+            )
+            .bind(from.as_ref())
+            .execute(&self.pool)
+            .await
+            .map_err(query_error)?;
             return Ok(());
         }
         sqlx::query(
@@ -186,9 +200,24 @@ impl TopicPageStore for PostgresMemory {
         settle(removed, repository.release().await)
     }
 
-    async fn check_retire(&self, slug: &WikiSlug) -> Result<(), WikiStoreError> {
-        let mut conn = self.pool.acquire().await.map_err(query_error)?;
-        crate::wiki_redirect::check_retire(&mut conn, slug.as_ref()).await
+    async fn fold_section(
+        &self,
+        root: &Topic,
+        topic: &Topic,
+        child: &WikiSlug,
+        into: &WikiSlug,
+        now: Timestamp,
+    ) -> Result<(), WikiStoreError> {
+        if !self.in_root(&[child, into]).await? {
+            return fold_section_steps(self, root, topic, child, into, now).await;
+        }
+        let fold = WikiFold {
+            cluster: into.as_ref().to_owned(),
+            parent: into.as_ref().to_owned(),
+            children: vec![child.as_ref().to_owned()],
+            mark: FoldMark::Section,
+        };
+        self.fold_with(&fold, Some(topic), now).await.map(drop)
     }
 }
 
@@ -234,19 +263,35 @@ impl PostgresMemory {
         slug: &WikiSlug,
     ) -> Result<(), WikiStoreError> {
         let mut tx = self.pool.begin().await.map_err(query_error)?;
-        crate::wiki_redirect::hold_page(&mut tx, slug.as_ref()).await?;
+        crate::wiki_redirect::hold_pages(&mut tx, &[slug.as_ref()], None).await?;
+        for statement in [
+            "DELETE FROM rh_wiki_redirects WHERE to_slug = $1",
+            "DELETE FROM rh_wiki_topics WHERE slug = $1",
+        ] {
+            sqlx::query(statement)
+                .bind(slug.as_ref())
+                .execute(&mut *tx)
+                .await
+                .map_err(query_error)?;
+        }
         if repository.read(slug.as_ref()).await?.is_some() {
             let message = format!("wiki({}): removed after a tidy review", slug.as_ref());
             repository
                 .remove(&[slug.as_ref().to_owned()], &message)
                 .await?;
         }
-        sqlx::query("DELETE FROM rh_wiki_topics WHERE slug = $1")
-            .bind(slug.as_ref())
-            .execute(&mut *tx)
-            .await
-            .map_err(query_error)?;
         tx.commit().await.map_err(query_error)
+    }
+
+    async fn in_root(&self, slugs: &[&WikiSlug]) -> Result<bool, WikiStoreError> {
+        let mut connection = self.pool.acquire().await.map_err(query_error)?;
+        for slug in slugs {
+            let home = page_home(&mut connection, slug.as_ref()).await?;
+            if !home.directory.is_empty() || home.local != slug.as_ref() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     async fn row_page(&self, slug: &WikiSlug) -> Result<Option<TopicPage>, WikiStoreError> {
@@ -369,24 +414,7 @@ impl PostgresMemory {
         page.title.clone_into(&mut stored.meta.title);
         page.summary.clone_into(&mut stored.current_state);
         page.article.clone_into(&mut stored.article);
-        stored.meta.sections = page
-            .sections
-            .iter()
-            .filter_map(|section| {
-                section.topic.map(|topic| WikiSectionRef {
-                    topic: topic.to_string(),
-                    heading: section.heading.clone(),
-                })
-            })
-            .collect();
-        stored.extra_sections = page
-            .sections
-            .iter()
-            .map(|section| ArticleSection {
-                heading: section.heading.clone(),
-                body: section.body.clone(),
-            })
-            .collect();
+        set_sections(&mut stored, &page.sections);
         if !claim.reserve(&mut tx, &stored, placed, now).await? {
             tx.rollback().await.map_err(query_error)?;
             return Ok(false);
@@ -527,4 +555,23 @@ pub(super) fn topic_page(page: WikiPage) -> Result<TopicPage, WikiStoreError> {
         article: page.article,
         sections,
     })
+}
+
+pub(super) fn set_sections(stored: &mut WikiPage, sections: &[PageSection]) {
+    stored.meta.sections = sections
+        .iter()
+        .filter_map(|section| {
+            section.topic.map(|topic| WikiSectionRef {
+                topic: topic.to_string(),
+                heading: section.heading.clone(),
+            })
+        })
+        .collect();
+    stored.extra_sections = sections
+        .iter()
+        .map(|section| ArticleSection {
+            heading: section.heading.clone(),
+            body: section.body.clone(),
+        })
+        .collect();
 }

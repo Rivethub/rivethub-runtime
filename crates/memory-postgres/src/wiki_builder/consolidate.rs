@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use jiff::Timestamp;
+use kernel::topics::{Topic, TopicPage};
 use kernel::wiki::builder::WikiStoreError;
 use kernel::wiki::consolidate::{WikiConsolidateStore, WikiFold, WikiTopicStats};
 use kernel::wiki::page::{FoldMark, FoldedTopic, WikiPage, fold_page, fold_text};
@@ -59,24 +60,34 @@ impl WikiConsolidateStore for PostgresMemory {
         fold: &WikiFold,
         now: Timestamp,
     ) -> Result<Vec<String>, WikiStoreError> {
+        self.fold_with(fold, None, now).await
+    }
+}
+
+impl PostgresMemory {
+    pub(super) async fn fold_with(
+        &self,
+        fold: &WikiFold,
+        section: Option<&Topic>,
+        now: Timestamp,
+    ) -> Result<Vec<String>, WikiStoreError> {
         let directory = self
             .wiki_directory
             .as_ref()
             .ok_or(WikiStoreError::DirectoryMissing)?;
         let (folded, released) = {
             let mut repository = WikiRepository::for_store(directory.clone()).lock().await?;
-            let folded = self.fold_pages(&mut repository, fold, now).await;
+            let folded = self.fold_pages(&mut repository, fold, section, now).await;
             (folded, repository.release().await)
         };
         settle(folded, released)
     }
-}
 
-impl PostgresMemory {
     async fn fold_pages(
         &self,
         repository: &mut LockedRepository,
         fold: &WikiFold,
+        section: Option<&Topic>,
         now: Timestamp,
     ) -> Result<Vec<String>, WikiStoreError> {
         let mut tx = self.pool.begin().await.map_err(query_error)?;
@@ -111,24 +122,24 @@ impl PostgresMemory {
         };
         let mut folded = Vec::new();
         for child in fold.children.iter().filter(|child| **child != fold.parent) {
-            let Some(row) = text(&mut tx, child).await? else {
+            let Some(mut row) = text(&mut tx, child).await? else {
                 continue;
             };
-            absorb(
-                &mut page,
-                child,
-                row,
-                repository.read(child).await?,
-                fold.mark,
-            );
+            let mut file = repository.read(child).await?;
+            if let Some(owner) = section {
+                take_section(&mut page, &mut row, file.as_mut(), owner)?;
+            }
+            absorb(&mut page, child, row, file, fold.mark);
             folded.push(child.clone());
         }
         if folded.is_empty() {
             tx.commit().await.map_err(query_error)?;
             return Ok(folded);
         }
+        let retired: Vec<&str> = folded.iter().map(String::as_str).collect();
+        crate::wiki_redirect::hold_pages(&mut tx, &retired, Some(&fold.parent)).await?;
         for child in &folded {
-            crate::wiki_redirect::hold_page(&mut tx, child).await?;
+            retire(&mut tx, child, &fold.parent, now, &live).await?;
         }
         let message = format!(
             "wiki({}): consolidate {}\n\nPipeline: wiki-v7",
@@ -137,12 +148,36 @@ impl PostgresMemory {
         );
         let git_sha = repository.fold(&mut page, &folded, &message, now).await?;
         topics::store_topic(&mut tx, &page, &git_sha, now).await?;
-        for child in &folded {
-            retire(&mut tx, child, &fold.parent, now, &live).await?;
-        }
         tx.commit().await.map_err(query_error)?;
         Ok(folded)
     }
+}
+
+fn take_section(
+    page: &mut WikiPage,
+    row: &mut TextRow,
+    file: Option<&mut WikiPage>,
+    owner: &Topic,
+) -> Result<(), WikiStoreError> {
+    let mut parent = super::topic_pages::topic_page(page.clone())?;
+    let (summary, article) = file.as_ref().map_or_else(
+        || (row.current_state.clone(), row.article.clone()),
+        |file| (file.current_state.clone(), file.article.clone()),
+    );
+    let mut child = TopicPage {
+        summary,
+        article,
+        ..TopicPage::empty(parent.slug.clone(), &row.title)
+    };
+    parent.take_text(&mut child, owner.id, owner.name.as_str());
+    super::topic_pages::set_sections(page, &parent.sections);
+    row.current_state.clone_from(&child.summary);
+    row.article.clone_from(&child.article);
+    if let Some(file) = file {
+        file.current_state = child.summary;
+        file.article = child.article;
+    }
+    Ok(())
 }
 
 fn absorb(page: &mut WikiPage, slug: &str, row: TextRow, child: Option<WikiPage>, mark: FoldMark) {

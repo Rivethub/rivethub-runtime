@@ -404,10 +404,6 @@ impl TopicPageStore for RefusingPages<'_> {
     async fn remove_page(&self, slug: &WikiSlug) -> Result<(), WikiStoreError> {
         self.inner.remove_page(slug).await
     }
-
-    async fn check_retire(&self, slug: &WikiSlug) -> Result<(), WikiStoreError> {
-        self.inner.check_retire(slug).await
-    }
 }
 
 #[expect(clippy::too_many_lines)]
