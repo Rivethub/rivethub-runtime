@@ -1,13 +1,17 @@
 use jiff::Timestamp;
 use kernel::tenancy::Scope;
 use kernel::topics::NewTopic;
+use kernel::topics::SweepOwners;
+use kernel::topics::SyncTopicPage;
 use kernel::topics::Topic;
 use kernel::topics::TopicId;
 use kernel::topics::TopicKind;
 use kernel::topics::TopicName;
 use kernel::topics::TopicPage;
+use kernel::topics::TopicPageError;
 use kernel::topics::TopicPageStore as _;
 use kernel::topics::TopicStore as _;
+use kernel::topics::sync_topic_page;
 use kernel::wiki::builder::WikiStoreError;
 use kernel::wiki::consolidate::WikiConsolidateStore as _;
 use kernel::wiki::consolidate::WikiFold;
@@ -369,20 +373,10 @@ async fn a_viewer_cannot_retire_a_page_another_person_redirects_to(pool: PgPool)
             if page == "pantry" && aliases == &["larder".to_owned()]),
         "a viewer fold over bob's alias is refused, got {folded:?}"
     );
-    let removed = owners
-        .clone()
-        .run(viewer_store.remove_page(&slug("pantry")?))
-        .await;
+    let removed = owners.run(viewer_store.remove_page(&slug("pantry")?)).await;
     assert!(
         matches!(&removed, Err(WikiStoreError::RedirectsHeld { .. })),
         "a viewer removal under bob's alias is refused, got {removed:?}"
-    );
-    let checked = owners
-        .run(viewer_store.check_retire(&slug("pantry")?))
-        .await;
-    assert!(
-        matches!(&checked, Err(WikiStoreError::RedirectsHeld { .. })),
-        "a topic sync learns it cannot retire the page, got {checked:?}"
     );
     assert_eq!(
         redirect_row(&pool, "larder").await?,
@@ -469,6 +463,285 @@ async fn topic_sync_leaves_an_alias_that_already_points_right(pool: PgPool) -> T
             row("stale", "alice-desk", Some("bob")),
         ],
         "an alias that already points at the page is left as it was"
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn deleting_a_page_keeps_the_redirects_that_point_at_it(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    sqlx::raw_sql(
+        "INSERT INTO rh_wiki_scopes (scope, owner_user_id, visibility, key_prefix, directory)
+         VALUES ('bob', 'bob', 'private', 'bob-', 'bob');
+         INSERT INTO rh_wiki_topics (slug, title, owner_user_id, visibility, scope, local_slug)
+         VALUES ('bob-desk', 'Desk', 'bob', 'private', 'bob', 'desk');
+         INSERT INTO rh_wiki_redirects (from_slug, to_slug, owner_user_id)
+         VALUES ('desk', 'bob-desk', 'alice'), ('old-desk', 'bob-desk', NULL)",
+    )
+    .execute(&pool)
+    .await?;
+    let bob = person(&pool, "bob").await?;
+    let deleted = sqlx::query("DELETE FROM rh_wiki_topics WHERE slug = 'bob-desk'")
+        .execute(&bob)
+        .await;
+    let code = deleted
+        .as_ref()
+        .err()
+        .and_then(sqlx::Error::as_database_error)
+        .and_then(sqlx::error::DatabaseError::code);
+    assert_eq!(
+        code.as_deref(),
+        Some("23503"),
+        "deleting a page other people's redirects point at fails, got {deleted:?}"
+    );
+    assert_eq!(
+        redirect_row(&pool, "desk").await?,
+        ("bob-desk".to_owned(), Some("alice".to_owned()))
+    );
+    assert_eq!(
+        redirect_row(&pool, "old-desk").await?,
+        ("bob-desk".to_owned(), None)
+    );
+
+    let wiki = tempfile::tempdir()?;
+    let probe = probe(&pool).await?;
+    let store = PostgresMemory::new(probe).with_wiki_directory(wiki.path().join("wiki"));
+    Scope::Maintenance
+        .run(store.remove_page(&slug("bob-desk")?))
+        .await?;
+    let left: i64 = sqlx::query_scalar(
+        "SELECT (SELECT count(*) FROM rh_wiki_redirects WHERE to_slug = 'bob-desk')
+              + (SELECT count(*) FROM rh_wiki_topics WHERE slug = 'bob-desk')",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        left, 0,
+        "a maintenance removal deletes the redirects, then the page"
+    );
+    Ok(())
+}
+
+async fn work_topic(
+    store: &PostgresMemory,
+    name: &str,
+    parent: Option<TopicId>,
+) -> Result<Topic, Box<dyn std::error::Error>> {
+    Ok(store
+        .create(Topic::create(
+            TopicId::random(),
+            NewTopic {
+                kind: TopicKind::Work,
+                name: TopicName::new(name)?,
+                aliases: Vec::new(),
+                parent,
+                directory: None,
+                owner: Some(viewer("alice")?.principal().clone()),
+            },
+            Timestamp::now(),
+        )?)
+        .await?)
+}
+
+async fn kitchen_with_pantry(
+    pool: &PgPool,
+    root: &std::path::Path,
+) -> Result<TopicId, Box<dyn std::error::Error>> {
+    let (store, _) = seed(pool).await?;
+    let now = Timestamp::now();
+    let kitchen = work_topic(&store, "Kitchen", None).await?;
+    let pantry = work_topic(&store, "Pantry", Some(kitchen.id)).await?;
+    let admin = PostgresMemory::new(pool.clone()).with_wiki_directory(root.to_owned());
+    admin
+        .save_topic_page(
+            kitchen.id,
+            &TopicPage::empty(slug("kitchen")?, "Kitchen"),
+            now,
+        )
+        .await?;
+    admin
+        .save_topic_page(
+            pantry.id,
+            &TopicPage {
+                summary: "Flour lives on the top shelf.".to_owned(),
+                ..TopicPage::empty(slug("pantry")?, "Pantry")
+            },
+            now,
+        )
+        .await?;
+    Ok(pantry.id)
+}
+
+async fn sync_as_alice(
+    pool: &PgPool,
+    root: &std::path::Path,
+    topic: TopicId,
+) -> Result<Result<(), TopicPageError>, Box<dyn std::error::Error>> {
+    let store = PostgresMemory::new(probe(pool).await?).with_wiki_directory(root.to_owned());
+    Ok(Scope::Viewer(viewer("alice")?)
+        .run(sync_topic_page(
+            &store,
+            &store,
+            &store,
+            &SyncTopicPage::topic(topic),
+            SweepOwners::All,
+            Timestamp::now(),
+        ))
+        .await
+        .map(drop))
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_refused_topic_sync_fold_changes_nothing(pool: PgPool) -> TestResult {
+    let wiki = tempfile::tempdir()?;
+    let root = wiki.path().join("wiki");
+    let pantry = kitchen_with_pantry(&pool, &root).await?;
+    sqlx::raw_sql(
+        "INSERT INTO rh_wiki_redirects (from_slug, to_slug, owner_user_id)
+         VALUES ('larder', 'pantry', 'bob')",
+    )
+    .execute(&pool)
+    .await?;
+
+    let synced = sync_as_alice(&pool, &root, pantry).await?;
+    assert!(
+        matches!(
+            &synced,
+            Err(TopicPageError::Wiki(WikiStoreError::RedirectsHeld { page, .. })) if page == "pantry"
+        ),
+        "a topic sync cannot fold a page bob's alias points at, got {synced:?}"
+    );
+    let pantry_text: String =
+        sqlx::query_scalar("SELECT current_state FROM rh_wiki_topics WHERE slug = 'pantry'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(
+        pantry_text, "Flour lives on the top shelf.",
+        "the refused fold kept the sub-topic's text"
+    );
+    let kitchen_text = std::fs::read_to_string(root.join("topics/kitchen.md"))?;
+    assert!(
+        !kitchen_text.contains("Flour"),
+        "the refused fold did not copy the text into the parent"
+    );
+    assert_eq!(
+        redirect_row(&pool, "larder").await?,
+        ("pantry".to_owned(), Some("bob".to_owned()))
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_topic_sync_fold_moves_the_text_and_retires_the_page_together(
+    pool: PgPool,
+) -> TestResult {
+    let wiki = tempfile::tempdir()?;
+    let root = wiki.path().join("wiki");
+    let pantry = kitchen_with_pantry(&pool, &root).await?;
+    sqlx::raw_sql(
+        "CREATE FUNCTION test_alias_cleared_pantry() RETURNS trigger
+             LANGUAGE plpgsql SECURITY DEFINER AS $$
+         BEGIN
+             INSERT INTO rh_wiki_redirects (from_slug, to_slug, owner_user_id)
+             VALUES ('larder', 'pantry', 'bob') ON CONFLICT DO NOTHING;
+             RETURN NULL;
+         END $$;
+         CREATE TRIGGER test_alias_cleared_pantry AFTER UPDATE ON rh_wiki_topics
+             FOR EACH ROW WHEN (NEW.slug = 'pantry' AND NEW.current_state = '')
+             EXECUTE FUNCTION test_alias_cleared_pantry()",
+    )
+    .execute(&pool)
+    .await?;
+
+    let synced = sync_as_alice(&pool, &root, pantry).await?;
+    assert!(
+        synced.is_ok(),
+        "the sync folds the sub-topic without a separate clearing write that a new alias could follow, got {synced:?}"
+    );
+    let pantry_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM rh_wiki_topics WHERE slug = 'pantry'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(pantry_rows, 0, "the sub-topic page is retired");
+    let kitchen_text = std::fs::read_to_string(root.join("topics/kitchen.md"))?;
+    assert!(
+        kitchen_text.contains("Flour lives on the top shelf."),
+        "the sub-topic's text moved into the parent page"
+    );
+    assert_eq!(redirect_row(&pool, "pantry").await?.0, "kitchen");
+    Ok(())
+}
+
+async fn blocked_by(pool: &PgPool, blocker: i32) -> Result<(), sqlx::Error> {
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(10));
+    loop {
+        interval.tick().await;
+        let waiting: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+                             WHERE datname = current_database()
+                               AND $1 = ANY(pg_blocking_pids(pid)))",
+        )
+        .bind(blocker)
+        .fetch_one(pool)
+        .await?;
+        if waiting {
+            return Ok(());
+        }
+    }
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_fold_and_a_redirect_move_between_its_children_both_finish(pool: PgPool) -> TestResult {
+    let wiki = tempfile::tempdir()?;
+    let root = wiki.path().join("wiki");
+    kitchen_with_pantry(&pool, &root).await?;
+    sqlx::raw_sql(
+        "INSERT INTO rh_wiki_topics (slug, title, current_state, owner_user_id)
+         VALUES ('larder', 'Larder', 'Jars of jam.', 'alice');
+         INSERT INTO rh_wiki_redirects (from_slug, to_slug, owner_user_id)
+         VALUES ('cupboard', 'pantry', 'alice')",
+    )
+    .execute(&pool)
+    .await?;
+    let fold = WikiFold {
+        cluster: "kitchen".to_owned(),
+        parent: "kitchen".to_owned(),
+        children: vec!["larder".to_owned(), "pantry".to_owned()],
+        mark: FoldMark::Merged,
+    };
+    let store = PostgresMemory::new(probe(&pool).await?).with_wiki_directory(root.clone());
+    let mut mover = pool.begin().await?;
+    let mover_pid: i32 = sqlx::query_scalar(
+        "SELECT pg_backend_pid() FROM rh_wiki_redirects WHERE from_slug = 'cupboard' FOR UPDATE",
+    )
+    .fetch_one(&mut *mover)
+    .await?;
+
+    let folding = Scope::Maintenance.run(store.fold_wiki(&fold, Timestamp::now()));
+    let moving = async {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            blocked_by(&pool, mover_pid),
+        )
+        .await
+        .map_err(|_| sqlx::Error::PoolTimedOut)??;
+        sqlx::query("UPDATE rh_wiki_redirects SET to_slug = 'larder' WHERE from_slug = 'cupboard'")
+            .execute(&mut *mover)
+            .await?;
+        mover.commit().await
+    };
+    let (folded, moved) = tokio::join!(folding, moving);
+    assert!(
+        moved.is_ok(),
+        "the redirect move finishes without a deadlock, got {moved:?}"
+    );
+    assert_eq!(
+        folded.map_err(|error| format!("the fold finishes without a deadlock, got {error:?}"))?,
+        vec!["larder".to_owned(), "pantry".to_owned()]
+    );
+    assert_eq!(
+        redirect_row(&pool, "cupboard").await?,
+        ("kitchen".to_owned(), Some("alice".to_owned()))
     );
     Ok(())
 }
