@@ -924,8 +924,25 @@ async fn a_redirect_added_while_a_fold_waits_for_its_page_does_not_deadlock(
     Ok(())
 }
 
-#[sqlx::test(migrations = false)]
-async fn the_redirect_migration_waits_for_an_in_flight_fold(pool: PgPool) -> TestResult {
+async fn backed_off(pool: &PgPool, blocker: i32) -> Result<(), sqlx::Error> {
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(10));
+    loop {
+        interval.tick().await;
+        let waiting: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+                             WHERE datname = current_database()
+                               AND (wait_event = 'PgSleep' OR $1 = ANY(pg_blocking_pids(pid))))",
+        )
+        .bind(blocker)
+        .fetch_one(pool)
+        .await?;
+        if waiting {
+            return Ok(());
+        }
+    }
+}
+
+async fn before_redirect_migration(pool: &PgPool) -> TestResult {
     let through_85 = migrate::POSTGRES
         .migrations
         .partition_point(|migration| migration.version <= 85);
@@ -938,15 +955,21 @@ async fn the_redirect_migration_waits_for_an_in_flight_fold(pool: PgPool) -> Tes
         ),
         ..sqlx::migrate::Migrator::DEFAULT
     };
-    before.run(&pool).await?;
+    before.run(pool).await?;
     sqlx::raw_sql(
         "INSERT INTO rh_wiki_topics (slug, title, owner_user_id)
          VALUES ('kitchen', 'Kitchen', 'alice'), ('pantry', 'Pantry', 'alice');
          INSERT INTO rh_wiki_redirects (from_slug, to_slug, owner_user_id)
          VALUES ('cupboard', 'pantry', 'alice')",
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
+    Ok(())
+}
+
+#[sqlx::test(migrations = false)]
+async fn the_redirect_migration_waits_for_an_in_flight_fold(pool: PgPool) -> TestResult {
+    before_redirect_migration(&pool).await?;
     let mut fold = pool.begin().await?;
     let fold_pid: i32 = sqlx::query_scalar(
         "SELECT pg_backend_pid() FROM rh_wiki_redirects WHERE to_slug = 'pantry' FOR UPDATE",
@@ -956,7 +979,7 @@ async fn the_redirect_migration_waits_for_an_in_flight_fold(pool: PgPool) -> Tes
 
     let migrating = migrate::postgres_pool(&pool);
     let folding = async {
-        within(blocked_by(&pool, fold_pid)).await?;
+        within(backed_off(&pool, fold_pid)).await?;
         sqlx::query("DELETE FROM rh_wiki_redirects WHERE to_slug = 'pantry'")
             .execute(&mut *fold)
             .await?;
@@ -973,6 +996,43 @@ async fn the_redirect_migration_waits_for_an_in_flight_fold(pool: PgPool) -> Tes
     assert!(
         migrated.is_ok(),
         "the migration waits for the fold and then applies, got {migrated:?}"
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrations = false)]
+async fn the_redirect_migration_and_a_fold_that_read_its_pages_both_finish(
+    pool: PgPool,
+) -> TestResult {
+    before_redirect_migration(&pool).await?;
+    let mut fold = pool.begin().await?;
+    let fold_pid: i32 =
+        sqlx::query_scalar("SELECT pg_backend_pid() FROM rh_wiki_topics WHERE slug = 'pantry'")
+            .fetch_one(&mut *fold)
+            .await?;
+
+    let migrating = migrate::postgres_pool(&pool);
+    let folding = async {
+        within(backed_off(&pool, fold_pid)).await?;
+        sqlx::query("SELECT 1 FROM rh_wiki_redirects WHERE to_slug = 'pantry' FOR UPDATE")
+            .execute(&mut *fold)
+            .await?;
+        sqlx::query("DELETE FROM rh_wiki_redirects WHERE to_slug = 'pantry'")
+            .execute(&mut *fold)
+            .await?;
+        sqlx::query("DELETE FROM rh_wiki_topics WHERE slug = 'pantry'")
+            .execute(&mut *fold)
+            .await?;
+        fold.commit().await
+    };
+    let (migrated, folded) = tokio::join!(migrating, folding);
+    assert!(
+        folded.is_ok(),
+        "the fold takes its redirect lock after reading pages without a deadlock, got {folded:?}"
+    );
+    assert!(
+        migrated.is_ok(),
+        "the migration backs off until the fold commits, then applies, got {migrated:?}"
     );
     Ok(())
 }

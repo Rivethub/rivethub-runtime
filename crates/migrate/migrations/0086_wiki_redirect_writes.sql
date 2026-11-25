@@ -1,6 +1,7 @@
 DO $rivet$
 DECLARE
     cascade_key name;
+    locked boolean := false;
 BEGIN
     SET LOCAL lock_timeout = '10s';
     IF to_regclass('_rivetos_migrations') IS NOT NULL THEN
@@ -12,8 +13,20 @@ BEGIN
     END IF;
     PERFORM set_config('rh.maintenance', 'on', true);
 
-    LOCK TABLE rh_wiki_redirects IN ACCESS EXCLUSIVE MODE;
-    LOCK TABLE rh_wiki_topics IN SHARE ROW EXCLUSIVE MODE;
+    FOR attempt IN 1..60 LOOP
+        BEGIN
+            LOCK TABLE rh_wiki_redirects IN ACCESS EXCLUSIVE MODE NOWAIT;
+            LOCK TABLE rh_wiki_topics IN ACCESS EXCLUSIVE MODE NOWAIT;
+            locked := true;
+        EXCEPTION WHEN lock_not_available THEN
+            PERFORM pg_sleep(0.5);
+        END;
+        EXIT WHEN locked;
+    END LOOP;
+    IF NOT locked THEN
+        RAISE EXCEPTION 'migration 0086 could not lock rh_wiki_redirects and rh_wiki_topics: wiki writes kept them busy for 30 seconds'
+            USING HINT = 'Stop the RivetHub nodes serving this database, then run the migration again.';
+    END IF;
 
     FOR cascade_key IN
         SELECT conname FROM pg_constraint
