@@ -21,6 +21,7 @@ use wire::capture::SessionBundle;
 
 use super::dropbox::DropBox;
 use super::dropbox::DropError;
+use super::dropbox::Incoming;
 use super::dropbox::MAX_DROP_BYTES;
 use super::inbox::Inbox;
 use super::inbox::Slot;
@@ -192,36 +193,38 @@ impl Wanted<'_> {
         let servers = ShareServers::from_env(env)
             .await
             .map_err(|error| FetchError::Setup(Box::new(error)))?;
-        let mut downloading = Some(downloading);
         if gateway {
             let drops = DropBox::on_this_node(env, &servers).await?;
-            let source = Source::ThisNode;
-            if let Some(announce) = downloading.take() {
-                announce(&source)?;
-            }
-            match self.fetch_from(&drops).await {
-                Ok(()) => return Ok(source),
-                Err(DropError::Gone(_)) => {}
-                Err(error) => return Err(error.into()),
+            if let Some(incoming) = served_here(drops.request(self.id).await)? {
+                return self.save(incoming, Source::ThisNode, downloading).await;
             }
         }
         let host = from.unwrap_or(embedded);
         let drops = DropBox::on(&servers, &host).await?;
-        let source = Source::Server(host);
-        if let Some(announce) = downloading.take() {
-            announce(&source)?;
-        }
-        self.fetch_from(&drops).await?;
-        Ok(source)
+        let incoming = drops.request(self.id).await?;
+        self.save(incoming, Source::Server(host), downloading).await
     }
 
-    async fn fetch_from(&self, drops: &DropBox) -> Result<(), DropError> {
+    async fn save(
+        &self,
+        incoming: Incoming,
+        source: Source,
+        downloading: impl FnOnce(&Source) -> std::io::Result<()>,
+    ) -> Result<Source, FetchError> {
+        downloading(&source)?;
         let partial = self.inbox.partial()?;
-        drops
-            .download(self.id, partial.as_file().try_clone()?)
-            .await?;
+        incoming.save(partial.as_file().try_clone()?).await?;
         self.inbox.keep(self.slot, partial)?;
-        Ok(())
+        Ok(source)
+    }
+}
+
+fn served_here(probe: Result<Incoming, DropError>) -> Result<Option<Incoming>, DropError> {
+    match probe {
+        Ok(incoming) => Ok(Some(incoming)),
+        Err(DropError::Gone(_) | DropError::Server(ServerError::Answered(401))) => Ok(None),
+        Err(DropError::Server(ServerError::Http(error))) if error.is_connect() => Ok(None),
+        Err(error) => Err(error),
     }
 }
 

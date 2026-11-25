@@ -2085,3 +2085,63 @@ async fn from_overrides_the_host_in_the_code_and_stays_subject_to_the_allowed_li
     assert_eq!(served.drops.0.lock().gets, 1, "the --from host was dialed");
     served.stop.cancel();
 }
+
+async fn received_past_the_local_gateway(port: u16, extra: &[&str]) -> (cli::Report, usize) {
+    let served = drop_box().await;
+    let (code, _) = shared_through(&served).await;
+    let gets = served.drops.0.lock().gets;
+    let home = support::home();
+    let root = home.path().join("own-drops");
+    let node = team_node(
+        "ines",
+        ("127.0.0.1", port),
+        &format!("    root: {}\n", root.display()),
+        &[&host_of(&served.url)],
+    );
+    let mut args = vec!["memory", "receive", &code, "--dry-run"];
+    args.extend_from_slice(extra);
+    let received = node.run(&args).await;
+    let fetched = served.drops.0.lock().gets - gets;
+    served.stop.cancel();
+    (received, fetched)
+}
+
+fn received_from_the_embedded_server(received: &cli::Report, fetched: usize) {
+    assert_eq!(received.exit, Exit::Ok, "{}", received.stderr);
+    assert_eq!(fetched, 1, "the embedded server served the drop");
+}
+
+#[tokio::test]
+async fn a_stopped_local_gateway_falls_back_to_the_embedded_server() {
+    let (received, fetched) = received_past_the_local_gateway(unused_port().await, &[]).await;
+    received_from_the_embedded_server(&received, fetched);
+}
+
+#[tokio::test]
+async fn a_local_gateway_that_answers_401_falls_back_to_the_embedded_server() {
+    let refusing = Router::new().route(
+        "/api/drops/{id}",
+        axum::routing::get(|| async { StatusCode::UNAUTHORIZED }),
+    );
+    let (gateway, stop) = serve("127.0.0.1", refusing).await;
+    let (received, fetched) = received_past_the_local_gateway(port_of(&gateway), &[]).await;
+    stop.cancel();
+    received_from_the_embedded_server(&received, fetched);
+}
+
+#[tokio::test]
+async fn receive_never_sends_the_drop_id_to_the_gateway_flag() {
+    let unrelated = drop_box().await;
+    let (received, fetched) =
+        received_past_the_local_gateway(unused_port().await, &["--gateway", &unrelated.url]).await;
+    received_from_the_embedded_server(&received, fetched);
+    let seen = unrelated.drops.0.lock();
+    assert_eq!(seen.gets, 0, "{:?}", seen.uris);
+    assert!(
+        seen.uris.iter().all(|uri| !uri.contains(DROP_ID)),
+        "{:?}",
+        seen.uris
+    );
+    drop(seen);
+    unrelated.stop.cancel();
+}
