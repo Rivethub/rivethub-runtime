@@ -968,6 +968,22 @@ fn dsh_disconnect_leaves_a_recall_row_rh_did_not_write() -> TestResult {
 }
 
 #[test]
+fn dsh_row_that_only_mentions_rh_mcp_is_not_rivethub() -> TestResult {
+    let machine = machine()?;
+    fake_dsh(&machine)?;
+    let original = "- insert:\n    - id: mine\n      name: ./mcp.js\n      config:\n        serverName: mine\n        command: bash\n        args:\n          - -c\n          - echo rh mcp\n";
+    machine.write(".dsh/cordis.patch.yml", original)?;
+    let probe = machine.probe("dsh")?;
+    assert_ne!(probe.recall.state, RecallState::Connected);
+    let now = wire::time::timestamp_at_utc(2026, 11, 6, 13, 0, 0).unwrap_or_default();
+    machine
+        .service
+        .disconnect_now("dsh", Some(ConnectPart::Recall), false, now)?;
+    assert_eq!(machine.read(".dsh/cordis.patch.yml")?, original);
+    Ok(())
+}
+
+#[test]
 fn dsh_refuses_a_recall_name_that_already_runs_something_else() -> TestResult {
     let machine = machine()?;
     fake_dsh(&machine)?;
