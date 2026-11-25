@@ -69,6 +69,7 @@ impl DropBox {
             TRANSFER_TIMEOUT,
             crate::status::Redirects::Refuse,
             None,
+            crate::gateway_target::Locate::Discover,
         )
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;

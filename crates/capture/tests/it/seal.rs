@@ -313,16 +313,11 @@ fn signature_states_map_to_verification() -> TestResult {
     assert!(reason.starts_with("verified, signed by ines ("), "{reason}");
     assert!(reason.contains("; bundle author '"), "{reason}");
     trust.add("dana", signer.public_key())?;
-    let named = open(&sealed, &trust)?;
     assert_eq!(
-        named,
-        Verification::Trusted {
-            key: signer.public_key(),
-            trusted_as: "dana".to_owned(),
-            author: "dana".to_owned(),
-        }
+        open(&sealed, &trust)?,
+        renamed,
+        "a label that matches the author does not outrank the first one stored"
     );
-    assert!(!named.reason().contains("bundle author"));
     Ok(())
 }
 
