@@ -29,6 +29,7 @@ impl GatewayTarget {
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Locate {
     Discover,
+    ThisNode,
     Configured,
 }
 
@@ -51,7 +52,7 @@ pub(crate) async fn target_for(
             .text(GATEWAY_URL_ENV)
             .map(str::trim)
             .filter(|text| !text.is_empty()),
-        Locate::Configured => None,
+        Locate::ThisNode | Locate::Configured => None,
     };
     if let Some(raw) = explicit {
         return explicit_target(env, config, raw);
@@ -65,7 +66,7 @@ pub(crate) async fn target_for(
         BindSource::resolve_section(section.as_ref(), &tls_env, &node, &shared)
     })
     .await?;
-    if matches!(locate, Locate::Discover) {
+    if matches!(locate, Locate::Discover | Locate::ThisNode) {
         source = running_bind(env, source)?;
     }
     let mut url = listen_url(&source)?;

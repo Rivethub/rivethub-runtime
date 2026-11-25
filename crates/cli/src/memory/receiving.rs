@@ -21,6 +21,7 @@ use wire::capture::SessionBundle;
 
 use super::dropbox::DropBox;
 use super::dropbox::DropError;
+use super::dropbox::Incoming;
 use super::dropbox::MAX_DROP_BYTES;
 use super::inbox::Inbox;
 use super::inbox::Slot;
@@ -120,7 +121,7 @@ pub async fn fetch(
     env: &Environment,
     code: ShareCode,
     from: Option<ShareServer>,
-    downloading: impl FnOnce(&Source) -> std::io::Result<()>,
+    downloading: impl FnOnce(&Source),
 ) -> Result<Fetched, FetchError> {
     let inbox = Inbox::in_state(&capture::share::state_home(env)?);
     inbox.prune(SystemTime::now())?;
@@ -169,9 +170,10 @@ impl Wanted<'_> {
         env: &Environment,
         from: Option<ShareServer>,
         embedded: ShareServer,
-        downloading: impl FnOnce(&Source) -> std::io::Result<()>,
+        downloading: impl FnOnce(&Source),
     ) -> Result<Source, FetchError> {
         let partial = self.inbox.partial()?;
+        let mut sink = partial.as_file().try_clone()?;
         let local = match from {
             Some(_) => Local::NotHere,
             None => local_drop::locate(env, self.id).await?,
@@ -181,8 +183,8 @@ impl Wanted<'_> {
                 if bytes > MAX_DROP_BYTES as u64 {
                     return Err(DropError::TooLarge.into());
                 }
-                downloading(&Source::ThisNode)?;
-                std::io::copy(&mut file, &mut partial.as_file().try_clone()?)?;
+                downloading(&Source::ThisNode);
+                std::io::copy(&mut file, &mut sink)?;
                 self.inbox.keep(self.slot, partial)?;
                 return Ok(Source::ThisNode);
             }
@@ -192,37 +194,41 @@ impl Wanted<'_> {
         let servers = ShareServers::from_env(env)
             .await
             .map_err(|error| FetchError::Setup(Box::new(error)))?;
-        let mut downloading = Some(downloading);
-        if gateway {
+        let here = if gateway {
             let drops = DropBox::on_this_node(env, &servers).await?;
-            let source = Source::ThisNode;
-            if let Some(announce) = downloading.take() {
-                announce(&source)?;
-            }
-            match self.fetch_from(&drops).await {
-                Ok(()) => return Ok(source),
-                Err(DropError::Gone(_)) => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-        let host = from.unwrap_or(embedded);
-        let drops = DropBox::on(&servers, &host).await?;
-        let source = Source::Server(host);
-        if let Some(announce) = downloading.take() {
-            announce(&source)?;
-        }
-        self.fetch_from(&drops).await?;
+            served_here(drops.request(self.id).await)?
+        } else {
+            None
+        };
+        let (incoming, source) = if let Some(incoming) = here {
+            (incoming, Source::ThisNode)
+        } else {
+            let host = from.unwrap_or(embedded);
+            let drops = DropBox::on(&servers, &host).await?;
+            (drops.request(self.id).await?, Source::Server(host))
+        };
+        downloading(&source);
+        incoming.save(sink).await?;
+        self.inbox.keep(self.slot, partial)?;
         Ok(source)
     }
+}
 
-    async fn fetch_from(&self, drops: &DropBox) -> Result<(), DropError> {
-        let partial = self.inbox.partial()?;
-        drops
-            .download(self.id, partial.as_file().try_clone()?)
-            .await?;
-        self.inbox.keep(self.slot, partial)?;
-        Ok(())
+fn served_here(probe: Result<Incoming, DropError>) -> Result<Option<Incoming>, DropError> {
+    match probe {
+        Ok(incoming) => Ok(Some(incoming)),
+        Err(DropError::Gone(_) | DropError::Server(ServerError::Answered(401))) => Ok(None),
+        Err(DropError::Server(ServerError::Http(error))) if refused(&error) => Ok(None),
+        Err(error) => Err(error),
     }
+}
+
+fn refused(error: &(dyn std::error::Error + 'static)) -> bool {
+    std::iter::successors(Some(error), |cause| cause.source()).any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::ConnectionRefused)
+    })
 }
 
 fn screen(bundle: &SessionBundle) -> Result<(), ShareError> {

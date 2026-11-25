@@ -70,7 +70,7 @@ impl DropBox {
             TRANSFER_TIMEOUT,
             crate::status::Redirects::Refuse,
             None,
-            crate::gateway_target::Locate::Discover,
+            crate::gateway_target::Locate::ThisNode,
         )
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
@@ -123,7 +123,7 @@ impl DropBox {
         }
     }
 
-    pub(super) async fn download(&self, id: &DropId, sink: std::fs::File) -> Result<(), DropError> {
+    pub(super) async fn request(&self, id: &DropId) -> Result<Incoming, DropError> {
         let url = self.server.endpoint(&format!("{DROPS_PATH}/{id}"))?;
         let mut attempts: u32 = 0;
         let response = loop {
@@ -148,10 +148,29 @@ impl DropBox {
             return Err(DropError::Gone(id.clone()));
         }
         let response = crate::share_server::checked(response)?;
-        let declared = response.content_length();
-        if declared.is_some_and(|length| length > MAX_DROP_BYTES as u64) {
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_DROP_BYTES as u64)
+        {
             return Err(DropError::TooLarge);
         }
+        Ok(Incoming {
+            id: id.clone(),
+            response,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct Incoming {
+    id: DropId,
+    response: reqwest::Response,
+}
+
+impl Incoming {
+    pub(super) async fn save(self, sink: std::fs::File) -> Result<(), DropError> {
+        let Self { id, response } = self;
+        let declared = response.content_length();
         let mut file = tokio::fs::File::from_std(sink);
         let mut received: u64 = 0;
         let mut stream = response.bytes_stream();
@@ -164,7 +183,7 @@ impl DropBox {
             file.write_all(&chunk).await?;
         }
         if declared.is_some_and(|length| length != received) {
-            return Err(DropError::Burned(id.clone()));
+            return Err(DropError::Burned(id));
         }
         file.flush().await?;
         Ok(())

@@ -2,6 +2,7 @@ mod bundle;
 mod chosen;
 mod cleanup;
 pub mod desk;
+mod desk_error;
 mod dropbox;
 mod export;
 mod hold;

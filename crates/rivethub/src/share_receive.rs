@@ -79,7 +79,7 @@ impl NodeReceiver {
         let guard = Arc::clone(&self.busy).lock_owned().await;
         let env = self.env.clone();
         let task = tokio::spawn(async move {
-            let fetched = cli::memory::fetch(&env, code, None, |_| Ok(())).await;
+            let fetched = cli::memory::fetch(&env, code, None, |_| {}).await;
             (fetched, guard)
         });
         let (fetched, guard) = task

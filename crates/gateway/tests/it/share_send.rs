@@ -576,6 +576,12 @@ fn server_mappings() -> Vec<Mapping> {
             None,
         ),
         (
+            DeskError::Refused("a second scan still finds prompt-injection patterns".to_owned()),
+            422,
+            RefusalReason::Invalid,
+            None,
+        ),
+        (
             DeskError::Failed("/home/dana/secret path".to_owned()),
             500,
             RefusalReason::Failed,

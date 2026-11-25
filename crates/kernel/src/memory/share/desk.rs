@@ -524,5 +524,7 @@ pub enum DeskError {
     #[error("the share server could not be reached: {0}")]
     Unreachable(String),
     #[error("{0}")]
+    Refused(String),
+    #[error("{0}")]
     Failed(String),
 }

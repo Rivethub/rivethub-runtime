@@ -395,7 +395,7 @@ async fn receive(
     decisions: &Decisions,
 ) -> Result<Report, Error> {
     let fetched = match super::receiving::fetch(env, code, from, |source| {
-        writeln!(std::io::stderr(), "downloading from {source}")
+        drop(writeln!(std::io::stderr(), "downloading from {source}"));
     })
     .await
     {
