@@ -10,9 +10,12 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse as _, Redirect, Response};
 use axum::routing::get;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use cli::service::Scope;
 use cli::update::{Channel, UpdateArgs, Updater};
 use config::Environment;
+use gateway::account::{ReleaseKeyring, UpdateKey};
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
@@ -433,6 +436,60 @@ struct WebManifest {
     sha256: String,
 }
 
+pub(crate) fn web_manifest(web: &WebRelease) -> Vec<u8> {
+    let data = if web.bad_digest {
+        b"wrong".as_slice()
+    } else {
+        &web.archive
+    };
+    serde_json::to_vec(&WebManifest {
+        schema_version: 1,
+        version: web.version,
+        commit: "a".repeat(40),
+        channel: "stable",
+        min_rh_version: web.minimum,
+        asset: web.asset_name(),
+        sha256: hex::encode(Sha256::digest(data)),
+    })
+    .expect("web manifest serializes")
+}
+
+pub(crate) struct Signer {
+    pair: aws_lc_rs::signature::Ed25519KeyPair,
+}
+
+impl Signer {
+    pub(crate) fn new() -> Result<Self> {
+        Ok(Self {
+            pair: aws_lc_rs::signature::Ed25519KeyPair::generate()?,
+        })
+    }
+
+    pub(crate) fn keyring(&self, require_signatures: bool) -> Result<ReleaseKeyring> {
+        use aws_lc_rs::signature::KeyPair as _;
+        let key: [u8; 32] = self
+            .pair
+            .public_key()
+            .as_ref()
+            .try_into()
+            .map_err(|_| "ed25519 public key length")?;
+        Ok(ReleaseKeyring::default_trusted()
+            .with_key("test-key", UpdateKey::from_bytes(key))
+            .require_signatures(require_signatures))
+    }
+
+    pub(crate) fn sign(&self, payload: &[u8]) -> String {
+        format!(
+            "v1:test-key:{}\n",
+            STANDARD.encode(self.pair.sign(payload).as_ref())
+        )
+    }
+}
+
+pub(crate) fn forged() -> String {
+    format!("v1:test-key:{}\n", STANDARD.encode([0_u8; 64]))
+}
+
 async fn web_download(
     Path((version, name)): Path<(String, String)>,
     State(assets): State<Arc<Assets>>,
@@ -444,21 +501,7 @@ async fn web_download(
         if web.broken_manifest {
             return "{}".into_response();
         }
-        let data = if web.bad_digest {
-            b"wrong".as_slice()
-        } else {
-            &web.archive
-        };
-        axum::Json(WebManifest {
-            schema_version: 1,
-            version: web.version,
-            commit: "a".repeat(40),
-            channel: "stable",
-            min_rh_version: web.minimum,
-            asset: web.asset_name(),
-            sha256: hex::encode(Sha256::digest(data)),
-        })
-        .into_response()
+        web_manifest(web).into_response()
     } else if name == "web-manifest.json.sig" {
         match assets.web_sigs.get(web.version) {
             Some(sig) => sig.clone().into_response(),

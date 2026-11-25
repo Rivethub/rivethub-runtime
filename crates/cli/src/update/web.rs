@@ -67,14 +67,20 @@ fn accepts(node: Channel, build: Channel) -> bool {
     build == Channel::Stable || build == node
 }
 
-fn select<'a>(
-    manifests: impl Iterator<Item = &'a Manifest>,
+fn newest_first(
+    releases: Vec<release::Release>,
     channel: Channel,
-    runtime: &Version,
-) -> Option<&'a Manifest> {
-    manifests
-        .filter(|manifest| manifest.eligible(channel, runtime))
-        .max_by(|left, right| left.version.cmp(&right.version))
+) -> Vec<(Version, Channel, release::Release)> {
+    let mut listed: Vec<_> = releases
+        .into_iter()
+        .filter(|release| !release.draft)
+        .filter_map(|release| {
+            let (version, build) = tag(&release.tag_name)?;
+            accepts(channel, build).then_some((version, build, release))
+        })
+        .collect();
+    listed.sort_by(|left, right| right.0.cmp(&left.0));
+    listed
 }
 
 fn tag(tag_name: &str) -> Option<(Version, Channel)> {
@@ -191,15 +197,9 @@ impl Store {
     ) -> Result<Outcome, UpdateError> {
         let runtime = Version::parse(runtime).map_err(|_| UpdateError::Version(runtime.into()))?;
         let client = release::client(api)?;
-        let candidates = candidates(&client, api, channel, keyring, shutdown).await?;
-        let selected = select(
-            candidates.iter().map(|(manifest, _)| manifest),
-            channel,
-            &runtime,
-        );
-        let Some((manifest, archive)) = candidates
-            .iter()
-            .find(|(manifest, _)| Some(manifest) == selected)
+        let releases = newest_first(listed(&client, api, shutdown).await?, channel);
+        let Some((manifest, archive)) =
+            selected(&client, releases, channel, &runtime, keyring, shutdown).await?
         else {
             let outcome =
                 tokio::task::spawn_blocking(move || self.no_compatible(&runtime, channel))
@@ -214,13 +214,11 @@ impl Store {
         .await??;
         if active.as_ref() == Some(&version) {
             let destination = store.root.join(version.to_string());
-            let manifest = manifest.clone();
             tokio::task::spawn_blocking(move || verify_installed(&destination, &manifest))
                 .await??;
             return Ok(Outcome::Unchanged(version));
         }
-        let bytes = release::download(&client, archive.clone(), DOWNLOAD_LIMIT, shutdown).await?;
-        let manifest = manifest.clone();
+        let bytes = release::download(&client, archive, DOWNLOAD_LIMIT, shutdown).await?;
         super::check_cancelled(shutdown)?;
         tokio::task::spawn_blocking(move || store.install(&manifest, &bytes)).await??;
         Ok(Outcome::Installed(version))
@@ -280,14 +278,12 @@ impl Store {
     }
 }
 
-async fn candidates(
+async fn listed(
     client: &reqwest::Client,
     api: &Url,
-    channel: Channel,
-    keyring: &ReleaseKeyring,
     shutdown: &CancellationToken,
-) -> Result<Vec<(Manifest, Url)>, UpdateError> {
-    let mut candidates = Vec::new();
+) -> Result<Vec<release::Release>, UpdateError> {
+    let mut listed = Vec::new();
     for page in 1_u64.. {
         let mut endpoint = api.clone();
         endpoint.set_query(Some(&format!("per_page=100&page={page}")));
@@ -295,45 +291,44 @@ async fn candidates(
         let releases: Vec<release::Release> =
             serde_json::from_slice(&bytes).map_err(|_| UpdateError::Release)?;
         let last_page = releases.len() < 100;
-        for release in releases.into_iter().filter(|release| !release.draft) {
-            let Some((version, build_channel)) = tag(&release.tag_name) else {
-                continue;
-            };
-            if accepts(channel, build_channel) {
-                let Some(candidate) =
-                    candidate(client, &release, &version, build_channel, keyring, shutdown).await?
-                else {
+        listed.extend(releases);
+        if last_page {
+            break;
+        }
+    }
+    Ok(listed)
+}
+
+async fn selected(
+    client: &reqwest::Client,
+    releases: Vec<(Version, Channel, release::Release)>,
+    channel: Channel,
+    runtime: &Version,
+    keyring: &ReleaseKeyring,
+    shutdown: &CancellationToken,
+) -> Result<Option<(Manifest, Url)>, UpdateError> {
+    for (version, build, release) in releases {
+        let (manifest, bytes, archive) =
+            match described(client, &release, &version, build, shutdown).await {
+                Ok(described) => described,
+                Err(
+                    UpdateError::Asset { .. } | UpdateError::AssetSize | UpdateError::WebManifest,
+                ) => {
                     tracing::warn!(
                         tag = %release.tag_name,
                         "skipping a web release without a valid manifest"
                     );
                     continue;
-                };
-                candidates.push(candidate);
-            }
+                }
+                Err(error) => return Err(error),
+            };
+        if !manifest.eligible(channel, runtime) {
+            continue;
         }
-        if last_page {
-            break;
-        }
+        release::verify_signature(client, &release, MANIFEST, &bytes, keyring, shutdown).await?;
+        return Ok(Some((manifest, archive)));
     }
-    Ok(candidates)
-}
-
-async fn candidate(
-    client: &reqwest::Client,
-    release: &release::Release,
-    version: &Version,
-    channel: Channel,
-    keyring: &ReleaseKeyring,
-    shutdown: &CancellationToken,
-) -> Result<Option<(Manifest, Url)>, UpdateError> {
-    match described(client, release, version, channel, keyring, shutdown).await {
-        Ok(candidate) => Ok(Some(candidate)),
-        Err(UpdateError::Asset { .. } | UpdateError::AssetSize | UpdateError::WebManifest) => {
-            Ok(None)
-        }
-        Err(error) => Err(error),
-    }
+    Ok(None)
 }
 
 async fn described(
@@ -341,33 +336,15 @@ async fn described(
     release: &release::Release,
     version: &Version,
     channel: Channel,
-    keyring: &ReleaseKeyring,
     shutdown: &CancellationToken,
-) -> Result<(Manifest, Url), UpdateError> {
+) -> Result<(Manifest, Vec<u8>, Url), UpdateError> {
     let url = release::asset(release, MANIFEST)?;
     let bytes = release::download(client, url, MANIFEST_LIMIT as usize, shutdown).await?;
-    if let Some(sig_url) = release::asset_optional(release, "web-manifest.json.sig")? {
-        let sig_bytes = release::download(client, sig_url, 1024, shutdown).await?;
-        let sig_text = std::str::from_utf8(&sig_bytes).map_err(|_| {
-            UpdateError::Signature("web-manifest.json.sig is not valid UTF-8".to_owned())
-        })?;
-        keyring.verify_envelope(&bytes, sig_text).map_err(|_| {
-            UpdateError::Signature(format!(
-                "web-manifest.json.sig signature verification failed for {}",
-                release.tag_name
-            ))
-        })?;
-    } else {
-        tracing::warn!(
-            tag = %release.tag_name,
-            "web-manifest.json.sig is not published on this release; skipping signature check"
-        );
-    }
     let manifest: Manifest =
         serde_json::from_slice(&bytes).map_err(|_| UpdateError::WebManifest)?;
     manifest.validate(version, channel)?;
     let archive = release::asset(release, &manifest.asset)?;
-    Ok((manifest, archive))
+    Ok((manifest, bytes, archive))
 }
 
 fn installed(directory: &Path) -> Result<Manifest, UpdateError> {
@@ -469,7 +446,7 @@ fn sync_dirs(root: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Channel, Manifest, Version, select, unpack};
+    use super::{Channel, Manifest, Version, newest_first, unpack};
 
     fn manifest(version: &str, channel: Channel, minimum: &str) -> Result<Manifest, semver::Error> {
         Ok(Manifest {
@@ -492,6 +469,14 @@ mod tests {
             manifest("2.0.0-beta.11", Channel::Beta, "0.8.0")?,
             manifest("3.0.0", Channel::Stable, "0.9.0")?,
         ];
+        let releases = || {
+            manifests
+                .iter()
+                .map(|manifest| {
+                    super::release::Release::listed(&format!("web-v{}", manifest.version))
+                })
+                .collect()
+        };
         for (channel, runtime, expected) in [
             (Channel::Stable, "0.8.0", Some("1.9.0")),
             (Channel::Beta, "0.8.0", Some("2.0.0-beta.11")),
@@ -501,7 +486,14 @@ mod tests {
             (Channel::Stable, "0.6.0", None),
         ] {
             let runtime = Version::parse(runtime)?;
-            let actual = select(manifests.iter(), channel, &runtime);
+            let actual = newest_first(releases(), channel)
+                .into_iter()
+                .filter_map(|(version, _, _)| {
+                    manifests
+                        .iter()
+                        .find(|manifest| manifest.version == version)
+                })
+                .find(|manifest| manifest.eligible(channel, &runtime));
             assert_eq!(
                 actual
                     .map(|manifest| manifest.version.to_string())

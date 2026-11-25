@@ -20,6 +20,18 @@ pub(super) struct Release {
     assets: Vec<Asset>,
 }
 
+#[cfg(test)]
+impl Release {
+    pub(super) fn listed(tag_name: &str) -> Self {
+        Self {
+            tag_name: tag_name.to_owned(),
+            draft: false,
+            prerelease: tag_name.contains('-'),
+            assets: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct Asset {
     name: String,
@@ -170,23 +182,46 @@ async fn fetch_verified_manifest(
 ) -> Result<Vec<u8>, UpdateError> {
     let manifest_url = asset(release, "SHA256SUMS")?;
     let manifest = download(client, manifest_url, 16 * 1024, shutdown).await?;
-    if let Some(sig_url) = asset_optional(release, "SHA256SUMS.sig")? {
-        let sig_bytes = download(client, sig_url, 1024, shutdown).await?;
-        let sig_text = std::str::from_utf8(&sig_bytes)
-            .map_err(|_| UpdateError::Signature("SHA256SUMS.sig is not valid UTF-8".to_owned()))?;
-        keyring.verify_envelope(&manifest, sig_text).map_err(|_| {
-            UpdateError::Signature(format!(
-                "SHA256SUMS.sig signature verification failed for {}",
-                release.tag_name
-            ))
-        })?;
-    } else {
+    verify_signature(client, release, "SHA256SUMS", &manifest, keyring, shutdown).await?;
+    Ok(manifest)
+}
+
+pub(super) async fn verify_signature(
+    client: &reqwest::Client,
+    release: &Release,
+    signed: &str,
+    payload: &[u8],
+    keyring: &ReleaseKeyring,
+    shutdown: &CancellationToken,
+) -> Result<(), UpdateError> {
+    let name = format!("{signed}.sig");
+    let failed = |reason: &str| {
+        UpdateError::Signature(format!(
+            "{name} signature verification failed for {}: {reason}",
+            release.tag_name
+        ))
+    };
+    let Some(url) =
+        asset_optional(release, &name).map_err(|_| failed("it is published more than once"))?
+    else {
+        if keyring.requires_signatures() {
+            return Err(failed("the release does not publish it"));
+        }
         tracing::warn!(
             tag = %release.tag_name,
-            "SHA256SUMS.sig is not published on this release; verifying SHA-256 checksum only"
+            "{name} is not published on this release; verifying SHA-256 checksums only"
         );
-    }
-    Ok(manifest)
+        return Ok(());
+    };
+    let envelope = match download(client, url, 1024, shutdown).await {
+        Err(UpdateError::AssetSize) => return Err(failed("it is larger than 1 KiB")),
+        downloaded => downloaded?,
+    };
+    let envelope = std::str::from_utf8(&envelope).map_err(|_| failed("it is not UTF-8"))?;
+    keyring
+        .verify_envelope(payload, envelope)
+        .map_err(|_| failed("it does not verify against a trusted release key"))?;
+    Ok(())
 }
 
 fn accept(release: &Release, version: Option<&str>, beta: bool) -> Result<(), UpdateError> {

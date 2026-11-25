@@ -493,13 +493,13 @@ async fn cancellation_during_download_cleans_staging_and_preserves_installation(
 }
 
 async fn run_with_manifest_sig(
-    manifest_sig: String,
+    manifest_sig: Option<String>,
     keyring: &gateway::account::ReleaseKeyring,
 ) -> std::result::Result<(Fixture, cli::Report), Box<dyn std::error::Error>> {
     let fixture = Fixture::new()?;
     let srv = update_support::server_with_sigs(
         Published::Good,
-        Some(manifest_sig),
+        manifest_sig,
         Vec::new(),
         std::collections::BTreeMap::new(),
     )
@@ -518,56 +518,75 @@ async fn run_with_manifest_sig(
     Ok((fixture, report))
 }
 
-#[tokio::test]
-async fn release_signature_accepts_trusted_key_and_fails_closed_on_forged_or_unknown() -> Result {
-    use aws_lc_rs::signature::{Ed25519KeyPair, KeyPair as _};
-    use base64::Engine as _;
-    use base64::engine::general_purpose::STANDARD;
-    use gateway::account::{ReleaseKeyring, UpdateKey};
+fn served_checksums() -> Result<String> {
     use sha2::{Digest as _, Sha256};
+    use std::fmt::Write as _;
 
-    let pair = Ed25519KeyPair::generate()?;
-    let pub_raw: [u8; 32] = pair
-        .public_key()
-        .as_ref()
-        .try_into()
-        .map_err(|_| "pubkey length")?;
-    let keyring =
-        ReleaseKeyring::default_trusted().with_key("test-key", UpdateKey::from_bytes(pub_raw));
-
-    let archive = update_support::archive(Published::Good)?;
-    let digest = hex::encode(Sha256::digest(&archive));
+    let digest = hex::encode(Sha256::digest(update_support::archive(Published::Good)?));
+    let arch = std::env::consts::ARCH;
     let mut manifest = String::new();
-    for tag in ["v0.9.0", "v0.11.0", "v0.10.0"] {
-        use std::fmt::Write as _;
-        let arch = std::env::consts::ARCH;
+    for version in ["0.9.0", "0.11.0", "0.10.0"] {
         writeln!(
             manifest,
-            "{digest}  rh-{}-{arch}-unknown-linux-gnu.tar.gz",
-            tag.trim_start_matches('v')
+            "{digest}  rh-{version}-{arch}-unknown-linux-gnu.tar.gz"
         )?;
     }
-    let valid_sig = format!(
-        "v1:test-key:{}\n",
-        STANDARD.encode(pair.sign(manifest.as_bytes()).as_ref())
-    );
+    Ok(manifest)
+}
 
-    let (fixture, report) = run_with_manifest_sig(valid_sig, &keyring).await?;
+#[tokio::test]
+async fn release_signature_accepts_trusted_key_and_fails_closed_on_forged_or_unknown() -> Result {
+    let signer = update_support::Signer::new()?;
+    let manifest = served_checksums()?;
+    for required in [false, true] {
+        let keyring = signer.keyring(required)?;
+        let (fixture, report) =
+            run_with_manifest_sig(Some(signer.sign(manifest.as_bytes())), &keyring).await?;
+        assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+        assert_eq!(std::fs::read(&fixture.binary)?, BINARY);
+
+        for bad_sig in [
+            update_support::forged(),
+            format!("v1:rogue-key:{}\n", "AQ".repeat(43)),
+            format!("v1:test-key:{}\n", "A".repeat(2048)),
+        ] {
+            let (fixture, report) = run_with_manifest_sig(Some(bad_sig), &keyring).await?;
+            assert_eq!(report.exit, Exit::Failure);
+            assert!(
+                report.stderr.contains("signature verification failed"),
+                "{}",
+                report.stderr
+            );
+            assert_eq!(std::fs::read(&fixture.binary)?, b"old runtime");
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn unsigned_releases_install_only_while_signatures_are_optional() -> Result {
+    let signer = update_support::Signer::new()?;
+    let (fixture, report) = run_with_manifest_sig(None, &signer.keyring(false)?).await?;
     assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
     assert_eq!(std::fs::read(&fixture.binary)?, BINARY);
 
-    for bad_sig in [
-        format!("v1:test-key:{}\n", STANDARD.encode([0_u8; 64])),
-        format!("v1:rogue-key:{}\n", STANDARD.encode([1_u8; 64])),
-    ] {
-        let (fixture, report) = run_with_manifest_sig(bad_sig, &keyring).await?;
-        assert_eq!(report.exit, Exit::Failure);
-        assert!(
-            report.stderr.contains("signature verification failed"),
-            "{}",
-            report.stderr
-        );
-        assert_eq!(std::fs::read(&fixture.binary)?, b"old runtime");
-    }
+    let (fixture, report) = run_with_manifest_sig(None, &signer.keyring(true)?).await?;
+    assert_eq!(report.exit, Exit::Failure);
+    assert!(
+        report
+            .stderr
+            .contains("SHA256SUMS.sig signature verification failed for v0.9.0: the release does not publish it"),
+        "{}",
+        report.stderr
+    );
+    assert_eq!(std::fs::read(&fixture.binary)?, b"old runtime");
     Ok(())
+}
+
+#[test]
+fn the_shipped_keyring_follows_the_build_time_signature_switch() {
+    assert_eq!(
+        gateway::account::ReleaseKeyring::default_trusted().requires_signatures(),
+        gateway::account::REQUIRE_SIGNED_RELEASES
+    );
 }

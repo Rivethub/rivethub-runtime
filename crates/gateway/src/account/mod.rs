@@ -17,8 +17,8 @@ pub use telemetry::{
     CrashJob, CrashKind, CrashReport, PanicSite, install_crash_hook, queue, queued,
 };
 pub use update::{
-    CloudOs, RELEASE_KEY, RELEASE_KEY_ID, ReleaseKeyring, ReleaseManifest, TRUSTED_RELEASE_KEYS,
-    TrustedKey, UpdateKey, VerifiedRelease, fetch, latest,
+    CloudOs, RELEASE_KEY, RELEASE_KEY_ID, REQUIRE_SIGNED_RELEASES, ReleaseKeyring, ReleaseManifest,
+    TRUSTED_RELEASE_KEYS, TrustedKey, UpdateKey, VerifiedRelease, fetch, latest,
 };
 
 pub const DEFAULT_CLOUD: &str = "https://rivethub.cloud/";
