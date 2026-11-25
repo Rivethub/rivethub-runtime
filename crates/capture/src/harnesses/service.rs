@@ -13,6 +13,9 @@ use kernel::harness_setup::HarnessSetup;
 use kernel::harness_setup::RecallState;
 use kernel::harness_setup::RecallStatus;
 use kernel::harness_setup::SetupError;
+use wire::harness::HarnessId;
+
+use crate::backfill;
 
 use super::codex_trust;
 use super::codex_trust::Trust;
@@ -217,6 +220,20 @@ fn nothing_to_install(spec: &HarnessSpec, part: ConnectPart) -> SetupError {
     }
 }
 
+fn store_detail(id: &str, store: &Path) -> String {
+    let covered = id
+        .parse::<HarnessId>()
+        .is_ok_and(|id| backfill::HARNESSES.contains(&id));
+    if covered {
+        format!("rh reads the store at {}", store.display())
+    } else {
+        format!(
+            "rh has no reader for the store at {}; sessions arrive only from another writer",
+            store.display()
+        )
+    }
+}
+
 fn probe_one(locator: &Locator, spec: &HarnessSpec, rh: &Path) -> (HarnessProbe, Option<Version>) {
     let binary = spec.binaries.iter().find_map(|name| locator.which(name));
     let version = match spec.id {
@@ -244,7 +261,7 @@ fn probe_one(locator: &Locator, spec: &HarnessSpec, rh: &Path) -> (HarnessProbe,
             (_, Some(store)) => install::InstallView {
                 installed: true,
                 connectable: false,
-                detail: format!("rh reads the store at {}", store.display()),
+                detail: store_detail(spec.id, store),
             },
             (_, None) => install::InstallView {
                 installed: false,
@@ -307,5 +324,28 @@ fn joined(error: tokio::task::JoinError) -> SetupError {
     SetupError::Io {
         path: "harness setup".to_owned(),
         source: std::io::Error::other(error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_detail_says_whether_rh_reads_the_store() {
+        let store = Path::new("/home/u/.store");
+        assert_eq!(
+            store_detail("codex", store),
+            "rh reads the store at /home/u/.store"
+        );
+        let hermes = store_detail("hermes", store);
+        assert!(hermes.starts_with("rh has no reader for the store at /home/u/.store"));
+    }
+
+    #[test]
+    fn every_harness_rh_reads_has_a_registry_spec_under_the_same_name() {
+        for harness in backfill::HARNESSES {
+            assert!(spec(&harness.to_string()).is_some(), "{harness}");
+        }
     }
 }
