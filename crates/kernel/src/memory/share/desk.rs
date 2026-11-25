@@ -491,6 +491,7 @@ pub struct ServerView {
     pub user: Option<String>,
     pub signed_in: bool,
     pub default: bool,
+    pub needs_reauth: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

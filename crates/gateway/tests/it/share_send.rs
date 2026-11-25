@@ -171,6 +171,7 @@ impl ShareDesk for FakeDesk {
                     user: None,
                     signed_in: true,
                     default: false,
+                    needs_reauth: true,
                 },
                 ServerView {
                     origin: ServerOrigin::from("drops.example".to_owned()),
@@ -179,6 +180,7 @@ impl ShareDesk for FakeDesk {
                     user: Some("fay".to_owned()),
                     signed_in: false,
                     default: true,
+                    needs_reauth: false,
                 },
             ],
             cloud_disabled: true,
@@ -775,7 +777,7 @@ async fn ready_bundles_and_the_cloud_policy_reach_the_wire_by_name() -> TestResu
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         body,
-        r#"{"servers":[{"origin":"hub.example:8443","kind":"cloud","hub":"team","signed_in":true,"default":false,"delivery":"push"},{"origin":"drops.example","kind":"cloud","user":"fay","signed_in":false,"default":true,"delivery":"code"}],"cloud_disabled":true,"logins_file":"share-logins.json","token_store":"file"}"#
+        r#"{"servers":[{"origin":"hub.example:8443","kind":"cloud","hub":"team","signed_in":true,"default":false,"delivery":"push","needs_reauth":true},{"origin":"drops.example","kind":"cloud","user":"fay","signed_in":false,"default":true,"delivery":"code"}],"cloud_disabled":true,"logins_file":"share-logins.json","token_store":"file"}"#
     );
     assert_eq!(desk.calls(), ["bundles", "draft_bundle", "servers"]);
     Ok(())

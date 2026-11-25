@@ -370,6 +370,8 @@ pub struct ServerView {
     pub signed_in: bool,
     pub default: bool,
     pub delivery: Delivery,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub needs_reauth: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

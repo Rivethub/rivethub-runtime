@@ -365,14 +365,21 @@ fn policy(node: &Node, allowed: &[&str]) -> TestResult {
     Ok(())
 }
 
-type Shown = (String, ServerKind, Delivery);
+type Shown = (String, ServerKind, Delivery, bool);
 
 async fn origins(desk: &NodeDesk) -> TestResult<(Vec<Shown>, bool)> {
     let servers = desk.servers().await?;
     let mut shown: Vec<Shown> = servers
         .servers
         .into_iter()
-        .map(|server| (server.origin.to_string(), server.kind, server.delivery))
+        .map(|server| {
+            (
+                server.origin.to_string(),
+                server.kind,
+                server.delivery,
+                server.needs_reauth,
+            )
+        })
         .collect();
     shown.sort_by(|a, b| a.0.cmp(&b.0));
     Ok((shown, servers.cloud_disabled))
@@ -391,6 +398,7 @@ async fn servers_the_share_policy_refuses_are_not_offered() -> TestResult {
     let team = "127.0.0.1:7443";
     add_hub(&dana, team)?;
     let device = r#"{"access_token":"rhca_x","refresh_token":"rhcr_x","expires_at":"2099-01-01T00:00:00Z","scope":"drops:write"}"#;
+    let importer = r#"{"access_token":"rhca_y","refresh_token":"rhcr_y","expires_at":"2099-01-01T00:00:00Z","scope":"drops:write memory:import offline_access"}"#;
     let member = r#"{"team_token":"t","user":"fay"}"#;
     logins(
         &dana,
@@ -399,27 +407,37 @@ async fn servers_the_share_policy_refuses_are_not_offered() -> TestResult {
             (team, member),
             ("other.example:8443", member),
             ("hub.example:9443", device),
+            ("import.example:9443", importer),
         ],
     )?;
     assert_eq!(
         origins(&desk).await?,
         (
             vec![
-                (team.to_owned(), ServerKind::Team, push("team")),
+                (team.to_owned(), ServerKind::Team, push("team"), false),
                 (
                     "hub.example:9443".to_owned(),
                     ServerKind::Cloud,
-                    push("hub.example:9443")
+                    push("hub.example:9443"),
+                    true
+                ),
+                (
+                    "import.example:9443".to_owned(),
+                    ServerKind::Cloud,
+                    push("import.example:9443"),
+                    false
                 ),
                 (
                     "other.example:8443".to_owned(),
                     ServerKind::Team,
-                    push("other.example:8443")
+                    push("other.example:8443"),
+                    false
                 ),
                 (
                     "rivethub.cloud".to_owned(),
                     ServerKind::Cloud,
-                    Delivery::Code
+                    Delivery::Code,
+                    false
                 ),
             ],
             false
@@ -430,7 +448,7 @@ async fn servers_the_share_policy_refuses_are_not_offered() -> TestResult {
     assert_eq!(
         origins(&desk).await?,
         (
-            vec![(team.to_owned(), ServerKind::Team, push("team"))],
+            vec![(team.to_owned(), ServerKind::Team, push("team"), false)],
             true
         )
     );

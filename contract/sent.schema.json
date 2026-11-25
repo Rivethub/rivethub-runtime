@@ -8624,6 +8624,9 @@
         "kind": {
           "$ref": "#/$defs/ServerKind"
         },
+        "needs_reauth": {
+          "type": "boolean"
+        },
         "origin": {
           "type": "string"
         },

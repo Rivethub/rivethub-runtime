@@ -41,6 +41,7 @@ pub(super) async fn list(
                     signed_in: server.signed_in,
                     default: server.default,
                     delivery,
+                    needs_reauth: server.needs_reauth,
                 }
             })
             .collect(),
