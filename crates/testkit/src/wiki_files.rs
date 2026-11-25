@@ -288,6 +288,7 @@ pub use race::a_late_sweep_keeps_the_entity_page;
 mod slugs;
 
 pub use slugs::a_numbered_long_slug_keeps_the_page_it_shortens_to;
+pub use slugs::a_sweep_keeps_a_page_its_pull_brings_in;
 pub use slugs::a_sweep_skips_a_page_file_without_a_row;
 
 pub async fn publish_entity(

@@ -376,7 +376,10 @@ impl PostgresMemory {
             })
             .collect();
         let message = format!("wiki({}): sync topic page\n\nPipeline: wiki-v7", placed.key);
-        let git_sha = repository.fold(&mut stored, &[], &message, now).await?;
+        let Some(git_sha) = claim.write(repository, &mut stored, &message, now).await? else {
+            tx.rollback().await.map_err(query_error)?;
+            return Ok(false);
+        };
         topics::store(
             &mut tx,
             &stored,
@@ -419,6 +422,20 @@ impl Claim {
             Self::Vacant if filed || !placed.canonical => Ok(false),
             Self::Vacant => vacant(tx, placed).await,
         }
+    }
+
+    async fn write(
+        self,
+        repository: &mut LockedRepository,
+        page: &mut WikiPage,
+        message: &str,
+        now: Timestamp,
+    ) -> Result<Option<String>, WikiStoreError> {
+        let written = match self {
+            Self::Overwrite => repository.fold(page, &[], message, now).await.map(Some),
+            Self::Vacant => repository.create(page, message, now).await,
+        };
+        Ok(written?)
     }
 }
 

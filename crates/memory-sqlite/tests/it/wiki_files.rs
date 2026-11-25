@@ -51,6 +51,13 @@ async fn a_sweep_skips_a_page_file_without_a_row() -> TestResult {
     Ok(())
 }
 
+#[tokio::test]
+async fn a_sweep_keeps_a_page_its_pull_brings_in() -> TestResult {
+    let (_dir, wiki, store) = filed_store()?;
+    testkit::wiki_files::a_sweep_keeps_a_page_its_pull_brings_in(&store, &wiki).await?;
+    Ok(())
+}
+
 fn filed_store() -> TestResult<(tempfile::TempDir, std::path::PathBuf, SqliteStore)> {
     let dir = tempfile::tempdir()?;
     let database = dir.path().join("memory.sqlite");

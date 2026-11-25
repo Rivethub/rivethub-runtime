@@ -389,15 +389,32 @@ pub(crate) async fn rewrite(
         None => WikiPage::empty(page.slug.clone(), page.title.clone()),
     };
     copy_topic(&mut stored, page);
-    let message = format!(
-        "wiki({}): sync topic page\n\nPipeline: wiki-v7",
-        page.slug.as_ref()
-    );
     let sha = locked
-        .fold(&mut stored, &[], &message, now)
+        .fold(&mut stored, &[], &sync_message(&page.slug), now)
         .await
         .map_err(WikiStoreError::from)?;
     Ok((stored, sha))
+}
+
+pub(crate) async fn create(
+    locked: &mut LockedRepository,
+    page: &TopicPage,
+    now: Timestamp,
+) -> Result<Option<(WikiPage, String)>, WikiStoreError> {
+    let mut stored = WikiPage::empty(page.slug.clone(), page.title.clone());
+    copy_topic(&mut stored, page);
+    let sha = locked
+        .create(&mut stored, &sync_message(&page.slug), now)
+        .await
+        .map_err(WikiStoreError::from)?;
+    Ok(sha.map(|sha| (stored, sha)))
+}
+
+fn sync_message(slug: &WikiSlug) -> String {
+    format!(
+        "wiki({}): sync topic page\n\nPipeline: wiki-v7",
+        slug.as_ref()
+    )
 }
 
 pub(crate) async fn revise(

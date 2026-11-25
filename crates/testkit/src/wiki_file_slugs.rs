@@ -95,6 +95,66 @@ pub async fn a_sweep_skips_a_page_file_without_a_row(
     Ok(())
 }
 
+pub async fn a_sweep_keeps_a_page_its_pull_brings_in(
+    store: &(impl PageFileStore + DecisionStore),
+    wiki: &Path,
+) -> Outcome {
+    let remote = tempfile::tempdir()?;
+    let origin = remote.path().join("origin.git");
+    let other = remote.path().join("other");
+    super::git(
+        remote.path(),
+        &["init", "-q", "--bare", "-b", "main", "origin.git"],
+    )?;
+    super::git(remote.path(), &["clone", "-q", "origin.git", "other"])?;
+    upstream(&other, &["commit", "-q", "--allow-empty", "-m", "first"])?;
+    super::git(
+        remote.path(),
+        &[
+            "clone",
+            "-q",
+            &origin.to_string_lossy(),
+            &wiki.to_string_lossy(),
+        ],
+    )?;
+    super::git(wiki, &["config", "--local", "commit.gpgsign", "false"])?;
+    std::fs::create_dir_all(other.join("topics"))?;
+    std::fs::write(
+        other.join("topics").join("pulled.md"),
+        format!("---\ntitle: Pulled\nslug: pulled\n---\n\n{HAND_WRITTEN}\n"),
+    )?;
+    super::git(&other, &["add", "topics/pulled.md"])?;
+    upstream(&other, &["commit", "-q", "-m", "a teammate's page"])?;
+
+    let topic = swept(store, new_topic("Pulled", &[], None)?).await?;
+
+    assert_eq!(
+        store.page_slug(topic.id).await?,
+        Some(WikiSlug::try_from("pulled-2".to_owned())?)
+    );
+    let kept = std::fs::read_to_string(wiki.join("topics").join("pulled.md"))?;
+    assert!(
+        kept.contains(HAND_WRITTEN),
+        "the sweep wrote over the page its pull brought in: {kept}"
+    );
+    Ok(())
+}
+
+fn upstream(clone: &Path, commit: &[&str]) -> Outcome {
+    let mut args = vec![
+        "-c",
+        "user.name=Upstream",
+        "-c",
+        "user.email=upstream@example.com",
+        "-c",
+        "commit.gpgsign=false",
+    ];
+    args.extend_from_slice(commit);
+    super::git(clone, &args)?;
+    super::git(clone, &["push", "-q", "origin", "HEAD:main"])?;
+    Ok(())
+}
+
 async fn swept(
     store: &(impl PageFileStore + DecisionStore),
     topic: Topic,
