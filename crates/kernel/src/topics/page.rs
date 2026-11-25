@@ -280,10 +280,20 @@ impl PageSync<'_> {
         if root.kind == TopicKind::Entity {
             return self.ensure_entity(root).await;
         }
-        let slug = self.free_slug(&root.slug).await?;
-        self.create(root, slug.clone())
-            .await?
-            .ok_or_else(|| WikiStoreError::SlugConflict(slug.as_ref().to_owned()).into())
+        let base = page_slug_text(&root.slug);
+        for attempt in 1..=SLUG_ATTEMPTS {
+            let Some(text) = allocated_page_slug(&base, TopicKind::Work, attempt) else {
+                break;
+            };
+            let slug = wiki_slug(text)?;
+            if self.pages.page_taken(&slug).await? {
+                continue;
+            }
+            if let Some(home) = self.create(root, slug).await? {
+                return Ok(home);
+            }
+        }
+        Err(WikiStoreError::SlugConflict(base).into())
     }
 
     async fn ensure_entity(&self, root: &Topic) -> Result<WikiSlug, TopicPageError> {
@@ -312,20 +322,6 @@ impl PageSync<'_> {
             return Ok(Some(slug));
         }
         Ok(self.topics.page_slug(root.id).await?)
-    }
-
-    async fn free_slug(&self, topic: &Slug) -> Result<WikiSlug, TopicPageError> {
-        let base = page_slug_text(topic);
-        for attempt in 1..=SLUG_ATTEMPTS {
-            let Some(text) = allocated_page_slug(&base, TopicKind::Work, attempt) else {
-                break;
-            };
-            let slug = wiki_slug(text)?;
-            if !self.pages.page_taken(&slug).await? {
-                return Ok(slug);
-            }
-        }
-        Err(WikiStoreError::SlugConflict(base).into())
     }
 
     async fn read(&self, slug: &WikiSlug) -> Result<TopicPage, TopicPageError> {

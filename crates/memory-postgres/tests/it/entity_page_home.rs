@@ -682,6 +682,46 @@ async fn a_late_sweep_keeps_another_scopes_entity_page(pool: PgPool) -> TestResu
     Ok(())
 }
 
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_work_page_steps_past_a_scoped_page_with_its_name(pool: PgPool) -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let memory = shared_memory(&pool, directory.path()).await?;
+    seed_page(
+        &pool,
+        &SeededPage {
+            key: "coco-mesh",
+            local: "mesh",
+            owner: "coco",
+            topic: None,
+            state: "Coco's mesh.",
+        },
+    )
+    .await?;
+    let work = Uuid::new_v4();
+    seed_topic(&pool, work, "work", "mesh", "coco").await?;
+
+    let failures = Scope::Maintenance
+        .run(sync_topic_page(
+            &memory,
+            &memory,
+            &memory,
+            &SyncTopicPage::topic(TopicId::from_uuid(work)),
+            SweepOwners::All,
+            at("2026-11-07T02:00:00Z"),
+        ))
+        .await?;
+
+    assert!(failures.is_empty(), "the sweep failed: {failures:?}");
+    assert_eq!(
+        pages(&pool).await?,
+        vec![
+            stored("coco-mesh", "coco", "Coco's mesh.", None),
+            stored("mesh-2", "coco", "", Some(work)),
+        ]
+    );
+    Ok(())
+}
+
 async fn shared_memory(
     pool: &PgPool,
     directory: &std::path::Path,
@@ -816,11 +856,22 @@ async fn seed_session(pool: &PgPool, owner: &str) -> Result<(Uuid, Uuid), sqlx::
 }
 
 async fn seed_entity(pool: &PgPool, id: Uuid, slug: &str, owner: &str) -> Result<(), sqlx::Error> {
+    seed_topic(pool, id, "entity", slug, owner).await
+}
+
+async fn seed_topic(
+    pool: &PgPool,
+    id: Uuid,
+    kind: &str,
+    slug: &str,
+    owner: &str,
+) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO rh_topics (id, kind, slug, name, created_at, updated_at, owner_user_id)
-         VALUES ($1, 'entity', $2, $2, $3, $3, $4)",
+         VALUES ($1, $2, $3, $3, $4, $4, $5)",
     )
     .bind(id)
+    .bind(kind)
     .bind(slug)
     .bind(PgTimestamp::from(at("2026-11-01T00:00:00Z")))
     .bind(owner)
