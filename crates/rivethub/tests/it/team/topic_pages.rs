@@ -169,38 +169,12 @@ async fn a_sweep_queues_a_failing_topic_on_its_own_and_syncs_the_rest() -> TestR
     let blocked = worker.private_root(INES, "Ines boat repairs").await?;
     let iness = worker.private_root(INES, "Ines zoo trip").await?;
     let pool = sqlx::PgPool::connect(&hub.url).await?;
-    let mut tx = pool.begin().await?;
-    sqlx::query("SELECT set_config('rh.maintenance', 'on', true)")
-        .execute(&mut *tx)
-        .await?;
-    let held = sqlx::query(
-        "INSERT INTO rh_wiki_topics (slug, title, owner_user_id)
-         SELECT slug, name, $2 FROM rh_topics WHERE id = $1",
-    )
-    .bind(blocked.uuid())
-    .bind(TOM)
-    .execute(&mut *tx)
-    .await?;
-    assert_eq!(
-        held.rows_affected(),
-        1,
-        "another person's row holds the page slug"
-    );
-    sqlx::query("DELETE FROM graphile_worker._private_jobs")
-        .execute(&mut *tx)
-        .await?;
-    tx.commit().await?;
+    held_by_another_person(&pool, &[blocked]).await?;
     let queue = Arc::new(worker.store.queue().await?);
     let sweep = queue.enqueue(SyncTopicPage::every_topic().job()?).await?;
     worker.drain(&queue, vec![sweep]).await?;
-    let retried: Option<String> = sqlx::query_scalar(
-        "SELECT coalesce(last_error, '') FROM graphile_worker._private_jobs WHERE key = $1",
-    )
-    .bind(format!("sync-topic-page:{blocked}"))
-    .fetch_optional(&pool)
-    .await?;
     assert!(
-        retried.is_some(),
+        own_sync_job(&pool, blocked).await?,
         "the failing topic has a sync job of its own"
     );
     assert!(worker.has_page(DANA, danas).await?, "dana's page");
@@ -211,6 +185,105 @@ async fn a_sweep_queues_a_failing_topic_on_its_own_and_syncs_the_rest() -> TestR
     pool.close().await;
     worker.store.pool().close().await;
     hub.stop().await
+}
+
+#[tokio::test]
+async fn a_sweep_leaves_a_flagged_topic_with_its_flag() -> TestResult {
+    let hub = Hub::start().await?;
+    let worker = Worker::connect(&hub).await?;
+    let fresh = worker.private_root(INES, "Ines boat repairs").await?;
+    let open = worker.private_root(INES, "Ines kite build").await?;
+    let dismissed = worker.private_root(INES, "Ines tent patch").await?;
+    let pool = sqlx::PgPool::connect(&hub.url).await?;
+    held_by_another_person(&pool, &[fresh, open, dismissed]).await?;
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT set_config('rh.maintenance', 'on', true)")
+        .execute(&mut *tx)
+        .await?;
+    for (topic, dismissed_at) in [(open, None), (dismissed, Some(FLAGGED_AT))] {
+        sqlx::query(
+            "INSERT INTO rh_flagged_jobs (task, job_key, payload, priority, max_attempts, failures,
+                 last_error, first_failed_at, last_failed_at, flagged_at, dismissed_at)
+             VALUES ('sync-topic-page', $1, '{}', 0, 5, 5, 'slug held', $2::timestamptz,
+                 $2::timestamptz, $2::timestamptz, $3::timestamptz)",
+        )
+        .bind(format!("sync-topic-page:{topic}"))
+        .bind(FLAGGED_AT)
+        .bind(dismissed_at)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    let queue = Arc::new(worker.store.queue().await?);
+    let sweep = queue.enqueue(SyncTopicPage::every_topic().job()?).await?;
+    worker.drain(&queue, vec![sweep]).await?;
+    assert!(
+        own_sync_job(&pool, fresh).await?,
+        "a failing topic with no flag gets its own sync job"
+    );
+    for topic in [open, dismissed] {
+        assert!(
+            !own_sync_job(&pool, topic).await?,
+            "a flagged topic is not queued again"
+        );
+    }
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT set_config('rh.maintenance', 'on', true)")
+        .execute(&mut *tx)
+        .await?;
+    let flags: Vec<(String, bool, bool)> = sqlx::query_as(
+        "SELECT job_key, dismissed_at IS NOT NULL, last_failed_at = $1::timestamptz
+           FROM rh_flagged_jobs ORDER BY job_key",
+    )
+    .bind(FLAGGED_AT)
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    let mut expected = vec![
+        (format!("sync-topic-page:{open}"), false, true),
+        (format!("sync-topic-page:{dismissed}"), true, true),
+    ];
+    expected.sort();
+    assert_eq!(flags, expected, "the flags are as the person left them");
+    pool.close().await;
+    worker.store.pool().close().await;
+    hub.stop().await
+}
+
+const FLAGGED_AT: &str = "2026-11-01T00:00:00Z";
+
+async fn held_by_another_person(pool: &sqlx::PgPool, topics: &[TopicId]) -> TestResult {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT set_config('rh.maintenance', 'on', true)")
+        .execute(&mut *tx)
+        .await?;
+    for topic in topics {
+        let held = sqlx::query(
+            "INSERT INTO rh_wiki_topics (slug, title, owner_user_id)
+             SELECT slug, name, $2 FROM rh_topics WHERE id = $1",
+        )
+        .bind(topic.uuid())
+        .bind(TOM)
+        .execute(&mut *tx)
+        .await?;
+        assert_eq!(
+            held.rows_affected(),
+            1,
+            "another person's row holds the page slug"
+        );
+    }
+    sqlx::query("DELETE FROM graphile_worker._private_jobs")
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn own_sync_job(pool: &sqlx::PgPool, topic: TopicId) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM graphile_worker._private_jobs WHERE key = $1)")
+        .bind(format!("sync-topic-page:{topic}"))
+        .fetch_one(pool)
+        .await
 }
 
 #[tokio::test]
