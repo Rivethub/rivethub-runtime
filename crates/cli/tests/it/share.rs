@@ -261,6 +261,10 @@ struct Served {
 }
 
 async fn drop_box() -> Served {
+    drop_box_on("127.0.0.1").await
+}
+
+async fn drop_box_on(address: &str) -> Served {
     let drops = DropBox::default();
     let app = Router::new()
         .route("/api/drops", axum::routing::post(upload))
@@ -273,7 +277,12 @@ async fn drop_box() -> Served {
         .route("/api/auth/oauth2/revoke", axum::routing::post(revoke))
         .route("/api/drops/{id}", axum::routing::get(download))
         .with_state(drops.clone());
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+    let (url, stop) = serve(address, app).await;
+    Served { drops, url, stop }
+}
+
+async fn serve(address: &str, app: Router) -> (String, CancellationToken) {
+    let listener = tokio::net::TcpListener::bind((address, 0))
         .await
         .expect("listener");
     let url = format!("http://{}/", listener.local_addr().expect("address"));
@@ -284,7 +293,7 @@ async fn drop_box() -> Served {
             .with_graceful_shutdown(async move { token.cancelled().await })
             .await
     });
-    Served { drops, url, stop }
+    (url, stop)
 }
 
 struct Node {
@@ -818,7 +827,7 @@ async fn a_trusted_signed_bundle_imports_as_verified(pool: PgPool) {
     assert!(
         received
             .stdout
-            .starts_with("received 1 session from dana (verified, signed by ed25519:"),
+            .starts_with("received 1 session from dana (verified, signed by dana (ed25519:"),
         "{}",
         received.stdout
     );
@@ -1766,4 +1775,313 @@ async fn a_team_token_signs_in_from_a_file_and_logout_leaves_other_machines_sign
     let status = second.run(&["share", "status"]).await;
     assert!(status.stdout.contains("signed in to"), "{}", status.stdout);
     stop.cancel();
+}
+
+fn plant_drop(root: &Path, id: &str, ciphertext: &[u8], mode: u32) {
+    use sha2::Digest as _;
+    std::fs::create_dir_all(root).expect("root");
+    std::fs::set_permissions(root, std::fs::Permissions::from_mode(mode)).expect("mode");
+    let now = Timestamp::now();
+    let expires = now
+        .checked_add(jiff::SignedDuration::from_hours(24))
+        .expect("expiry");
+    let record = format!(
+        r#"{{"owner":"dana","bytes":{},"sha256":"{}","created_at":"{now}","expires_at":"{expires}"}}"#,
+        ciphertext.len(),
+        hex::encode(sha2::Sha256::digest(ciphertext)),
+    );
+    std::fs::write(root.join(format!("{id}.age")), ciphertext).expect("body");
+    std::fs::write(root.join(format!("{id}.json")), record).expect("record");
+}
+
+fn drop_root_files(root: &Path) -> Vec<String> {
+    std::fs::read_dir(root)
+        .expect("root")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect()
+}
+
+fn team_node(user: &str, gateway: (&str, u16), drops: &str, allowed: &[&str]) -> Node {
+    let (gateway_host, gateway_port) = gateway;
+    let node = Node::new(user, "https://team.example.com/", None);
+    let allowed: String = allowed.iter().fold(String::new(), |mut lines, host| {
+        use std::fmt::Write as _;
+        writeln!(lines, "      - {host}").expect("string write");
+        lines
+    });
+    support::config(
+        &node.home,
+        &format!(
+            "gateway:\n  host: '{gateway_host}'\n  port: {gateway_port}\n  drops:\n    enabled: true\n{drops}memory:\n  share:\n    server:\n      url: https://team.example.com/\n    allowed_servers:\n{allowed}"
+        ),
+    );
+    node
+}
+
+async fn shared_through(served: &Served) -> (String, Vec<u8>) {
+    let outside = tempfile::tempdir().expect("outside");
+    let sender = Node::new("dana", &served.url, None);
+    sender.sign_in(&served.url);
+    let bundle = sanitized(&sender, outside.path(), None).await;
+    let shared = sender
+        .run(&["memory", "share", &bundle.display().to_string()])
+        .await;
+    assert_eq!(shared.exit, Exit::Ok, "{}", shared.stderr);
+    let ciphertext = served
+        .drops
+        .0
+        .lock()
+        .bodies
+        .first()
+        .cloned()
+        .expect("an upload");
+    (code_of(&shared.stdout), ciphertext)
+}
+
+async fn unused_port() -> u16 {
+    tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("port")
+        .local_addr()
+        .expect("address")
+        .port()
+}
+
+#[tokio::test]
+async fn a_drop_in_this_nodes_own_root_is_received_with_no_server_allowed() {
+    let served = drop_box().await;
+    let (code, ciphertext) = shared_through(&served).await;
+    served.stop.cancel();
+    let gets = served.drops.0.lock().gets;
+    let port = unused_port().await;
+    let home = support::home();
+    let own = home.path().join("own-drops");
+    plant_drop(&own, DROP_ID, &ciphertext, 0o700);
+    let node = team_node(
+        "ines",
+        ("127.0.0.1", port),
+        &format!("    root: {}\n", own.display()),
+        &["unrelated.example.com"],
+    );
+    let received = node.run(&["memory", "receive", &code, "--dry-run"]).await;
+    assert_eq!(received.exit, Exit::Ok, "{}", received.stderr);
+    assert!(
+        received
+            .stdout
+            .starts_with("would import 1 session from dana"),
+        "{}",
+        received.stdout
+    );
+    assert_eq!(served.drops.0.lock().gets, gets, "nothing was dialed");
+    assert_eq!(
+        drop_root_files(&own),
+        Vec::<String>::new(),
+        "the drop is consumed"
+    );
+}
+
+#[tokio::test]
+async fn a_second_receive_of_a_drop_taken_from_the_root_finds_it_gone() {
+    let served = drop_box().await;
+    let (code, ciphertext) = shared_through(&served).await;
+    if let Some(taken) = served.drops.0.lock().taken.get_mut(0) {
+        *taken = true;
+    }
+    let port = unused_port().await;
+    let home = support::home();
+    let root = home.path().join("own-drops");
+    plant_drop(&root, DROP_ID, &ciphertext, 0o700);
+    let drops = format!("    root: {}\n", root.display());
+    let node = team_node(
+        "ines",
+        ("127.0.0.1", port),
+        &drops,
+        &[&host_of(&served.url)],
+    );
+    let first = node.run(&["memory", "receive", &code, "--dry-run"]).await;
+    assert_eq!(first.exit, Exit::Ok, "{}", first.stderr);
+    std::fs::remove_dir_all(node.inbox()).expect("clear the inbox");
+    let second = node.run(&["memory", "receive", &code, "--dry-run"]).await;
+    assert_eq!(second.exit, Exit::Failure, "{}", second.stdout);
+    assert!(
+        second
+            .stderr
+            .contains("already received, revoked, or it expired"),
+        "{}",
+        second.stderr
+    );
+    served.stop.cancel();
+}
+
+fn port_of(url: &str) -> u16 {
+    host_of(url)
+        .rsplit_once(':')
+        .and_then(|(_, port)| port.parse().ok())
+        .expect("a port")
+}
+
+async fn received_through_the_local_gateway(bind: &str, root_mode: Option<u32>) -> usize {
+    let served = drop_box().await;
+    let (code, ciphertext) = shared_through(&served).await;
+    served.stop.cancel();
+    let gateway = drop_box_on(bind).await;
+    {
+        let mut seen = gateway.drops.0.lock();
+        seen.bodies.push(ciphertext.clone());
+        seen.taken.push(false);
+    }
+    let home = support::home();
+    let root = home.path().join("own-drops");
+    if let Some(mode) = root_mode {
+        plant_drop(&root, DROP_ID, &ciphertext, mode);
+    }
+    let drops = format!("    root: {}\n", root.display());
+    let node = team_node(
+        "ines",
+        (bind, port_of(&gateway.url)),
+        &drops,
+        &["unrelated.example.com"],
+    );
+    let received = node.run(&["memory", "receive", &code, "--dry-run"]).await;
+    assert_eq!(received.exit, Exit::Ok, "{}", received.stderr);
+    let gets = gateway.drops.0.lock().gets;
+    gateway.stop.cancel();
+    gets
+}
+
+#[tokio::test]
+async fn an_unreadable_root_falls_back_to_the_local_gateway() {
+    assert_eq!(
+        received_through_the_local_gateway("127.0.0.1", Some(0o750)).await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_root_missing_on_this_side_falls_back_to_the_local_gateway() {
+    assert_eq!(
+        received_through_the_local_gateway("127.0.0.1", None).await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_local_gateway_bound_to_ipv6_loopback_serves_the_drop() {
+    assert_eq!(
+        received_through_the_local_gateway("::1", Some(0o750)).await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_local_gateway_redirect_off_the_node_is_not_followed() {
+    let served = drop_box().await;
+    let (code, ciphertext) = shared_through(&served).await;
+    served.stop.cancel();
+    let elsewhere = drop_box().await;
+    {
+        let mut seen = elsewhere.drops.0.lock();
+        seen.bodies.push(ciphertext.clone());
+        seen.taken.push(false);
+    }
+    let target = elsewhere.url.clone();
+    let redirector = Router::new().route(
+        "/api/drops/{id}",
+        axum::routing::get(move |UrlPath(id): UrlPath<String>| async move {
+            axum::response::Redirect::temporary(&format!("{target}api/drops/{id}"))
+        }),
+    );
+    let (gateway, stop) = serve("127.0.0.1", redirector).await;
+    let home = support::home();
+    let root = home.path().join("own-drops");
+    plant_drop(&root, DROP_ID, &ciphertext, 0o750);
+    let drops = format!("    root: {}\n", root.display());
+    let node = team_node(
+        "ines",
+        ("127.0.0.1", port_of(&gateway)),
+        &drops,
+        &["unrelated.example.com"],
+    );
+    let received = node.run(&["memory", "receive", &code, "--dry-run"]).await;
+    assert_eq!(received.exit, Exit::Failure, "{}", received.stdout);
+    assert_eq!(elsewhere.drops.0.lock().gets, 0, "the redirect was refused");
+    stop.cancel();
+    elsewhere.stop.cancel();
+}
+
+#[tokio::test]
+async fn a_drop_claimed_for_an_unwritable_inbox_stays_in_the_root() {
+    let served = drop_box().await;
+    let (code, ciphertext) = shared_through(&served).await;
+    served.stop.cancel();
+    let home = support::home();
+    let own = home.path().join("own-drops");
+    plant_drop(&own, DROP_ID, &ciphertext, 0o700);
+    let node = team_node(
+        "ines",
+        ("127.0.0.1", unused_port().await),
+        &format!("    root: {}\n", own.display()),
+        &["unrelated.example.com"],
+    );
+    std::fs::create_dir_all(node.inbox()).expect("inbox");
+    std::fs::set_permissions(node.inbox(), std::fs::Permissions::from_mode(0o500))
+        .expect("read-only inbox");
+    let received = node.run(&["memory", "receive", &code, "--dry-run"]).await;
+    assert_eq!(received.exit, Exit::Failure, "{}", received.stdout);
+    assert_eq!(drop_root_files(&own).len(), 2, "the drop is still there");
+}
+
+#[tokio::test]
+async fn from_overrides_the_host_in_the_code_and_stays_subject_to_the_allowed_list() {
+    let served = drop_box().await;
+    let (code, _) = shared_through(&served).await;
+    let embedded = host_of(&served.url);
+    let dead = format!("127.0.0.1:{}", unused_port().await);
+    let moved = code.replace(&embedded, &dead);
+    assert_ne!(moved, code);
+    let node = Node::new("ines", &served.url, None);
+    support::config(
+        &node.home,
+        &format!(
+            "memory:\n  share:\n    server:\n      url: {}\n    allowed_servers:\n      - {embedded}\n      - {dead}\n",
+            served.url
+        ),
+    );
+    let unreachable = node.run(&["memory", "receive", &moved, "--dry-run"]).await;
+    assert_eq!(unreachable.exit, Exit::Failure, "{}", unreachable.stdout);
+    let elsewhere = node
+        .run(&[
+            "memory",
+            "receive",
+            &moved,
+            "--from",
+            "other.example.com",
+            "--dry-run",
+        ])
+        .await;
+    assert_eq!(elsewhere.exit, Exit::Failure, "{}", elsewhere.stdout);
+    assert!(
+        elsewhere.stderr.contains("other.example.com"),
+        "{}",
+        elsewhere.stderr
+    );
+    let rerouted = node
+        .run(&[
+            "memory",
+            "receive",
+            &moved,
+            "--from",
+            &embedded,
+            "--dry-run",
+        ])
+        .await;
+    assert_eq!(rerouted.exit, Exit::Ok, "{}", rerouted.stderr);
+    assert_eq!(served.drops.0.lock().gets, 1, "the --from host was dialed");
+    served.stop.cancel();
 }

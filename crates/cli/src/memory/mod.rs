@@ -7,6 +7,7 @@ mod export;
 mod hold;
 mod inbox;
 mod io;
+mod local_drop;
 mod maintain;
 mod merge;
 mod parse;
@@ -33,6 +34,7 @@ pub use dropbox::DropError;
 pub use export::MemoryExporter;
 pub use receiving::FetchError;
 pub use receiving::Fetched;
+pub use receiving::Source;
 pub use receiving::fetch;
 pub use receiving::trust_sender;
 pub use receiving::trusted_senders;
@@ -91,9 +93,10 @@ Commands:\n\
   sanitize [<bundle>] --resolve <report> [--mapping <file>] [--learn]\n\
   ingest-bundle <file> [--force] [--dry-run] [--gateway <url>]\n\
   share <sanitized bundle> [--server <host>] [--unsigned] [--flags <n>]\n\
-  receive <share code> [--dry-run] [--gateway <url>]\n\
+  receive <share code> [--from <host[:port]>] [--dry-run] [--gateway <url>]\n\
   key show\n\
   trust add <name> <key> | trust list | trust remove <name> [<key>]\n\
+  (trust matches the signing key, not the author name inside a bundle: <name> is only a label shown as \"signed by <name>\")\n\
   import <file> [--dry-run] [--sqlite <file>]\n\
   backfill-titles [--dry-run] [--json] [--sqlite <file>] [--model <name> --model-url <url> [--concurrency <n>]]\n\
   reembed [--dry-run] [--sqlite <file>]\n\

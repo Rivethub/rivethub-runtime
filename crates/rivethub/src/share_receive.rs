@@ -79,7 +79,7 @@ impl NodeReceiver {
         let guard = Arc::clone(&self.busy).lock_owned().await;
         let env = self.env.clone();
         let task = tokio::spawn(async move {
-            let fetched = cli::memory::fetch(&env, code, |_| Ok(())).await;
+            let fetched = cli::memory::fetch(&env, code, None, |_| Ok(())).await;
             (fetched, guard)
         });
         let (fetched, guard) = task
@@ -300,12 +300,12 @@ fn inspected(fetched: &Fetched, checked: &Checked) -> port::Inspected {
     };
     port::Inspected {
         bundle: fetched.id.to_string(),
-        server: fetched.server.to_string(),
-        downloaded: fetched.downloaded,
+        server: fetched.source.to_string(),
+        downloaded: !matches!(fetched.source, cli::memory::Source::Inbox),
         author: visible(&author.user),
         node: visible(&author.node),
         verification: self::verification(verification.kind()),
-        reason: verification.reason(&visible(&author.user)),
+        reason: visible(&verification.reason()),
         signer: signer(verification),
         sessions: (0..bundle.sessions.len())
             .filter_map(|index| inbound(checked, bundle, index))

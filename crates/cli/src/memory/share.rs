@@ -14,6 +14,7 @@ use capture::seal::MAX_BUNDLE_BYTES;
 use capture::seal::OpenError;
 use capture::seal::SealError;
 use capture::seal::ShareCode;
+use capture::seal::ShareServer;
 use capture::sign::KeyParseError;
 use capture::sign::PublicKey;
 use capture::sign::SignError;
@@ -73,6 +74,7 @@ pub(super) enum ShareCommand {
     },
     Receive {
         code: ShareCode,
+        from: Option<ShareServer>,
         dry_run: bool,
         force: bool,
         decisions: Decisions,
@@ -92,7 +94,7 @@ pub(super) enum ShareCommand {
 
 const SHARE_USAGE: &str =
     "usage: rh memory share <sanitized bundle> [--server <host>] [--unsigned] [--flags <n>]";
-const RECEIVE_USAGE: &str = "usage: rh memory receive <share code> [--dry-run] [--session <n>=import|skip|hold-spans]... [--all=import|skip|hold-spans] [--force] [--gateway <url>]";
+const RECEIVE_USAGE: &str = "usage: rh memory receive <share code> [--from <host[:port]>] [--dry-run] [--session <n>=import|skip|hold-spans]... [--all=import|skip|hold-spans] [--force] [--gateway <url>]";
 const KEY_USAGE: &str = "usage: rh memory key show";
 const TRUST_USAGE: &str =
     "usage: rh memory trust add <name> <key> | trust list | trust remove <name> [<key>]";
@@ -146,6 +148,7 @@ pub(super) fn share_args(args: &[String]) -> Result<MemoryCommand, Error> {
 pub(super) fn receive_args(args: &[String]) -> Result<MemoryCommand, Error> {
     let mut scan = Scan::new(args);
     let mut code = None;
+    let mut from = None;
     let mut dry_run = false;
     let mut force = false;
     let mut decisions = Decisions::default();
@@ -162,6 +165,14 @@ pub(super) fn receive_args(args: &[String]) -> Result<MemoryCommand, Error> {
         if crate::argv::take_gateway(&mut scan, &mut gateway)? {
             continue;
         }
+        match scan.option("--from", None) {
+            Taken::Value(value) => {
+                from = Some(value.parse::<ShareServer>().map_err(ShareError::from)?);
+                continue;
+            }
+            Taken::Missing => return Err(usage(RECEIVE_USAGE)),
+            Taken::Absent => {}
+        }
         if super::hold::take_decision(&mut scan, &mut decisions)? {
             continue;
         }
@@ -174,6 +185,7 @@ pub(super) fn receive_args(args: &[String]) -> Result<MemoryCommand, Error> {
     let code = code.ok_or_else(|| usage(RECEIVE_USAGE))?;
     Ok(MemoryCommand::Share(ShareCommand::Receive {
         code,
+        from,
         dry_run,
         force,
         decisions,
@@ -230,19 +242,20 @@ pub(super) async fn run(command: ShareCommand, env: &Environment) -> Result<Repo
         }
         ShareCommand::Receive {
             code,
+            from,
             dry_run,
             force,
             decisions,
             gateway,
         } => {
             let env = crate::argv::with_gateway(env, gateway.as_deref());
-            receive(&env, code, dry_run, force, &decisions).await
+            receive(&env, code, from, dry_run, force, &decisions).await
         }
         ShareCommand::KeyShow => key_show(env),
         ShareCommand::TrustAdd { name, key } => {
             super::receiving::trust_sender(env, &name, key)?;
             Ok(Report::success(format!(
-                "trusted {key} ({}) as {}; bundles {name} signs with it now import as verified\n",
+                "trusted {key} ({}) as {}; any bundle signed with that key now imports as verified, whatever author name it carries\n",
                 key.fingerprint(),
                 name.trim()
             )))
@@ -343,12 +356,13 @@ fn sessions_noun(count: usize) -> String {
 async fn receive(
     env: &Environment,
     code: ShareCode,
+    from: Option<ShareServer>,
     dry_run: bool,
     force: bool,
     decisions: &Decisions,
 ) -> Result<Report, Error> {
-    let fetched = match super::receiving::fetch(env, code, |server| {
-        writeln!(std::io::stderr(), "downloading from {server}")
+    let fetched = match super::receiving::fetch(env, code, from, |source| {
+        writeln!(std::io::stderr(), "downloading from {source}")
     })
     .await
     {
@@ -360,7 +374,7 @@ async fn receive(
     };
     let bundle = fetched.bundle();
     let user = capture::receive::visible(&bundle.manifest.exported_by.user);
-    let reason = capture::receive::visible(&fetched.opened.verification.reason(&user));
+    let reason = capture::receive::visible(&fetched.opened.verification.reason());
     let checked = capture::receive::check(bundle);
     let plan = match checked.plan(bundle, decisions, force) {
         Ok(plan) => plan,

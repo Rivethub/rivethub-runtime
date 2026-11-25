@@ -1,6 +1,6 @@
 use jiff::SignedDuration;
 use jiff::Timestamp;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io::{ErrorKind, Seek as _};
 use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
@@ -15,6 +15,9 @@ use tokio::io::AsyncWriteExt as _;
 
 use super::{AGE_HEADER, DropId, DropsConfig, OpenError};
 use crate::tenancy::UserId;
+use index::{Entry, Fate, Index};
+
+mod index;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Part {
@@ -61,47 +64,6 @@ struct Record {
     expires_at: Timestamp,
 }
 
-#[derive(Debug)]
-struct Entry {
-    owner: UserId,
-    bytes: u64,
-    expires_at: Timestamp,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Fate {
-    Send,
-    Burn,
-}
-
-#[derive(Debug, Default)]
-struct Index {
-    live: HashMap<DropId, Entry>,
-    reserved: HashMap<DropId, (UserId, u64)>,
-    claimed: HashMap<DropId, Fate>,
-}
-
-impl Index {
-    fn holds(&self, id: &DropId) -> bool {
-        self.live.contains_key(id) || self.reserved.contains_key(id)
-    }
-
-    fn usage(&self, owner: &UserId) -> (u64, u64) {
-        let live = self
-            .live
-            .values()
-            .filter(|entry| entry.owner == *owner)
-            .map(|entry| entry.bytes);
-        let reserved = self
-            .reserved
-            .values()
-            .filter(|(holder, _)| holder == owner)
-            .map(|(_, bytes)| *bytes);
-        live.chain(reserved)
-            .fold((0, 0), |(count, total), bytes| (count + 1, total + bytes))
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 struct Quota {
     drops: u64,
@@ -146,7 +108,7 @@ pub(crate) struct Stored {
 }
 
 #[derive(Debug)]
-pub(crate) enum Claim {
+pub enum Claim {
     Gone,
     Failed,
     Ready { file: std::fs::File, bytes: u64 },
@@ -213,7 +175,43 @@ impl std::io::Write for Hashing {
     }
 }
 
+fn check_root(root: &Path) -> Result<(), OpenError> {
+    let failed = |source: std::io::Error| OpenError::Io {
+        path: root.to_path_buf(),
+        source,
+    };
+    let meta = std::fs::symlink_metadata(root).map_err(failed)?;
+    let unsafe_root = |rule: &'static str| OpenError::Unsafe {
+        path: root.to_path_buf(),
+        rule,
+    };
+    if !meta.file_type().is_dir() {
+        return Err(unsafe_root(
+            "must be a real directory, not a symlink or a file",
+        ));
+    }
+    if meta.uid() != nix::unistd::geteuid().as_raw() {
+        return Err(unsafe_root("must be owned by the user rh runs as"));
+    }
+    if meta.mode() & 0o077 != 0 {
+        return Err(unsafe_root(
+            "must give no access to group or others (mode 0700)",
+        ));
+    }
+    Ok(())
+}
+
 impl Store {
+    pub(crate) fn attach(root: &Path) -> Result<Self, OpenError> {
+        check_root(root)?;
+        Ok(Self {
+            root: root.to_path_buf(),
+            ttl: super::DROP_TTL,
+            quota: Quota { drops: 0, bytes: 0 },
+            index: Mutex::new(Index::default()),
+        })
+    }
+
     pub(crate) fn open(config: &DropsConfig) -> Result<Self, OpenError> {
         let root = &config.root;
         let failed = |source: std::io::Error| OpenError::Io {
@@ -225,24 +223,7 @@ impl Store {
             .mode(0o700)
             .create(root)
             .map_err(failed)?;
-        let meta = std::fs::symlink_metadata(root).map_err(failed)?;
-        let unsafe_root = |rule: &'static str| OpenError::Unsafe {
-            path: root.clone(),
-            rule,
-        };
-        if !meta.file_type().is_dir() {
-            return Err(unsafe_root(
-                "must be a real directory, not a symlink or a file",
-            ));
-        }
-        if meta.uid() != nix::unistd::geteuid().as_raw() {
-            return Err(unsafe_root("must be owned by the user rh runs as"));
-        }
-        if meta.mode() & 0o077 != 0 {
-            return Err(unsafe_root(
-                "must give no access to group or others (mode 0700)",
-            ));
-        }
+        check_root(root)?;
         let store = Self {
             root: root.clone(),
             ttl: config.ttl,
@@ -271,7 +252,18 @@ impl Store {
         Ok(found)
     }
 
+    pub(crate) fn lock(&self) -> std::io::Result<std::fs::File> {
+        let flags = nix::fcntl::OFlag::O_NOFOLLOW | nix::fcntl::OFlag::O_DIRECTORY;
+        let root = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(flags.bits())
+            .open(&self.root)?;
+        root.lock()?;
+        Ok(root)
+    }
+
     fn recover(&self) -> std::io::Result<()> {
+        let held = self.lock()?;
         let parts: HashSet<(DropId, Part)> = self.parts()?.into_iter().collect();
         let has = |id: &DropId, part: Part| parts.contains(&(id.clone(), part));
         let mut index = self.index.lock();
@@ -299,6 +291,7 @@ impl Store {
             }
         }
         drop(index);
+        drop(held);
         Ok(())
     }
 
@@ -320,8 +313,10 @@ impl Store {
         bytes: u64,
     ) -> Result<Reservation<'_>, ReserveError> {
         let mut index = self.index.lock();
-        let (count, total) = index.usage(owner);
-        if count >= self.quota.drops || total.saturating_add(bytes) > self.quota.bytes {
+        if !index.fits(owner, bytes, self.quota) {
+            index.release_taken_elsewhere(owner, |id| self.path(id, Part::Record));
+        }
+        if !index.fits(owner, bytes, self.quota) {
             return Err(ReserveError::Quota);
         }
         let id = loop {
@@ -580,7 +575,13 @@ impl Store {
                     false
                 }
             },
-            Ok(false) => false,
+            Ok(false) => {
+                let mut index = self.index.lock();
+                if !index.claimed.contains_key(id) {
+                    index.live.remove(id);
+                }
+                false
+            }
             Err(error) => {
                 logged("expire", &error);
                 false
