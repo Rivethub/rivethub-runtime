@@ -7,6 +7,7 @@ use capture::seal::OpenError;
 use capture::seal::Opened;
 use capture::seal::SealError;
 use capture::seal::ShareCode;
+use capture::seal::ShareKey;
 use capture::seal::ShareServer;
 use capture::sign::PublicKey;
 use capture::sign::TrustError;
@@ -23,6 +24,7 @@ use super::dropbox::DropBox;
 use super::dropbox::DropError;
 use super::dropbox::Incoming;
 use super::dropbox::MAX_DROP_BYTES;
+use super::inbox::Held;
 use super::inbox::Inbox;
 use super::inbox::Slot;
 use super::local_drop;
@@ -91,6 +93,7 @@ impl std::fmt::Display for Source {
 pub struct Fetched {
     inbox: Inbox,
     slot: Slot,
+    kept: PathBuf,
     pub id: DropId,
     pub source: Source,
     pub opened: Opened,
@@ -104,7 +107,7 @@ impl Fetched {
 
     #[must_use]
     pub fn ciphertext_path(&self) -> PathBuf {
-        self.inbox.ciphertext_path(&self.slot)
+        self.kept.clone()
     }
 
     #[must_use]
@@ -130,7 +133,7 @@ pub async fn fetch(
     if inbox.was_received(&slot) {
         return Err(FetchError::AlreadyReceived(id));
     }
-    let (ciphertext, source) = if let Some(kept) = inbox.read(&slot, MAX_DROP_BYTES)? {
+    let (held, source) = if let Some(kept) = inbox.read(&slot, MAX_DROP_BYTES)? {
         (kept, Source::Inbox)
     } else {
         let wanted = Wanted {
@@ -145,17 +148,36 @@ pub async fn fetch(
         (kept, source)
     };
     let trust = trust_store(env)?;
-    let opened = tokio::task::spawn_blocking(move || capture::seal::open(ciphertext, &key, &trust))
+    let (opened, from_copy) = tokio::task::spawn_blocking(move || open_held(held, &key, &trust))
         .await
         .map_err(std::io::Error::other)??;
+    let kept = inbox.promote_recovered(&slot, from_copy);
     screen(&opened.bundle)?;
     Ok(Fetched {
         inbox,
         slot,
+        kept,
         id,
         source,
         opened,
     })
+}
+
+fn open_held(
+    held: Held,
+    key: &ShareKey,
+    trust: &TrustStore,
+) -> Result<(Opened, PathBuf), OpenError> {
+    let Held { first, second } = held;
+    match capture::seal::open(first.bytes, key, trust) {
+        Ok(opened) => Ok((opened, first.path)),
+        Err(error) => match second {
+            Some(second) => capture::seal::open(second.bytes, key, trust)
+                .map(|opened| (opened, second.path))
+                .map_err(|_| error),
+            None => Err(error),
+        },
+    }
 }
 
 struct Wanted<'a> {
