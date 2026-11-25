@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
@@ -13,8 +14,10 @@ use oauth2::HttpRequest;
 use oauth2::HttpResponse;
 use oauth2::RequestTokenError;
 use oauth2::StandardErrorResponse;
+use oauth2::TokenResponse as _;
 use oauth2::TokenUrl;
 use oauth2::basic::BasicClient;
+use oauth2::basic::BasicTokenResponse;
 use reqwest::StatusCode;
 use reqwest::header::CONTENT_TYPE;
 use reqwest::header::HeaderMap;
@@ -23,9 +26,46 @@ use serde::Deserialize;
 use url::Url;
 
 use super::CLIENT_ID;
+use super::LIFETIME_WHEN_UNSTATED;
 use super::OauthErrorCode;
+use super::SCOPE;
 use super::Server;
 use super::ServerError;
+use super::Tokens;
+
+impl Tokens {
+    pub(crate) fn issued(
+        issued: &BasicTokenResponse,
+        previous: Option<&Self>,
+    ) -> Result<Self, ServerError> {
+        let refresh_token = issued
+            .refresh_token()
+            .map(|token| token.secret().clone())
+            .or_else(|| previous.map(|tokens| tokens.refresh_token.clone()))
+            .ok_or_else(|| ServerError::Protocol("the token response has no refresh_token"))?;
+        let scope = issued
+            .scopes()
+            .map(|scopes| {
+                scopes
+                    .iter()
+                    .map(|scope| scope.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .or_else(|| previous.map(|tokens| tokens.scope.clone()))
+            .unwrap_or_else(|| SCOPE.to_owned());
+        let lifetime = issued.expires_in().unwrap_or(LIFETIME_WHEN_UNSTATED);
+        let expires_at = Timestamp::now()
+            .saturating_add(lifetime)
+            .map_err(|_error| ServerError::Lifetime(lifetime.as_secs()))?;
+        Ok(Self {
+            access_token: issued.access_token().secret().clone(),
+            refresh_token,
+            expires_at,
+            scope,
+        })
+    }
+}
 
 const METADATA_PATH: &str = ".well-known/oauth-authorization-server";
 

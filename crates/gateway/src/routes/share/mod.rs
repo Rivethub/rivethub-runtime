@@ -57,6 +57,10 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
             post(send::send).fallback(super::method_not_allowed),
         )
         .route(
+            "/api/share/drafts/{id}/push",
+            post(send::push).fallback(super::method_not_allowed),
+        )
+        .route(
             "/api/share/servers",
             get(servers::list).fallback(super::method_not_allowed),
         )

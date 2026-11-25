@@ -25,6 +25,8 @@ pub trait ShareDesk: Send + Sync + fmt::Debug {
 
     async fn send(&self, id: DraftId, send: SendRequest) -> Result<Sent, DeskError>;
 
+    async fn push(&self, id: DraftId, push: PushRequest) -> Result<Pushed, DeskError>;
+
     async fn discard(&self, id: DraftId) -> Result<(), DeskError>;
 
     async fn servers(&self) -> Result<Servers, DeskError>;
@@ -341,6 +343,21 @@ pub struct SendRequest {
     pub confirm: SendConfirm,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushRequest {
+    pub hub: ServerOrigin,
+    pub confirm: SendConfirm,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pushed {
+    pub hub: String,
+    pub user: String,
+    pub sessions: usize,
+    pub inserted: u64,
+    pub skipped: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SendConfirm {
     pub sessions: usize,
@@ -415,6 +432,7 @@ pub enum TokenStore {
 pub struct ServerView {
     pub origin: ServerOrigin,
     pub kind: ServerKind,
+    pub hub: Option<String>,
     pub user: Option<String>,
     pub signed_in: bool,
     pub default: bool,

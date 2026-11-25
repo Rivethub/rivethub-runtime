@@ -11,6 +11,7 @@ use capture::sanitize::decide::Resolution;
 use capture::share;
 use cli::memory::SessionStore;
 use cli::memory::desk as cli_desk;
+use cli::memory::push as cli_push;
 use config::Config;
 use config::Environment;
 use kernel::memory::MemoryStore;
@@ -37,6 +38,8 @@ use kernel::memory::share::desk::LoginStep;
 use kernel::memory::share::desk::Mark;
 use kernel::memory::share::desk::Marked;
 use kernel::memory::share::desk::NodeKeyView;
+use kernel::memory::share::desk::PushRequest;
+use kernel::memory::share::desk::Pushed;
 use kernel::memory::share::desk::RuleCount;
 use kernel::memory::share::desk::SendRequest;
 use kernel::memory::share::desk::Sent;
@@ -467,30 +470,7 @@ impl ShareDesk for NodeDesk {
     async fn send(&self, id: DraftId, send: SendRequest) -> Result<Sent, DeskError> {
         let (slot, _) = self.slot(id)?;
         let mut state = slot.lock().await;
-        state.open()?;
-        let flags = state
-            .report
-            .decision
-            .as_ref()
-            .map_or(0, |decision| decision.flags.len());
-        let open = flags.saturating_sub(state.resolved.len());
-        if open > 0 {
-            return Err(DeskError::OpenFlags { open });
-        }
-        let sessions = state.sealed.bundle.sessions.len();
-        let kept = state
-            .resolved
-            .values()
-            .filter(|resolution| **resolution == Resolution::Keep)
-            .count();
-        if send.confirm.sessions != sessions || send.confirm.kept_flags != kept {
-            return Err(DeskError::Counts {
-                sessions,
-                kept,
-                confirmed_sessions: send.confirm.sessions,
-                confirmed_kept: send.confirm.kept_flags,
-            });
-        }
+        state.confirm(send.confirm)?;
         state.phase = Phase::Sending;
         let shared = self.upload(&state.sealed.text, &send).await;
         state.phase = if shared.is_ok() {
@@ -506,6 +486,28 @@ impl ShareDesk for NodeDesk {
             expires_at: shared.expires_at,
             bytes: shared.uploaded,
             signed: shared.signed.map(|key| key.fingerprint()),
+        })
+    }
+
+    async fn push(&self, id: DraftId, push: PushRequest) -> Result<Pushed, DeskError> {
+        let (slot, _) = self.slot(id)?;
+        let mut state = slot.lock().await;
+        state.confirm(push.confirm)?;
+        let pushed = cli_push::push_to_hub(&self.env, push.hub.as_str(), &state.sealed.text, 0)
+            .await
+            .map_err(cli_desk::desk_error);
+        if pushed.is_ok() {
+            state.phase = Phase::Closed;
+        }
+        drop(state);
+        let pushed = pushed?;
+        self.drafts.remove(id);
+        Ok(Pushed {
+            hub: pushed.hub,
+            user: pushed.user,
+            sessions: pushed.sessions,
+            inserted: pushed.inserted,
+            skipped: pushed.skipped,
         })
     }
 

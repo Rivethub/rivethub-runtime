@@ -5,6 +5,7 @@ use axum::Json;
 use axum::Router;
 use axum::extract::Path;
 use axum::extract::State;
+use axum::http::request::Parts;
 use axum::routing;
 use kernel::tenancy::Space;
 use kernel::tenancy::SpaceKind;
@@ -13,6 +14,7 @@ use kernel::tenancy::TenancyStoreError;
 use kernel::tenancy::Viewer;
 use kernel::tenancy::Visibility;
 use kernel::tenancy::VisibilityDefault;
+use wire::gateway::tenancy::MeAccess;
 use wire::gateway::tenancy::MeResponse;
 use wire::gateway::tenancy::SessionVisibilityRecord;
 use wire::gateway::tenancy::SpaceRecord;
@@ -119,8 +121,9 @@ fn session_record(
 
 async fn me(
     State(gateway): State<Arc<Gateway>>,
-    user: UserId,
+    parts: Parts,
 ) -> Result<Json<MeResponse>, ApiError> {
+    let (user, credential) = crate::tenancy::authenticate(&gateway, &parts)?;
     let viewer = gateway.tenancy.viewer(&user);
     let found = gateway
         .tenancy_store()?
@@ -137,6 +140,15 @@ async fn me(
             .map(space)
             .collect(),
         settings: user_settings(found),
+        access: Some(MeAccess {
+            scopes: credential
+                .scopes()
+                .listed()
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            drops_enabled: gateway.drops_enabled(),
+        }),
     }))
 }
 

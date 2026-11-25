@@ -6,6 +6,7 @@ use reqwest::StatusCode;
 use reqwest::header::CONTENT_TYPE;
 use tokio::io::AsyncWriteExt as _;
 use wire::gateway::drops::Uploaded;
+use wire::gateway::users::TokenScope;
 
 use capture::seal::ShareServer;
 
@@ -104,10 +105,16 @@ impl DropBox {
                 rejected = Some(token);
                 continue;
             }
-            let uploaded: Uploaded = crate::share_server::checked(response)?
-                .json()
-                .await
-                .map_err(ServerError::from)?;
+            if response.status() == StatusCode::NOT_FOUND {
+                return Err(ServerError::DropsOff(self.host().clone()).into());
+            }
+            if !response.status().is_success() {
+                return Err(self
+                    .server
+                    .refused(response.status(), TokenScope::DropsWrite)
+                    .into());
+            }
+            let uploaded: Uploaded = response.json().await.map_err(ServerError::from)?;
             let id = uploaded
                 .id
                 .parse()

@@ -4106,8 +4106,36 @@
       ],
       "type": "object"
     },
+    "MeAccess": {
+      "properties": {
+        "dropsEnabled": {
+          "type": "boolean"
+        },
+        "scopes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "scopes",
+        "dropsEnabled"
+      ],
+      "type": "object"
+    },
     "MeResponse": {
       "properties": {
+        "access": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MeAccess"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "settings": {
           "$ref": "#/$defs/UserSettings"
         },
@@ -7588,6 +7616,55 @@
       ],
       "type": "string"
     },
+    "PushRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "confirm": {
+          "$ref": "#/$defs/SendConfirm"
+        },
+        "hub": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "hub",
+        "confirm"
+      ],
+      "type": "object"
+    },
+    "PushedReply": {
+      "properties": {
+        "hub": {
+          "type": "string"
+        },
+        "inserted": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sessions": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "skipped": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "user": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "hub",
+        "user",
+        "sessions",
+        "inserted",
+        "skipped"
+      ],
+      "type": "object"
+    },
     "QueueHealth": {
       "properties": {
         "dead": {
@@ -8433,6 +8510,12 @@
       "properties": {
         "default": {
           "type": "boolean"
+        },
+        "hub": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "kind": {
           "$ref": "#/$defs/ServerKind"
@@ -10924,7 +11007,8 @@
     "TokenScope": {
       "enum": [
         "full",
-        "drops:write"
+        "drops:write",
+        "memory:import"
       ],
       "type": "string"
     },
