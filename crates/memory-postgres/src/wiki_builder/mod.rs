@@ -493,10 +493,10 @@ async fn within(
     key: &str,
     home: &crate::wiki_scope::WikiScope,
 ) -> Result<bool, WikiStoreError> {
-    let found = crate::wiki_scope::page_home(tx, key).await?;
-    Ok(match found.scope {
-        Some(scope) => scope == home.scope,
-        None => home.primary(),
+    Ok(match crate::wiki_scope::page_place(tx, key).await? {
+        Some((Some(scope), _)) => scope == home.scope,
+        Some((None, _)) => home.primary(),
+        None => false,
     })
 }
 
@@ -505,8 +505,10 @@ async fn overlaid(
     key: &str,
     home: &crate::wiki_scope::WikiScope,
 ) -> Result<Option<String>, WikiStoreError> {
-    let found = crate::wiki_scope::page_home(tx, key).await?;
-    crate::wiki_scope::overlay(tx, home, &found.local).await
+    match crate::wiki_scope::page_place(tx, key).await? {
+        Some((_, local)) => crate::wiki_scope::overlay(tx, home, &local).await,
+        None => Ok(None),
+    }
 }
 
 fn query_error(error: sqlx::Error) -> WikiStoreError {

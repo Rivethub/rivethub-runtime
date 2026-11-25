@@ -5,14 +5,14 @@ use kernel::topics::{
 };
 use kernel::wiki::builder::WikiStoreError;
 use kernel::wiki::consolidate::{WikiConsolidateStore, WikiFold};
-use kernel::wiki::page::WikiSlug;
 use kernel::wiki::page::{ArticleSection, FoldMark, WikiPage, WikiSectionRef};
+use kernel::wiki::page::{WikiSlug, normalize_slug};
 use sqlx::{Postgres, Transaction};
 
 use super::overlays::Placed;
 use super::{lock_slug, query_error, settle, topics};
 use crate::PostgresMemory;
-use crate::wiki_scope::{PageHome, WikiScope, page_home, scope_named};
+use crate::wiki_scope::{PageHome, WikiScope, every_owner, page_home, scope_named};
 use crate::wiki_writer::{LockedRepository, WikiRepository};
 
 #[derive(Debug, sqlx::FromRow)]
@@ -25,11 +25,13 @@ struct PageRow {
 #[async_trait]
 impl TopicPageStore for PostgresMemory {
     async fn topic_page(&self, slug: &WikiSlug) -> Result<Option<TopicPage>, WikiStoreError> {
+        let Some((home, _)) = self.home(slug).await? else {
+            return self.row_page(slug).await;
+        };
         let placed = self.place_note_page(slug, None).await?;
         if !placed.canonical {
             return self.overlay_page(slug, &placed).await;
         }
-        let (home, _) = self.home(slug).await?;
         let repository = WikiRepository::for_store(self.wiki_home(&home.directory)?)
             .lock()
             .await?;
@@ -95,7 +97,9 @@ impl TopicPageStore for PostgresMemory {
         if !bound {
             return Ok(false);
         }
-        let (home, scope) = self.home(slug).await?;
+        let Some((home, scope)) = self.home(slug).await? else {
+            return Ok(false);
+        };
         let mut repository = WikiRepository::for_store(self.wiki_home(&home.directory)?)
             .lock()
             .await?;
@@ -104,6 +108,7 @@ impl TopicPageStore for PostgresMemory {
             key: slug.as_ref().to_owned(),
             local: home.local,
             canonical: true,
+            fresh: false,
             bind: None,
         };
         let edited = self
@@ -120,13 +125,7 @@ impl TopicPageStore for PostgresMemory {
         now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         let placed = self.place_note_page(slug, Some(root.uuid())).await?;
-        let directory = placed
-            .scope
-            .as_ref()
-            .map_or(String::new(), |scope| scope.directory.clone());
-        let mut repository = WikiRepository::for_store(self.wiki_home(&directory)?)
-            .lock()
-            .await?;
+        let mut repository = self.locked(&placed).await?;
         let changed = self
             .change_locked(&mut repository, slug, &placed, change, now)
             .await;
@@ -194,8 +193,16 @@ impl TopicPageStore for PostgresMemory {
     }
 
     async fn remove_page(&self, slug: &WikiSlug) -> Result<(), WikiStoreError> {
-        let mut repository = self.repository().await?;
-        let removed = self.remove_locked(&mut repository, slug).await;
+        let legacy = self.legacy_owner().await?;
+        let mut connection = self.pool.acquire().await.map_err(query_error)?;
+        let Some(home) = page_home(&mut connection, slug.as_ref(), &legacy).await? else {
+            return Ok(());
+        };
+        drop(connection);
+        let mut repository = WikiRepository::for_store(self.wiki_home(&home.directory)?)
+            .lock()
+            .await?;
+        let removed = self.remove_locked(&mut repository, slug, &home).await;
         settle(removed, repository.release().await)
     }
 
@@ -220,6 +227,7 @@ impl TopicPageStore for PostgresMemory {
 #[derive(Clone, Copy)]
 enum Claim {
     Overwrite,
+    Fresh,
     Vacant,
 }
 
@@ -232,48 +240,59 @@ impl PostgresMemory {
         now: Timestamp,
     ) -> Result<bool, WikiStoreError> {
         let placed = self.place_note_page(&page.slug, Some(topic.uuid())).await?;
-        let directory = placed
-            .scope
-            .as_ref()
-            .map_or(String::new(), |scope| scope.directory.clone());
-        let mut repository = WikiRepository::for_store(self.wiki_home(&directory)?)
-            .lock()
-            .await?;
+        let mut repository = self.locked(&placed).await?;
         let saved = self
             .save_locked(&mut repository, page, &placed, claim, now)
             .await;
         settle(saved, repository.release().await)
     }
 
-    async fn repository(&self) -> Result<LockedRepository, WikiStoreError> {
-        let directory = self
-            .wiki_directory
-            .as_ref()
-            .ok_or(WikiStoreError::DirectoryMissing)?;
-        Ok(WikiRepository::for_store(directory.clone()).lock().await?)
+    async fn locked(&self, placed: &Placed) -> Result<LockedRepository, WikiStoreError> {
+        Ok(WikiRepository::for_store(self.directory_of(placed)?)
+            .lock()
+            .await?)
     }
 
     async fn remove_locked(
         &self,
         repository: &mut LockedRepository,
         slug: &WikiSlug,
+        home: &PageHome,
     ) -> Result<(), WikiStoreError> {
         let mut tx = self.pool.begin().await.map_err(query_error)?;
         crate::wiki_redirect::hold_pages(&mut tx, &[slug.as_ref()], None).await?;
-        for statement in [
-            "DELETE FROM rh_wiki_redirects WHERE to_slug = $1",
-            "DELETE FROM rh_wiki_topics WHERE slug = $1",
-        ] {
-            sqlx::query(statement)
-                .bind(slug.as_ref())
-                .execute(&mut *tx)
-                .await
-                .map_err(query_error)?;
+        let legacy = self.held_legacy_owner(&mut tx).await?;
+        match page_home(&mut tx, slug.as_ref(), &legacy).await? {
+            Some(held) if held == *home => {}
+            None => return tx.rollback().await.map_err(query_error),
+            Some(_) => {
+                return Err(WikiStoreError::InvalidPatch(format!(
+                    "wiki page {} moved while its removal waited",
+                    slug.as_ref()
+                )));
+            }
         }
-        if repository.read(slug.as_ref()).await?.is_some() {
+        sqlx::query("DELETE FROM rh_wiki_redirects WHERE to_slug = $1")
+            .bind(slug.as_ref())
+            .execute(&mut *tx)
+            .await
+            .map_err(query_error)?;
+        let deleted = sqlx::query("DELETE FROM rh_wiki_topics WHERE slug = $1")
+            .bind(slug.as_ref())
+            .execute(&mut *tx)
+            .await
+            .map_err(query_error)?;
+        if deleted.rows_affected() != 1 {
+            tx.rollback().await.map_err(query_error)?;
+            return Err(WikiStoreError::InvalidPatch(format!(
+                "wiki page {} is not yours to remove",
+                slug.as_ref()
+            )));
+        }
+        if repository.read(&home.local).await?.is_some() {
             let message = format!("wiki({}): removed after a tidy review", slug.as_ref());
             repository
-                .remove(&[slug.as_ref().to_owned()], &message)
+                .remove(std::slice::from_ref(&home.local), &message)
                 .await?;
         }
         tx.commit().await.map_err(query_error)
@@ -304,7 +323,12 @@ impl PostgresMemory {
         change: &PageChange<'_>,
         now: Timestamp,
     ) -> Result<(), WikiStoreError> {
-        let before = match repository.read(&placed.local).await? {
+        let current = if placed.fresh {
+            None
+        } else {
+            repository.read(&placed.local).await?
+        };
+        let before = match current {
             Some(stored) => TopicPage {
                 slug: slug.clone(),
                 ..topic_page(stored)?
@@ -325,14 +349,20 @@ impl PostgresMemory {
             .map(drop)
     }
 
-    async fn home(&self, slug: &WikiSlug) -> Result<(PageHome, Option<WikiScope>), WikiStoreError> {
+    async fn home(
+        &self,
+        slug: &WikiSlug,
+    ) -> Result<Option<(PageHome, Option<WikiScope>)>, WikiStoreError> {
+        let legacy = self.legacy_owner().await?;
         let mut connection = self.pool.acquire().await.map_err(query_error)?;
-        let home = page_home(&mut connection, slug.as_ref()).await?;
+        let Some(home) = page_home(&mut connection, slug.as_ref(), &legacy).await? else {
+            return Ok(None);
+        };
         let scope = match &home.scope {
             Some(name) => scope_named(&mut connection, name).await?,
             None => None,
         };
-        Ok((home, scope))
+        Ok(Some((home, scope)))
     }
 
     async fn edit_locked(
@@ -385,17 +415,18 @@ impl PostgresMemory {
                 .map_err(super::fence_error)?;
         }
         lock_slug(&mut tx, &placed.key).await?;
-        let existing = repository.read(&placed.local).await?;
-        if !claim.allows(&mut tx, placed, existing.is_some()).await? {
+        let local = WikiSlug::try_from(normalize_slug(&placed.local))
+            .map_err(|error| WikiStoreError::InvalidPatch(error.to_string()))?;
+        let claim = claim.placing(placed);
+        if !claim.allows(&mut tx, placed, repository, &local).await? {
             tx.rollback().await.map_err(query_error)?;
             return Ok(false);
         }
-        let local = WikiSlug::try_from(placed.local.clone())
-            .map_err(|error| WikiStoreError::InvalidPatch(error.to_string()))?;
-        let mut stored = match existing {
-            Some(stored) => stored,
-            None => WikiPage::empty(local, page.title.clone()),
-        };
+        let mut stored = match claim {
+            Claim::Overwrite => repository.read(local.as_ref()).await?,
+            Claim::Fresh | Claim::Vacant => None,
+        }
+        .unwrap_or_else(|| WikiPage::empty(local, page.title.clone()));
         page.title.clone_into(&mut stored.meta.title);
         page.summary.clone_into(&mut stored.current_state);
         page.article.clone_into(&mut stored.article);
@@ -423,7 +454,7 @@ impl PostgresMemory {
         let message = format!("wiki({}): sync topic page\n\nPipeline: wiki-v7", placed.key);
         let Some(git_sha) = claim.write(repository, &mut stored, &message, now).await? else {
             tx.rollback().await.map_err(query_error)?;
-            return Ok(false);
+            return claim.refused(placed);
         };
         topics::store(
             &mut tx,
@@ -440,16 +471,31 @@ impl PostgresMemory {
 }
 
 impl Claim {
+    fn placing(self, placed: &Placed) -> Self {
+        match self {
+            Self::Overwrite if placed.fresh => Self::Fresh,
+            Self::Overwrite | Self::Fresh | Self::Vacant => self,
+        }
+    }
+
+    fn refused(self, placed: &Placed) -> Result<bool, WikiStoreError> {
+        match self {
+            Self::Fresh => Err(WikiStoreError::SlugConflict(placed.key.clone())),
+            Self::Overwrite | Self::Vacant => Ok(false),
+        }
+    }
+
     async fn allows(
         self,
         tx: &mut Transaction<'_, Postgres>,
         placed: &Placed,
-        filed: bool,
+        repository: &LockedRepository,
+        local: &WikiSlug,
     ) -> Result<bool, WikiStoreError> {
         match self {
-            Self::Overwrite => Ok(true),
-            Self::Vacant if filed || !placed.canonical => Ok(false),
-            Self::Vacant => vacant(tx, placed).await,
+            Self::Overwrite | Self::Fresh => Ok(true),
+            Self::Vacant if !placed.canonical || repository.occupied(local).await? => Ok(false),
+            Self::Vacant => vacant(tx, placed, local).await,
         }
     }
 
@@ -462,7 +508,7 @@ impl Claim {
     ) -> Result<bool, WikiStoreError> {
         let home = placed.scope.as_ref();
         match self {
-            Self::Overwrite => topics::reserve(tx, page, &placed.key, home, now)
+            Self::Overwrite | Self::Fresh => topics::reserve(tx, page, &placed.key, home, now)
                 .await
                 .map(|()| true),
             Self::Vacant => topics::claim(tx, page, &placed.key, home, now).await,
@@ -478,7 +524,7 @@ impl Claim {
     ) -> Result<Option<String>, WikiStoreError> {
         let written = match self {
             Self::Overwrite => repository.fold(page, &[], message, now).await.map(Some),
-            Self::Vacant => repository.create(page, message, now).await,
+            Self::Fresh | Self::Vacant => repository.create(page, message, now).await,
         };
         Ok(written?)
     }
@@ -487,14 +533,9 @@ impl Claim {
 async fn vacant(
     tx: &mut Transaction<'_, Postgres>,
     placed: &Placed,
+    local: &WikiSlug,
 ) -> Result<bool, WikiStoreError> {
-    let mut every_owner = sqlx::Connection::begin(&mut **tx)
-        .await
-        .map_err(query_error)?;
-    sqlx::query("SELECT set_config('rh.maintenance', 'on', true)")
-        .execute(&mut *every_owner)
-        .await
-        .map_err(query_error)?;
+    let mut every_owner = every_owner(tx).await?;
     let vacant = sqlx::query_scalar::<_, bool>(
         "SELECT NOT EXISTS (SELECT 1 FROM rh_wiki_topics
                              WHERE slug = $1 OR topic_id = $2
@@ -504,7 +545,7 @@ async fn vacant(
     )
     .bind(&placed.key)
     .bind(placed.bind)
-    .bind(&placed.local)
+    .bind(local.as_ref())
     .bind(placed.scope.as_ref().map(|scope| &scope.scope))
     .bind(placed.scope.as_ref().is_none_or(WikiScope::primary))
     .fetch_one(&mut *every_owner)

@@ -4,6 +4,13 @@ use sqlx::postgres::PgPoolOptions;
 pub(crate) const PROBE: &str = "rh_rls_probe";
 
 pub(crate) async fn probe(pool: &PgPool) -> Result<PgPool, Box<dyn std::error::Error>> {
+    probe_with(pool, PgPoolOptions::new().max_connections(2)).await
+}
+
+pub(crate) async fn probe_with(
+    pool: &PgPool,
+    options: PgPoolOptions,
+) -> Result<PgPool, Box<dyn std::error::Error>> {
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "DO $$ BEGIN CREATE ROLE {PROBE} NOLOGIN; \
          EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
@@ -19,16 +26,14 @@ pub(crate) async fn probe(pool: &PgPool) -> Result<PgPool, Box<dyn std::error::E
             .execute(pool)
             .await?;
     }
-    let options = pool
+    let connect = pool
         .connect_options()
         .as_ref()
         .clone()
         .options([("role", PROBE)]);
-    Ok(
-        memory_postgres::scoped(PgPoolOptions::new().max_connections(2))
-            .connect_with(options)
-            .await?,
-    )
+    Ok(memory_postgres::scoped(options)
+        .connect_with(connect)
+        .await?)
 }
 
 pub(crate) async fn seed_entity_leaf(

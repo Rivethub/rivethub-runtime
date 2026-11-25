@@ -351,7 +351,7 @@ async fn a_viewer_cannot_retire_a_page_another_person_redirects_to(pool: PgPool)
         .await?;
     sqlx::raw_sql(
         "INSERT INTO rh_wiki_topics (slug, title, current_state, owner_user_id, visibility)
-         VALUES ('pantry', 'Pantry', 'Flour lives on the top shelf.', 'shared', 'shared');
+         VALUES ('pantry', 'Pantry', 'Flour lives on the top shelf.', 'alice', 'shared');
          INSERT INTO rh_wiki_redirects (from_slug, to_slug, owner_user_id)
          VALUES ('larder', 'pantry', 'bob')",
     )
@@ -720,7 +720,7 @@ async fn synced_fold(pool: PgPool, scoped: bool) -> TestResult {
     Ok(())
 }
 
-async fn blocked_by(pool: &PgPool, blocker: i32) -> Result<(), sqlx::Error> {
+pub(crate) async fn blocked_by(pool: &PgPool, blocker: i32) -> Result<(), sqlx::Error> {
     let mut interval = tokio::time::interval(std::time::Duration::from_millis(10));
     loop {
         interval.tick().await;
@@ -868,7 +868,7 @@ async fn waiting(pool: &PgPool, pid: i32) -> Result<(), sqlx::Error> {
     }
 }
 
-async fn within<T>(
+pub(crate) async fn within<T>(
     wait: impl std::future::Future<Output = Result<T, sqlx::Error>>,
 ) -> Result<T, sqlx::Error> {
     tokio::time::timeout(std::time::Duration::from_secs(10), wait)

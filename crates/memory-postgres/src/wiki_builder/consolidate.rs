@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::{lock_slug, query_error, settle, topics};
 use crate::PostgresMemory;
-use crate::wiki_scope::{PageHome, scope_named};
+use crate::wiki_scope::{LegacyOwner, PageHome, scope_named, with_homes};
 use crate::wiki_writer::{LockedRepository, WikiRepository};
 
 #[derive(Debug, sqlx::FromRow)]
@@ -21,6 +21,7 @@ struct StatsRow {
     #[sqlx(try_from = "jiff_sqlx::Timestamp")]
     created_at: Timestamp,
     bound: bool,
+    homed: bool,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -28,6 +29,7 @@ struct HomeRow {
     slug: String,
     #[sqlx(flatten)]
     home: PageHome,
+    homed: bool,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -44,16 +46,28 @@ struct TextRow {
 #[async_trait]
 impl WikiConsolidateStore for PostgresMemory {
     async fn wiki_topic_stats(&self) -> Result<Vec<WikiTopicStats>, WikiStoreError> {
-        let rows = sqlx::query_as::<_, StatsRow>(
+        let legacy = self.legacy_owner().await?;
+        let rows = sqlx::query_as::<_, StatsRow>(with_homes(
             "SELECT t.slug, t.title, t.history_count, t.created_at, t.topic_id IS NOT NULL AS bound,
-                    (SELECT count(*) FROM rh_wiki_citations c WHERE c.topic_slug = t.slug) AS citations
-               FROM rh_wiki_topics t
-              WHERE t.scope IS NULL OR t.scope = (SELECT s.scope FROM rh_wiki_scopes s WHERE s.directory = '')
+                    (SELECT count(*) FROM rh_wiki_citations c WHERE c.topic_slug = t.slug) AS citations,
+                    h.homed
+               FROM rh_wiki_topics t JOIN homes h ON h.slug = t.slug
+              WHERE h.directory = ''
               ORDER BY t.slug",
-        )
+        ))
+        .bind(legacy.owner())
+        .bind(legacy.open())
         .fetch_all(&self.pool)
         .await
         .map_err(query_error)?;
+        let (rows, unhomed): (Vec<_>, Vec<_>) = rows.into_iter().partition(|row| row.homed);
+        if !unhomed.is_empty() {
+            let skipped: Vec<&str> = unhomed.iter().map(|row| row.slug.as_str()).collect();
+            tracing::warn!(
+                "wiki consolidate skipped {}: no verified home in the primary wiki",
+                skipped.join(", ")
+            );
+        }
         rows.into_iter()
             .map(|row| {
                 Ok(WikiTopicStats {
@@ -96,8 +110,28 @@ impl PostgresMemory {
     }
 
     async fn fold_homes(&self, fold: &WikiFold) -> Result<Homes, WikiStoreError> {
+        let legacy = self.legacy_owner().await?;
         let mut connection = self.pool.acquire().await.map_err(query_error)?;
-        read_homes(&mut connection, fold).await
+        read_homes(&mut connection, fold, &legacy).await
+    }
+
+    async fn lock_homes(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        fold: &WikiFold,
+        homes: &Homes,
+    ) -> Result<(), WikiStoreError> {
+        for key in fold_keys(fold) {
+            lock_slug(tx, key).await?;
+        }
+        let legacy = self.held_legacy_owner(tx).await?;
+        if read_homes(tx, fold, &legacy).await? != *homes {
+            return Err(WikiStoreError::InvalidPatch(format!(
+                "the pages of the {} fold changed while it waited for them",
+                fold.parent
+            )));
+        }
+        Ok(())
     }
 
     async fn fold_pages(
@@ -123,7 +157,7 @@ impl PostgresMemory {
             .await
             .map_err(super::fence_error)?;
         let live: Vec<_> = live.into_iter().map(|input| input.id).collect();
-        lock_homes(&mut tx, fold, homes).await?;
+        self.lock_homes(&mut tx, fold, homes).await?;
         let parent = home_of(homes, &fold.parent)?;
         let row = text(&mut tx, &fold.parent)
             .await?
@@ -178,24 +212,40 @@ impl PostgresMemory {
 
 type Homes = BTreeMap<String, PageHome>;
 
-async fn read_homes(conn: &mut PgConnection, fold: &WikiFold) -> Result<Homes, WikiStoreError> {
+async fn read_homes(
+    conn: &mut PgConnection,
+    fold: &WikiFold,
+    legacy: &LegacyOwner,
+) -> Result<Homes, WikiStoreError> {
     let keys: Vec<&str> = fold_keys(fold).into_iter().collect();
-    let rows = sqlx::query_as::<_, HomeRow>(
-        "SELECT t.slug, t.scope, coalesce(s.directory, '') AS directory, coalesce(t.local_slug, t.slug) AS local
-           FROM rh_wiki_topics t LEFT JOIN rh_wiki_scopes s ON s.scope = t.scope WHERE t.slug = ANY($1)",
-    )
+    let rows = sqlx::query_as::<_, HomeRow>(with_homes(
+        "SELECT slug, scope, directory, local, homed FROM homes WHERE slug = ANY($3)",
+    ))
+    .bind(legacy.owner())
+    .bind(legacy.open())
     .bind(&keys)
     .fetch_all(&mut *conn)
     .await
     .map_err(query_error)?;
-    let homes: Homes = rows.into_iter().map(|row| (row.slug, row.home)).collect();
+    let (verified, strays): (Vec<_>, Vec<_>) = rows.into_iter().partition(|row| row.homed);
+    let homes: Homes = verified
+        .into_iter()
+        .map(|row| (row.slug, row.home))
+        .collect();
     let parent = home_of(&homes, &fold.parent)?;
-    if let Some(stray) = homes
+    if let Some(stray) = strays
         .iter()
-        .find_map(|(key, home)| (home.directory != parent.directory).then_some(key))
+        .map(|row| &row.slug)
+        .chain(
+            homes
+                .iter()
+                .filter(|(_, home)| home.directory != parent.directory)
+                .map(|(key, _)| key),
+        )
+        .next()
     {
         return Err(WikiStoreError::InvalidPatch(format!(
-            "wiki page {stray} lives in a different wiki than {}; a fold cannot span wiki homes",
+            "wiki page {stray} is not a page of the wiki of {}; a fold cannot span wiki homes",
             fold.parent
         )));
     }
@@ -207,23 +257,6 @@ fn fold_keys(fold: &WikiFold) -> BTreeSet<&str> {
         .chain(&fold.children)
         .map(String::as_str)
         .collect()
-}
-
-async fn lock_homes(
-    tx: &mut Transaction<'_, Postgres>,
-    fold: &WikiFold,
-    homes: &Homes,
-) -> Result<(), WikiStoreError> {
-    for key in fold_keys(fold) {
-        lock_slug(tx, key).await?;
-    }
-    if read_homes(tx, fold).await? != *homes {
-        return Err(WikiStoreError::InvalidPatch(format!(
-            "the pages of the {} fold changed while it waited for them",
-            fold.parent
-        )));
-    }
-    Ok(())
 }
 
 fn home_of<'a>(homes: &'a Homes, key: &str) -> Result<&'a PageHome, WikiStoreError> {
@@ -347,18 +380,26 @@ async fn retire(
         .execute(&mut **tx)
         .await
         .map_err(query_error)?;
-    sqlx::query!(
-        "WITH retired AS (
-            DELETE FROM rh_wiki_topics WHERE slug = $1 RETURNING owner_user_id
-         )
-         INSERT INTO rh_wiki_redirects (from_slug, to_slug, created_at, owner_user_id)
-         SELECT $1, $2, $3, coalesce(rh_scope_principal(), (SELECT owner_user_id FROM retired))
+    let owner = sqlx::query_scalar::<_, Option<String>>(
+        "DELETE FROM rh_wiki_topics WHERE slug = $1 RETURNING owner_user_id",
+    )
+    .bind(child)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(query_error)?
+    .ok_or_else(|| {
+        WikiStoreError::InvalidPatch(format!("wiki page {child} is not yours to fold away"))
+    })?;
+    sqlx::query(
+        "INSERT INTO rh_wiki_redirects (from_slug, to_slug, created_at, owner_user_id)
+         VALUES ($1, $2, $3, coalesce(rh_scope_principal(), $4))
          ON CONFLICT (from_slug) DO UPDATE SET to_slug = EXCLUDED.to_slug,
              owner_user_id = coalesce(rh_wiki_redirects.owner_user_id, EXCLUDED.owner_user_id)",
-        child,
-        parent,
-        crate::time::BindTime::bind_time(now) as _
     )
+    .bind(child)
+    .bind(parent)
+    .bind(crate::time::BindTime::bind_time(now))
+    .bind(owner)
     .execute(&mut **tx)
     .await
     .map_err(query_error)?;
@@ -393,7 +434,7 @@ async fn folding_adopts_a_legacy_redirect(
 
 #[cfg(test)]
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn folding_a_child_with_no_page_row_still_redirects(
+async fn folding_a_child_with_no_page_row_to_delete_is_refused(
     pool: sqlx::PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut tx = pool.begin().await?;
@@ -402,11 +443,18 @@ async fn folding_a_child_with_no_page_row_still_redirects(
     )
     .execute(&mut *tx)
     .await?;
-    retire(&mut tx, "child", "parent", Timestamp::now(), &[]).await?;
+    let retired = retire(&mut tx, "child", "parent", Timestamp::now(), &[]).await;
+    assert!(
+        matches!(&retired, Err(WikiStoreError::InvalidPatch(_))),
+        "got {retired:?}"
+    );
     let target: Option<String> =
         sqlx::query_scalar("SELECT to_slug FROM rh_wiki_redirects WHERE from_slug = 'child'")
             .fetch_optional(&mut *tx)
             .await?;
-    assert_eq!(target.as_deref(), Some("parent"));
+    assert_eq!(
+        target, None,
+        "no redirect is written for a row that was not deleted"
+    );
     Ok(())
 }
