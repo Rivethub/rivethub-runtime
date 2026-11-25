@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use kernel::owner::Owner;
-use kernel::queue::JobQueue as _;
+use kernel::queue::JobQueue;
 use kernel::tenancy::{Scope, TenancyStore as _};
 use kernel::topics::{
     NewTopic, SyncTopicPage, Topic, TopicId, TopicKind, TopicName, TopicStore as _,
@@ -13,7 +13,7 @@ use testkit::fakes::{FakeJobQueue, FakeProvider};
 use tokio_util::sync::CancellationToken;
 use workers::{EmbedSettings, OwnerScopes, ProcessRole, RoleModel, Runner, RunnerConfig};
 
-use super::{DANA, Hub, INES, TestResult};
+use super::{DANA, Hub, INES, TOM, TestResult};
 
 struct Worker {
     store: Arc<PostgresMemory>,
@@ -87,10 +87,18 @@ impl Worker {
         for job in jobs {
             ids.push(queue.enqueue(job.job()?).await?);
         }
+        self.drain(&queue, ids).await
+    }
+
+    async fn drain<Q: JobQueue + 'static>(
+        &self,
+        queue: &Arc<Q>,
+        ids: Vec<kernel::queue::JobId>,
+    ) -> TestResult {
         let provider: Arc<dyn kernel::model::ModelProvider> =
             Arc::new(FakeProvider::new(Vec::new()));
         let runner = Runner::new(
-            Arc::clone(&queue),
+            Arc::clone(queue),
             RunnerConfig::new(ProcessRole::Summarizer, 1)?,
             workers::WorkerDeps {
                 targets: self.store.clone(),
@@ -149,6 +157,58 @@ async fn a_sweep_makes_pages_for_every_owners_private_topics() -> TestResult {
         !worker.has_page(DANA, iness).await?,
         "the page stays private to its owner"
     );
+    worker.store.pool().close().await;
+    hub.stop().await
+}
+
+#[tokio::test]
+async fn a_sweep_queues_a_failing_topic_on_its_own_and_syncs_the_rest() -> TestResult {
+    let hub = Hub::start().await?;
+    let worker = Worker::connect(&hub).await?;
+    let danas = worker.private_root(DANA, "Dana garden plans").await?;
+    let blocked = worker.private_root(INES, "Ines boat repairs").await?;
+    let iness = worker.private_root(INES, "Ines zoo trip").await?;
+    let pool = sqlx::PgPool::connect(&hub.url).await?;
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT set_config('rh.maintenance', 'on', true)")
+        .execute(&mut *tx)
+        .await?;
+    let held = sqlx::query(
+        "INSERT INTO rh_wiki_topics (slug, title, owner_user_id)
+         SELECT slug, name, $2 FROM rh_topics WHERE id = $1",
+    )
+    .bind(blocked.uuid())
+    .bind(TOM)
+    .execute(&mut *tx)
+    .await?;
+    assert_eq!(
+        held.rows_affected(),
+        1,
+        "another person's row holds the page slug"
+    );
+    sqlx::query("DELETE FROM graphile_worker._private_jobs")
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    let queue = Arc::new(worker.store.queue().await?);
+    let sweep = queue.enqueue(SyncTopicPage::every_topic().job()?).await?;
+    worker.drain(&queue, vec![sweep]).await?;
+    let retried: Option<String> = sqlx::query_scalar(
+        "SELECT coalesce(last_error, '') FROM graphile_worker._private_jobs WHERE key = $1",
+    )
+    .bind(format!("sync-topic-page:{blocked}"))
+    .fetch_optional(&pool)
+    .await?;
+    assert!(
+        retried.is_some(),
+        "the failing topic has a sync job of its own"
+    );
+    assert!(worker.has_page(DANA, danas).await?, "dana's page");
+    assert!(
+        worker.has_page(INES, iness).await?,
+        "the owner's other topic is synced past the failing one"
+    );
+    pool.close().await;
     worker.store.pool().close().await;
     hub.stop().await
 }
