@@ -107,7 +107,9 @@ pub(crate) async fn dispatch<Q: JobQueue>(
         JobName::Fixed(FixedJob::RecompileWiki) => {
             dispatch_recompile(queue, env, job, cancel).await
         }
-        JobName::Fixed(FixedJob::SyncTopicPage) => dispatch_topic_page(env, job, cancel).await,
+        JobName::Fixed(FixedJob::SyncTopicPage) => {
+            dispatch_topic_page(queue, env, job, cancel).await
+        }
         JobName::Fixed(FixedJob::PurgeDeletedSessions) => dispatch_purge(env, cancel).await,
         JobName::Fixed(FixedJob::DigestDay) => {
             let _slot = summary_slot(env).await?;
@@ -332,7 +334,8 @@ async fn dispatch_tidy(env: &JobEnv, cancel: &CancellationToken) -> Result<(), W
     Ok(())
 }
 
-async fn dispatch_topic_page(
+async fn dispatch_topic_page<Q: JobQueue>(
+    queue: &Q,
     env: &JobEnv,
     job: &ClaimedJob,
     cancel: &CancellationToken,
@@ -343,7 +346,14 @@ async fn dispatch_topic_page(
         .ok_or(WorkerError::MissingDependencies {
             role: ProcessRole::Summarizer,
         })?;
-    crate::topic_page::handle_sync_topic_page(deps, env.scopes.as_ref(), &job.payload, cancel).await
+    crate::topic_page::handle_sync_topic_page(
+        deps,
+        env.scopes.as_ref(),
+        queue,
+        &job.payload,
+        cancel,
+    )
+    .await
 }
 
 async fn dispatch_wiki<Q: JobQueue>(

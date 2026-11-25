@@ -92,7 +92,7 @@ async fn entity_pages_in_a_shared_store_live_in_their_owners_wiki(pool: PgPool) 
                 at("2026-11-07T02:00:00Z"),
             ))
             .await?;
-        viewer
+        let failures = viewer
             .clone()
             .run(sync_topic_page(
                 &memory,
@@ -103,6 +103,7 @@ async fn entity_pages_in_a_shared_store_live_in_their_owners_wiki(pool: PgPool) 
                 at("2026-11-07T02:00:00Z"),
             ))
             .await?;
+        assert!(failures.is_empty(), "{owner}'s sweep failed: {failures:?}");
         let page = viewer
             .run(memory.topic_page(&WikiSlug::try_from(slug.clone())?))
             .await?

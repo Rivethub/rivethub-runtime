@@ -6,7 +6,6 @@ use super::DECISIONS_HEADING;
 use super::DecisionStore;
 use super::PageEdit;
 use super::Slug;
-use super::SyncTopicPage;
 use super::Topic;
 use super::TopicError;
 use super::TopicId;
@@ -222,37 +221,6 @@ impl SweepOwners<'_> {
     }
 }
 
-pub async fn sync_topic_page(
-    topics: &dyn TopicStore,
-    pages: &dyn TopicPageStore,
-    decisions: &dyn DecisionStore,
-    job: &SyncTopicPage,
-    owners: SweepOwners<'_>,
-    now: Timestamp,
-) -> Result<(), TopicPageError> {
-    let sync = PageSync { topics, pages, now };
-    if let Some(id) = job.topic_id {
-        return sync.topic(id, &job.fold, decisions).await;
-    }
-    for listing in topics.list().await? {
-        let topic = listing.topic;
-        if !owners.includes(&topic) {
-            continue;
-        }
-        let owns_page = match topic.kind {
-            TopicKind::Type => false,
-            TopicKind::Entity => true,
-            TopicKind::Work => {
-                topic.parent.is_none() || topics.page_slug(topic.id).await?.is_some()
-            }
-        };
-        if owns_page {
-            sync.topic(topic.id, &[], decisions).await?;
-        }
-    }
-    Ok(())
-}
-
 enum Landing {
     Article,
     Section(TopicId),
@@ -260,14 +228,14 @@ enum Landing {
     Plain,
 }
 
-struct PageSync<'a> {
-    topics: &'a dyn TopicStore,
-    pages: &'a dyn TopicPageStore,
-    now: Timestamp,
+pub(super) struct PageSync<'a> {
+    pub(super) topics: &'a dyn TopicStore,
+    pub(super) pages: &'a dyn TopicPageStore,
+    pub(super) now: Timestamp,
 }
 
 impl PageSync<'_> {
-    async fn topic(
+    pub(super) async fn topic(
         &self,
         id: TopicId,
         fold: &[WikiSlug],

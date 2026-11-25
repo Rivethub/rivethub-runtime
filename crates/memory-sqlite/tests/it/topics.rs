@@ -63,6 +63,13 @@ async fn syncing_twice_changes_nothing() -> TestResult {
 }
 
 #[tokio::test]
+async fn one_failing_topic_does_not_stop_the_sweep() -> TestResult {
+    let (_directory, store) = store()?;
+    topic_pages::one_failing_topic_does_not_stop_the_sweep(pages(&store)).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn topics_are_created_found_and_renamed() -> TestResult {
     let (_directory, store) = store()?;
     topics::topics_are_created_found_and_renamed(&store).await?;

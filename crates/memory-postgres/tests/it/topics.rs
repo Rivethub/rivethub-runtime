@@ -91,6 +91,19 @@ async fn syncing_twice_changes_nothing(pool: PgPool) -> TestResult {
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn one_failing_topic_does_not_stop_the_sweep(pool: PgPool) -> TestResult {
+    let (_directory, memory, queue) = page_stores(pool).await?;
+    topic_pages::one_failing_topic_does_not_stop_the_sweep(PageStores {
+        topics: &memory,
+        pages: &memory,
+        decisions: &memory,
+        wiki: &memory,
+        queue: &queue,
+    })
+    .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn topics_are_created_found_and_renamed(pool: PgPool) -> TestResult {
     topics::topics_are_created_found_and_renamed(&PostgresMemory::new(pool)).await
 }
