@@ -482,6 +482,39 @@ async fn reading_a_misplaced_entity_page_moves_nothing(pool: PgPool) -> TestResu
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn an_owners_unscoped_page_shared_to_a_space_takes_no_private_prose(
+    pool: PgPool,
+) -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let memory = shared_memory(&pool, directory.path()).await?;
+    let (conversation, leaf) = seed_session(&pool, "phil").await?;
+    let entity = Uuid::new_v4();
+    seed_entity(&pool, entity, "crewbox", "phil").await?;
+    sqlx::query(
+        "INSERT INTO rh_wiki_topics
+            (slug, title, current_state, article, topic_id, owner_user_id, visibility)
+         VALUES ('crewbox', 'crewbox', 'Shared notes.', 'Shared article.', $1, 'phil', 'crew')",
+    )
+    .bind(entity)
+    .execute(&pool)
+    .await?;
+
+    let written = apply(&memory, entity, &rewrite(leaf, conversation, "phil")).await;
+
+    assert!(written.is_err(), "the write is refused, got {written:?}");
+    let (state, visibility): (String, String) = sqlx::query_as(
+        "SELECT current_state, visibility FROM rh_wiki_topics WHERE slug = 'crewbox'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        (state.as_str(), visibility.as_str()),
+        ("Shared notes.", "crew")
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn a_legacy_page_of_another_or_no_owner_stays_out_of_the_entity(pool: PgPool) -> TestResult {
     let directory = tempfile::tempdir()?;
     let memory = shared_memory(&pool, directory.path()).await?;

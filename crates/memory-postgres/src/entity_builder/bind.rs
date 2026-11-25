@@ -20,6 +20,7 @@ struct BoundPage {
     local: String,
     owner_user_id: Option<String>,
     scope: Option<String>,
+    visibility: String,
 }
 
 pub(super) async fn page_key(
@@ -29,7 +30,7 @@ pub(super) async fn page_key(
     home: &WikiScope,
 ) -> Result<PageKey, EntityStoreError> {
     let bound = sqlx::query_as::<_, BoundPage>(
-        "SELECT slug, coalesce(local_slug, slug) AS local, owner_user_id, scope
+        "SELECT slug, coalesce(local_slug, slug) AS local, owner_user_id, scope, visibility
            FROM rh_wiki_topics WHERE topic_id = $1",
     )
     .bind(topic)
@@ -38,6 +39,7 @@ pub(super) async fn page_key(
     .map_err(query_error)?;
     if let Some(page) = bound {
         let at_home = page.owner_user_id.as_deref() == Some(home.row_owner())
+            && page.visibility == home.visibility
             && page
                 .scope
                 .as_deref()
@@ -91,6 +93,7 @@ async fn open_to_entity(
                      WHERE slug = $1
                        AND (topic_id IS NOT NULL
                             OR owner_user_id IS DISTINCT FROM $2
+                            OR visibility <> $5
                             OR NOT coalesce(scope = $3, $4)))
             AND NOT EXISTS (SELECT 1 FROM rh_topics WHERE slug = $1 AND kind <> 'entity')",
     )
@@ -98,6 +101,7 @@ async fn open_to_entity(
     .bind(home.row_owner())
     .bind(&home.scope)
     .bind(home.primary())
+    .bind(&home.visibility)
     .fetch_one(&mut **tx)
     .await
     .map_err(query_error)
