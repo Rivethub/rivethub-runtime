@@ -19,14 +19,15 @@ const SKIPPED: &[&str] = &["failing LLM fails the job; heartbeat never summarize
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn wiki_replays_every_recorded_summary_shape(pool: PgPool) -> TestResult {
-    let wiki = tempfile::tempdir()?;
-    let store = PostgresMemory::new(pool.clone()).with_wiki_directory(wiki.path().to_path_buf());
     let cancel = CancellationToken::new();
     for scenario in fixture().scenarios {
         if SKIPPED.iter().any(|name| *name == scenario.name) {
             continue;
         }
         for row in scenario.tables.summaries.expect("replayed summaries") {
+            let wiki = tempfile::tempdir()?;
+            let store =
+                PostgresMemory::new(pool.clone()).with_wiki_directory(wiki.path().to_path_buf());
             seed_recording(&pool, &row).await?;
             let model = provider(&[patch()]);
             let queue = FakeJobQueue::default();
