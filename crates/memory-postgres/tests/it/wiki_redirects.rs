@@ -1135,3 +1135,63 @@ async fn a_fold_across_wiki_homes_is_refused_and_changes_nothing(pool: PgPool) -
     );
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_child_created_in_another_wiki_while_a_fold_waits_is_refused(pool: PgPool) -> TestResult {
+    let wiki = tempfile::tempdir()?;
+    let root = wiki.path().join("wiki");
+    kitchen_with_pantry(&pool, &root, true).await?;
+    sqlx::query("UPDATE rh_wiki_topics SET slug = 'alice-pantry' WHERE slug = 'pantry'")
+        .execute(&pool)
+        .await?;
+    let fold = WikiFold {
+        cluster: "kitchen".to_owned(),
+        parent: "kitchen".to_owned(),
+        children: vec!["pantry".to_owned()],
+        mark: FoldMark::Merged,
+    };
+    let store = PostgresMemory::new(probe(&pool).await?).with_wiki_directory(root.clone());
+    let mut creator = pool.begin().await?;
+    let creator_pid: i32 = sqlx::query_scalar(
+        "SELECT pg_backend_pid() FROM pg_advisory_xact_lock(hashtextextended('pantry', 0))",
+    )
+    .fetch_one(&mut *creator)
+    .await?;
+
+    let folding = Scope::Maintenance.run(store.fold_wiki(&fold, Timestamp::now()));
+    let creating = async {
+        within(blocked_by(&pool, creator_pid)).await?;
+        sqlx::query(
+            "INSERT INTO rh_wiki_topics (slug, title, current_state, owner_user_id)
+             VALUES ('pantry', 'Pantry', 'Rice by the door.', 'alice')",
+        )
+        .execute(&mut *creator)
+        .await?;
+        creator.commit().await
+    };
+    let (folded, created) = tokio::join!(folding, creating);
+    created?;
+    assert!(
+        matches!(&folded, Err(WikiStoreError::InvalidPatch(_))),
+        "a fold whose child appeared in another wiki while it waited is refused, got {folded:?}"
+    );
+    assert!(
+        std::fs::read_to_string(topic_file(&root, true, "pantry"))?
+            .contains("Flour lives on the top shelf."),
+        "the refused fold kept the same-named file of another page"
+    );
+    assert!(
+        !std::fs::read_to_string(topic_file(&root, true, "kitchen"))?.contains("Flour"),
+        "the refused fold did not write the parent file"
+    );
+    let pantry_text: String =
+        sqlx::query_scalar("SELECT current_state FROM rh_wiki_topics WHERE slug = 'pantry'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(pantry_text, "Rice by the door.");
+    let redirects: i64 = sqlx::query_scalar("SELECT count(*) FROM rh_wiki_redirects")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(redirects, 0, "the refused fold wrote no redirect");
+    Ok(())
+}
