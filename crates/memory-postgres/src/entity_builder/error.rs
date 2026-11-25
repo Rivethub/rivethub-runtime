@@ -15,6 +15,9 @@ pub(super) fn store_error(error: WikiStoreError) -> EntityStoreError {
         WikiStoreError::ConversationMismatch(id) => {
             EntityStoreError::Query(Box::new(std::io::Error::other(id.to_string())))
         }
+        error @ (WikiStoreError::RedirectsHeld { .. } | WikiStoreError::RedirectsMoving(_)) => {
+            EntityStoreError::Query(Box::new(error))
+        }
         WikiStoreError::SlugConflict(slug)
         | WikiStoreError::TopicMissing(slug)
         | WikiStoreError::InvalidPatch(slug) => {

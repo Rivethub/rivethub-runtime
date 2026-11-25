@@ -9,6 +9,8 @@ use crate::Gateway;
 use crate::error::ApiError;
 use crate::routes::capture_schema::ValidatedBatch;
 
+pub(crate) const PATH: &str = "/api/capture";
+
 pub(crate) async fn ingest(
     State(gateway): State<Arc<Gateway>>,
     parts: Parts,

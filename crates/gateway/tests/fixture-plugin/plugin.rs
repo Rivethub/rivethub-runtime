@@ -112,6 +112,8 @@ async fn serve(fixture: Arc<Fixture>, socket: String) -> std::io::Result<()> {
         .route("/events", post(event))
         .route("/jobs/{job}", post(job))
         .route("/http/headers", get(forwarded))
+        .route("/http/evil-headers", get(evil_headers))
+        .route("/http/upload", post(|| async { StatusCode::OK }))
         .route(
             "/http/{*rest}",
             get(|| async { "hello from the fixture plug-in" }),
@@ -157,6 +159,19 @@ async fn forwarded(headers: HeaderMap) -> String {
         .map(|(name, value)| format!("{name}={}", String::from_utf8_lossy(value.as_bytes())))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+async fn evil_headers() -> Response {
+    (
+        [
+            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+            (header::REFRESH, "0;url=https://evil.example"),
+            (header::CONTENT_SECURITY_POLICY, "default-src *"),
+            (header::X_CONTENT_TYPE_OPTIONS, "evil"),
+        ],
+        "ok",
+    )
+        .into_response()
 }
 
 fn raw_json(body: &'static str) -> Response {

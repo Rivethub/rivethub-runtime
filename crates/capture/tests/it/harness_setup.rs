@@ -476,20 +476,11 @@ fn disconnecting_removes_only_rhs_entries_and_leaves_the_rest_as_it_was() -> Tes
 #[test]
 fn what_rh_cannot_write_is_refused_with_a_reason() -> TestResult {
     let machine = machine()?;
-    machine.write(".hermes/config.yaml", "mcp_servers: {}\n")?;
     machine.write(".cursor/.keep", "")?;
-    for (id, part) in [
-        ("hermes", ConnectPart::Recall),
-        ("cursor", ConnectPart::Capture),
-    ] {
-        assert!(
-            matches!(
-                machine.connect(id, Some(part), false),
-                Err(SetupError::Unsupported { .. })
-            ),
-            "{id} {part}"
-        );
-    }
+    assert!(matches!(
+        machine.connect("cursor", Some(ConnectPart::Capture), false),
+        Err(SetupError::Unsupported { .. })
+    ));
     assert!(matches!(
         machine.connect("nope", None, false),
         Err(SetupError::UnknownHarness(_))
@@ -977,6 +968,22 @@ fn dsh_disconnect_leaves_a_recall_row_rh_did_not_write() -> TestResult {
 }
 
 #[test]
+fn dsh_row_that_only_mentions_rh_mcp_is_not_rivethub() -> TestResult {
+    let machine = machine()?;
+    fake_dsh(&machine)?;
+    let original = "- insert:\n    - id: mine\n      name: ./mcp.js\n      config:\n        serverName: mine\n        command: bash\n        args:\n          - -c\n          - echo rh mcp\n";
+    machine.write(".dsh/cordis.patch.yml", original)?;
+    let probe = machine.probe("dsh")?;
+    assert_ne!(probe.recall.state, RecallState::Connected);
+    let now = wire::time::timestamp_at_utc(2026, 11, 6, 13, 0, 0).unwrap_or_default();
+    machine
+        .service
+        .disconnect_now("dsh", Some(ConnectPart::Recall), false, now)?;
+    assert_eq!(machine.read(".dsh/cordis.patch.yml")?, original);
+    Ok(())
+}
+
+#[test]
 fn dsh_refuses_a_recall_name_that_already_runs_something_else() -> TestResult {
     let machine = machine()?;
     fake_dsh(&machine)?;
@@ -1006,5 +1013,294 @@ fn dsh_connect_keeps_an_unrelated_mcp_row_without_a_server_name() -> TestResult 
     assert!(patch.contains("id: other"), "{patch}");
     assert!(patch.contains("id: rivethub-recall"), "{patch}");
     assert!(patch.contains("serverName: rivethub"), "{patch}");
+    Ok(())
+}
+
+const HERMES_CONFIG: &str = include_str!("../fixtures/hermes-config.yaml");
+
+fn hermes_servers(text: &str) -> Result<serde_yaml_ng::Mapping, Box<dyn std::error::Error>> {
+    let doc: serde_yaml_ng::Value = serde_yaml_ng::from_str(text)?;
+    doc.get("mcp_servers")
+        .and_then(serde_yaml_ng::Value::as_mapping)
+        .cloned()
+        .ok_or_else(|| "no mcp_servers map".into())
+}
+
+#[test]
+fn hermes_recall_connects_and_disconnects_leaving_the_config_as_it_was() -> TestResult {
+    let machine = machine()?;
+    machine.write(".hermes/config.yaml", HERMES_CONFIG)?;
+    let now = wire::time::timestamp_at_utc(2026, 11, 6, 13, 0, 0).unwrap_or_default();
+    let probe = machine.probe("hermes")?;
+    assert!(probe.can_connect);
+    assert_eq!(probe.recall.state, RecallState::NotConnected);
+
+    machine.connect("hermes", Some(ConnectPart::Recall), false)?;
+    let connected = machine.read(".hermes/config.yaml")?;
+    assert!(connected.starts_with(HERMES_CONFIG));
+    let servers = hermes_servers(&connected)?;
+    let entry = servers.get("rivethub").ok_or("the rivethub entry")?;
+    assert_eq!(
+        entry.get("command").and_then(serde_yaml_ng::Value::as_str),
+        Some("bash")
+    );
+    let script = entry
+        .get("args")
+        .and_then(|args| args.get(1))
+        .and_then(serde_yaml_ng::Value::as_str)
+        .ok_or("the wrapper script")?;
+    let env_file = machine.path(".rivethub/.env");
+    assert!(script.contains(&env_file.to_string_lossy().into_owned()));
+    assert!(script.ends_with(&format!("exec {RH} mcp")));
+    assert_eq!(
+        machine.probe("hermes")?.recall.state,
+        RecallState::Connected
+    );
+    assert!(!machine.probe("hermes")?.can_connect);
+
+    let again = machine.connect("hermes", Some(ConnectPart::Recall), false)?;
+    assert_eq!(again.diff, "");
+    assert_eq!(machine.read(".hermes/config.yaml")?, connected);
+
+    machine
+        .service
+        .disconnect_now("hermes", Some(ConnectPart::Recall), false, now)?;
+    assert_eq!(machine.read(".hermes/config.yaml")?, HERMES_CONFIG);
+    assert_eq!(
+        machine.probe("hermes")?.recall.state,
+        RecallState::NotConnected
+    );
+    Ok(())
+}
+
+#[test]
+fn hermes_recall_joins_servers_the_user_wrote_at_their_own_indent() -> TestResult {
+    let machine = machine()?;
+    let original = "# mine\nmcp_servers:\n    notes:\n        command: npx\n        args:\n            - notes-mcp\n    # last one\n    web:\n        url: https://example.com/mcp\nagent:\n    turns: 3\n";
+    machine.write(".hermes/config.yaml", original)?;
+    let now = wire::time::timestamp_at_utc(2026, 11, 6, 13, 0, 0).unwrap_or_default();
+    machine.connect("hermes", Some(ConnectPart::Recall), false)?;
+    let connected = machine.read(".hermes/config.yaml")?;
+    assert!(connected.contains("    # last one\n    web:\n        url: https://example.com/mcp\n    rivethub:\n        command: bash\n"));
+    assert!(
+        connected.ends_with("agent:\n    turns: 3\n")
+            || connected.contains("agent:\n    turns: 3\n")
+    );
+    let servers = hermes_servers(&connected)?;
+    assert_eq!(servers.len(), 3);
+    machine
+        .service
+        .disconnect_now("hermes", Some(ConnectPart::Recall), false, now)?;
+    assert_eq!(machine.read(".hermes/config.yaml")?, original);
+    Ok(())
+}
+
+#[test]
+fn hermes_recall_fills_an_empty_server_map_and_disconnect_removes_the_key() -> TestResult {
+    let machine = machine()?;
+    machine.write(".hermes/config.yaml", "model: x\nmcp_servers: {}\nz: 1\n")?;
+    let now = wire::time::timestamp_at_utc(2026, 11, 6, 13, 0, 0).unwrap_or_default();
+    machine.connect("hermes", Some(ConnectPart::Recall), false)?;
+    let connected = machine.read(".hermes/config.yaml")?;
+    assert!(connected.starts_with("model: x\nmcp_servers:\n  rivethub:\n"));
+    assert!(connected.ends_with("z: 1\n"));
+    machine
+        .service
+        .disconnect_now("hermes", Some(ConnectPart::Recall), false, now)?;
+    assert_eq!(machine.read(".hermes/config.yaml")?, "model: x\nz: 1\n");
+    Ok(())
+}
+
+#[test]
+fn hermes_recall_refuses_a_rivethub_entry_that_runs_something_else() -> TestResult {
+    let machine = machine()?;
+    let original = "mcp_servers:\n  rivethub:\n    command: node\n    args: [server.js]\n";
+    machine.write(".hermes/config.yaml", original)?;
+    assert_eq!(
+        machine.probe("hermes")?.recall.state,
+        RecallState::Elsewhere
+    );
+    assert!(matches!(
+        machine.connect("hermes", Some(ConnectPart::Recall), false),
+        Err(SetupError::Config { .. })
+    ));
+    assert_eq!(machine.read(".hermes/config.yaml")?, original);
+    Ok(())
+}
+
+#[test]
+fn hermes_recall_leaves_a_flow_style_server_map_alone() -> TestResult {
+    let machine = machine()?;
+    let original = "mcp_servers: {a: {command: x}}\n";
+    machine.write(".hermes/config.yaml", original)?;
+    assert!(matches!(
+        machine.connect("hermes", Some(ConnectPart::Recall), false),
+        Err(SetupError::Config { .. })
+    ));
+    assert_eq!(machine.read(".hermes/config.yaml")?, original);
+    Ok(())
+}
+
+#[test]
+fn hermes_has_no_store_reader_and_the_status_says_so() -> TestResult {
+    let machine = machine()?;
+    machine.write(".hermes/config.yaml", "model: x\n")?;
+    let detail = machine.probe("hermes")?.install_detail;
+    assert!(detail.contains("no reader"), "{detail}");
+    assert!(!detail.contains("rh reads"), "{detail}");
+    Ok(())
+}
+
+fn hermes_disconnect(machine: &Machine) -> Result<(), SetupError> {
+    let now = wire::time::timestamp_at_utc(2026, 11, 6, 13, 0, 0).unwrap_or_default();
+    machine
+        .service
+        .disconnect_now("hermes", Some(ConnectPart::Recall), false, now)
+        .map(|_| ())
+}
+
+#[test]
+fn hermes_recall_refuses_a_config_that_inherits_its_servers_through_a_merge_key() -> TestResult {
+    let machine = machine()?;
+    let original = "defaults: &defaults\n  mcp_servers:\n    notes:\n      command: npx\n<<: *defaults\nmodel: x\n";
+    machine.write(".hermes/config.yaml", original)?;
+    let refused = machine.connect("hermes", Some(ConnectPart::Recall), false);
+    let Err(SetupError::Config { message, .. }) = refused else {
+        return Err(format!("expected a config refusal, got {refused:?}").into());
+    };
+    assert!(message.contains("merge keys"), "{message}");
+    assert!(
+        message.contains("mcp_servers:\n  rivethub:\n    command: bash\n"),
+        "{message}"
+    );
+    assert_eq!(machine.read(".hermes/config.yaml")?, original);
+    Ok(())
+}
+
+#[test]
+fn hermes_recall_refuses_a_flow_style_merge_key_before_reading_the_servers() -> TestResult {
+    let machine = machine()?;
+    let original =
+        "defaults: &defaults\n  notes:\n    command: npx\nmcp_servers: {<<: [*defaults]}\n";
+    machine.write(".hermes/config.yaml", original)?;
+    let refused = machine.connect("hermes", Some(ConnectPart::Recall), false);
+    let Err(SetupError::Config { message, .. }) = refused else {
+        return Err(format!("expected a config refusal, got {refused:?}").into());
+    };
+    assert!(message.contains("merge keys"), "{message}");
+    assert!(message.contains("mcp_servers:\n  rivethub:\n"), "{message}");
+    assert_eq!(machine.read(".hermes/config.yaml")?, original);
+    Ok(())
+}
+
+#[test]
+fn hermes_disconnect_refuses_a_root_merge_that_supplies_the_servers() -> TestResult {
+    let machine = machine()?;
+    let original = "defaults: &defaults\n  mcp_servers:\n    mine:\n      command: /opt/bin/rh\n      args: [mcp]\n<<: *defaults\n";
+    machine.write(".hermes/config.yaml", original)?;
+    let refused = hermes_disconnect(&machine);
+    let Err(SetupError::Config { message, .. }) = refused else {
+        return Err(format!("expected a config refusal, got {refused:?}").into());
+    };
+    assert!(message.contains("merge keys"), "{message}");
+    assert_eq!(machine.read(".hermes/config.yaml")?, original);
+    Ok(())
+}
+
+#[test]
+fn hermes_disconnect_leaves_a_comment_only_config_alone() -> TestResult {
+    let machine = machine()?;
+    let original = "# nothing configured yet\n# mcp_servers go here\n";
+    machine.write(".hermes/config.yaml", original)?;
+    hermes_disconnect(&machine)?;
+    assert_eq!(machine.read(".hermes/config.yaml")?, original);
+    Ok(())
+}
+
+#[test]
+fn hermes_recall_does_not_mistake_a_script_that_mentions_rh_mcp_for_rivethub() -> TestResult {
+    let machine = machine()?;
+    let original = "mcp_servers:\n  echo:\n    command: bash\n    args: [-c, \"echo rh mcp\"]\n";
+    machine.write(".hermes/config.yaml", original)?;
+    assert_eq!(
+        machine.probe("hermes")?.recall.state,
+        RecallState::NotConnected
+    );
+    hermes_disconnect(&machine)?;
+    assert_eq!(machine.read(".hermes/config.yaml")?, original);
+    let connected = machine.connect("hermes", Some(ConnectPart::Recall), false)?;
+    assert_ne!(connected.diff, "");
+    assert_eq!(
+        machine.probe("hermes")?.recall.state,
+        RecallState::Connected
+    );
+    hermes_disconnect(&machine)?;
+    assert_eq!(machine.read(".hermes/config.yaml")?, original);
+    Ok(())
+}
+
+#[test]
+fn hermes_recall_recognises_a_direct_rh_mcp_entry() -> TestResult {
+    let machine = machine()?;
+    let original = "mcp_servers:\n  mine:\n    command: /opt/bin/rh\n    args: [mcp]\n  web:\n    url: https://example.com/mcp\n";
+    machine.write(".hermes/config.yaml", original)?;
+    assert_eq!(
+        machine.probe("hermes")?.recall.state,
+        RecallState::Connected
+    );
+    hermes_disconnect(&machine)?;
+    assert_eq!(
+        machine.read(".hermes/config.yaml")?,
+        "mcp_servers:\n  web:\n    url: https://example.com/mcp\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn hermes_recall_fills_a_null_server_map() -> TestResult {
+    let machine = machine()?;
+    for empty in ["null", "~"] {
+        machine.write(
+            ".hermes/config.yaml",
+            &format!("model: x\nmcp_servers: {empty}\nz: 1\n"),
+        )?;
+        machine.connect("hermes", Some(ConnectPart::Recall), false)?;
+        let connected = machine.read(".hermes/config.yaml")?;
+        assert!(
+            connected.starts_with("model: x\nmcp_servers:\n  rivethub:\n"),
+            "{empty}: {connected}"
+        );
+        assert_eq!(hermes_servers(&connected)?.len(), 1, "{empty}");
+    }
+    Ok(())
+}
+
+#[test]
+fn hermes_recall_disconnects_past_a_column_zero_comment() -> TestResult {
+    let machine = machine()?;
+    machine.write(
+        ".hermes/config.yaml",
+        "mcp_servers:\n  rivethub:\n    command: rh\n    args: [mcp]\n# a note at column zero\n  web:\n    url: https://example.com/mcp\nz: 1\n",
+    )?;
+    hermes_disconnect(&machine)?;
+    assert_eq!(
+        machine.read(".hermes/config.yaml")?,
+        "mcp_servers:\n# a note at column zero\n  web:\n    url: https://example.com/mcp\nz: 1\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn hermes_recall_disconnect_keeps_the_comment_above_the_next_server() -> TestResult {
+    let machine = machine()?;
+    machine.write(
+        ".hermes/config.yaml",
+        "mcp_servers:\n  rivethub:\n    command: rh\n    args: [mcp]\n    # about web\n  web:\n    url: https://example.com/mcp\n",
+    )?;
+    hermes_disconnect(&machine)?;
+    assert_eq!(
+        machine.read(".hermes/config.yaml")?,
+        "mcp_servers:\n    # about web\n  web:\n    url: https://example.com/mcp\n"
+    );
     Ok(())
 }

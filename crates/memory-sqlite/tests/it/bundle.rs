@@ -17,6 +17,11 @@ use kernel::memory::SessionView;
 use kernel::memory::SummaryStore as _;
 use kernel::owner::Owner;
 use wire::capture::BundleAuthor;
+use wire::capture::BundleFilter;
+
+fn plain() -> BundleFilter {
+    BundleFilter::default()
+}
 use wire::message::Role;
 
 fn dana() -> BundleAuthor {
@@ -66,7 +71,7 @@ async fn export_takes_only_the_node_owners_sessions_and_credits_their_stored_own
         .push(message("evt-4", Role::User, "ines private note"));
     let private = source.store.capture(private, &ines, None, now).await?;
 
-    let exported = source.store.bundled_sessions(dana(), None).await?;
+    let exported = source.store.bundled_sessions(dana(), None, plain()).await?;
 
     let text = serde_json::to_string(&exported)?;
     assert!(!text.contains("ines private note"));
@@ -105,7 +110,7 @@ async fn export_takes_only_the_node_owners_sessions_and_credits_their_stored_own
     );
     let named = source
         .store
-        .bundled_sessions(dana(), Some(vec![private.conversation_id]))
+        .bundled_sessions(dana(), Some(vec![private.conversation_id]), plain())
         .await?;
     assert_eq!(named, Vec::new());
     Ok(())
@@ -126,7 +131,7 @@ async fn a_bundled_batch_is_recorded_as_the_receivers_own() -> TestResult {
         "the file names its author",
     ));
     source.store.capture(first, &dana_owner, None, now).await?;
-    let exported = source.store.bundled_sessions(dana(), None).await?;
+    let exported = source.store.bundled_sessions(dana(), None, plain()).await?;
     let pairing = exported.first().ok_or("pairing session")?;
 
     let received: CaptureBatchRequest =
@@ -164,7 +169,7 @@ async fn export_by_id_keeps_settings() -> TestResult {
 
     let exported = source
         .store
-        .bundled_sessions(dana(), Some(vec![kept.conversation_id.clone()]))
+        .bundled_sessions(dana(), Some(vec![kept.conversation_id.clone()]), plain())
         .await?;
 
     assert_eq!(exported.len(), 1);
@@ -177,7 +182,11 @@ async fn export_by_id_keeps_settings() -> TestResult {
     );
     let none = source
         .store
-        .bundled_sessions(dana(), Some(vec!["no-such-conversation".to_owned()]))
+        .bundled_sessions(
+            dana(),
+            Some(vec!["no-such-conversation".to_owned()]),
+            plain(),
+        )
         .await?;
     assert_eq!(none, Vec::new());
     Ok(())
@@ -204,10 +213,10 @@ async fn a_trashed_session_is_exported_only_when_named() -> TestResult {
         .trash_session("claude-code:trashed", None, now)
         .await?;
 
-    let everything = source.store.bundled_sessions(dana(), None).await?;
+    let everything = source.store.bundled_sessions(dana(), None, plain()).await?;
     let named = source
         .store
-        .bundled_sessions(dana(), Some(vec![trashed.conversation_id.clone()]))
+        .bundled_sessions(dana(), Some(vec![trashed.conversation_id.clone()]), plain())
         .await?;
 
     let ids = |sessions: &[wire::capture::BundledSession]| -> Vec<String> {
@@ -239,7 +248,7 @@ async fn export_orders_sessions_by_creation_then_id_and_messages_by_time_then_ro
     )
     .await?;
 
-    let exported = source.store.bundled_sessions(dana(), None).await?;
+    let exported = source.store.bundled_sessions(dana(), None, plain()).await?;
 
     let order: Vec<(&str, Vec<&str>)> = exported
         .iter()
@@ -283,7 +292,7 @@ async fn an_imported_session_keeps_its_origin_and_dates() -> TestResult {
             instant("2026-10-14T09:00:00.000Z")?,
         )
         .await?;
-    let exported = source.store.bundled_sessions(dana(), None).await?;
+    let exported = source.store.bundled_sessions(dana(), None, plain()).await?;
     let session = exported.first().ok_or("exported session")?;
     let received: CaptureBatchRequest =
         serde_json::from_str(&serde_json::to_string(&session.import_batch()?)?)?;
@@ -380,6 +389,7 @@ async fn messages_sharing_a_millisecond_export_in_capture_order() -> TestResult 
                 node: "team".to_owned(),
             },
             None,
+            plain(),
         )
         .await?;
 
@@ -635,11 +645,14 @@ async fn a_trashed_import_stays_trashed_on_reimport_and_exports_only_when_named(
         user: "ines".to_owned(),
         node: "team".to_owned(),
     };
-    let everything = store.store.bundled_sessions(team.clone(), None).await?;
+    let everything = store
+        .store
+        .bundled_sessions(team.clone(), None, plain())
+        .await?;
     assert_eq!(everything.len(), 0);
     let named = store
         .store
-        .bundled_sessions(team, Some(vec![first.conversation_id.clone()]))
+        .bundled_sessions(team, Some(vec![first.conversation_id.clone()]), plain())
         .await?;
     let forwarded = named
         .into_iter()

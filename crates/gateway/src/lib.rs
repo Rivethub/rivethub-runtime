@@ -13,6 +13,7 @@ mod models;
 pub mod peer;
 pub mod plugins;
 pub mod routes;
+pub mod runtime_record;
 mod scope;
 pub mod server;
 mod session_access;
@@ -172,6 +173,10 @@ impl Gateway {
         &self.trusted_proxies
     }
 
+    pub(crate) const fn drops_enabled(&self) -> bool {
+        self.drops.is_some()
+    }
+
     pub(crate) fn drops_open(&self, method: &axum::http::Method, path: &str, secure: bool) -> bool {
         self.drops.is_some() && drops::open_to_anyone(method, path, secure)
     }
@@ -310,7 +315,7 @@ impl Gateway {
         let routed = Router::new()
             .route("/healthz", routing::any(routes::healthz))
             .route(
-                "/api/capture",
+                routes::capture::PATH,
                 routing::post(routes::capture::ingest)
                     .fallback(routes::method_not_allowed)
                     .layer(axum::extract::DefaultBodyLimit::max(

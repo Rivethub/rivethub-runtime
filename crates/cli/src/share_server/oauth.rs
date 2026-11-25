@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
@@ -13,19 +14,60 @@ use oauth2::HttpRequest;
 use oauth2::HttpResponse;
 use oauth2::RequestTokenError;
 use oauth2::StandardErrorResponse;
+use oauth2::TokenResponse as _;
 use oauth2::TokenUrl;
 use oauth2::basic::BasicClient;
+use oauth2::basic::BasicTokenResponse;
 use reqwest::StatusCode;
 use reqwest::header::CONTENT_TYPE;
 use reqwest::header::HeaderMap;
 use reqwest::header::RETRY_AFTER;
 use serde::Deserialize;
 use url::Url;
+use wire::gateway::users::TokenScope;
 
 use super::CLIENT_ID;
+use super::LIFETIME_WHEN_UNSTATED;
 use super::OauthErrorCode;
+use super::SCOPE;
 use super::Server;
 use super::ServerError;
+use super::Tokens;
+
+impl Tokens {
+    pub(crate) fn issued(
+        issued: &BasicTokenResponse,
+        previous: Option<&Self>,
+        asked: &str,
+    ) -> Result<Self, ServerError> {
+        let refresh_token = issued
+            .refresh_token()
+            .map(|token| token.secret().clone())
+            .or_else(|| previous.map(|tokens| tokens.refresh_token.clone()))
+            .ok_or_else(|| ServerError::Protocol("the token response has no refresh_token"))?;
+        let scope = issued
+            .scopes()
+            .map(|scopes| {
+                scopes
+                    .iter()
+                    .map(|scope| scope.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .or_else(|| previous.map(|tokens| tokens.scope.clone()))
+            .unwrap_or_else(|| asked.to_owned());
+        let lifetime = issued.expires_in().unwrap_or(LIFETIME_WHEN_UNSTATED);
+        let expires_at = Timestamp::now()
+            .saturating_add(lifetime)
+            .map_err(|_error| ServerError::Lifetime(lifetime.as_secs()))?;
+        Ok(Self {
+            access_token: issued.access_token().secret().clone(),
+            refresh_token,
+            expires_at,
+            scope,
+        })
+    }
+}
 
 const METADATA_PATH: &str = ".well-known/oauth-authorization-server";
 
@@ -37,6 +79,13 @@ pub(crate) struct Endpoints {
     device: DeviceAuthorizationUrl,
     token: TokenUrl,
     revocation: Url,
+    scope: String,
+}
+
+impl Endpoints {
+    pub(crate) fn scope(&self) -> &str {
+        &self.scope
+    }
 }
 
 #[derive(Deserialize)]
@@ -47,6 +96,8 @@ struct Metadata {
     device: Url,
     #[serde(rename = "revocation_endpoint")]
     revocation: Url,
+    #[serde(default, rename = "scopes_supported")]
+    scopes: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -142,7 +193,14 @@ impl Server {
                 "its OAuth metadata sends sign-in to another origin",
             ));
         }
+        let import = TokenScope::MemoryImport.to_string();
+        let scope = if !self.host.is_cloud() && metadata.scopes.contains(&import) {
+            format!("{SCOPE} {import}")
+        } else {
+            SCOPE.to_owned()
+        };
         Ok(Endpoints {
+            scope,
             device: DeviceAuthorizationUrl::from_url(metadata.device),
             token: TokenUrl::from_url(metadata.token),
             revocation: metadata.revocation,

@@ -8,6 +8,7 @@ use std::path::{Component, Path, PathBuf};
 
 use kernel::wiki::builder::WikiWriteError;
 use kernel::wiki::page::WikiSlug;
+use kernel::wiki::page::archive::{archive_directory, legacy_archive_path};
 use kernel::wiki::page::bound::{Archived, MergeBase, rebase};
 use kernel::wiki::page::lead::stable_summary;
 use kernel::wiki::page::{
@@ -148,6 +149,27 @@ impl LockedRepository {
             self.sql_references,
         )
         .await
+    }
+
+    pub async fn occupied(&self, slug: &WikiSlug) -> Result<bool, WikiWriteError> {
+        ensure_repo(&self.root).await?;
+        occupied(&self.root, canonical(slug)?).await
+    }
+
+    pub async fn create(
+        &mut self,
+        page: &mut WikiPage,
+        message: &str,
+        now: Timestamp,
+    ) -> Result<Option<String>, WikiWriteError> {
+        let slug = canonical(&page.meta.slug)?;
+        sync(&self.root).await?;
+        if occupied(&self.root, slug).await? {
+            return Ok(None);
+        }
+        let mut paths = archive::bound(&self.root, None, page, now, Vec::new()).await?;
+        paths.insert(0, store_page(&self.root, page).await?);
+        commit(&self.root, &paths, message).await.map(Some)
     }
 
     pub async fn recompile(
@@ -353,6 +375,30 @@ async fn tracks_upstream(root: &Path) -> Result<bool, WikiWriteError> {
 
 pub(super) fn topic_path(slug: &WikiSlug) -> String {
     format!("topics/{}.md", slug.as_ref())
+}
+
+fn canonical(slug: &WikiSlug) -> Result<&WikiSlug, WikiWriteError> {
+    if normalize_slug(slug.as_ref()) == slug.as_ref() {
+        Ok(slug)
+    } else {
+        Err(WikiWriteError::SlugMismatch)
+    }
+}
+
+async fn occupied(root: &Path, slug: &WikiSlug) -> Result<bool, WikiWriteError> {
+    let paths = [
+        topic_path(slug),
+        legacy_archive_path(slug.as_ref()),
+        archive_directory(slug.as_ref()),
+    ];
+    for path in paths {
+        match tokio::fs::symlink_metadata(root.join(path)).await {
+            Ok(_) => return Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(false)
 }
 
 async fn read_page(

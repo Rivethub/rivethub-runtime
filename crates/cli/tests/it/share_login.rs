@@ -280,6 +280,37 @@ async fn discovered_endpoints_get_form_bodies_and_a_pending_login_signs_in() {
 }
 
 #[tokio::test]
+async fn a_server_that_offers_memory_import_is_asked_for_it_so_a_push_works() {
+    let served = serve().await;
+    let base = format!("http://{}/api/auth", served.host);
+    served.auth.0.lock().metadata = Some(format!(
+        r#"{{"device_authorization_endpoint":"{base}/device/code","token_endpoint":"{base}/oauth2/token","revocation_endpoint":"{base}/oauth2/revoke","scopes_supported":["drops:write","memory:import","offline_access"]}}"#
+    ));
+    served.auth.queue("/api/auth/device/code", [device(1)]);
+    served.auth.queue(
+        "/api/auth/oauth2/token",
+        [ok(
+            r#"{"access_token":"rhca_i","token_type":"Bearer","expires_in":900,"refresh_token":"rhcr_i"}"#,
+        )],
+    );
+    let node = node();
+
+    let approval = signed_in(&node, &served.host).await.expect("login");
+
+    let asked = "drops:write offline_access memory:import";
+    assert_eq!(
+        approval,
+        Approval::SignedIn {
+            scope: asked.to_owned()
+        }
+    );
+    let seen = served.auth.seen();
+    let device = &seen.first().expect("device request").params;
+    assert_eq!(device.get("scope").map(String::as_str), Some(asked));
+    assert!(node.logins().contains(asked), "{}", node.logins());
+}
+
+#[tokio::test]
 async fn denied_and_expired_approvals_end_the_login() {
     for (code, wanted) in [
         ("access_denied", Approval::Denied),

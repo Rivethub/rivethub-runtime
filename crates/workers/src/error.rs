@@ -127,6 +127,8 @@ pub enum WorkerError {
     Memory(#[source] MemoryStoreError),
     #[error("topic page sync failed: {0}")]
     TopicPage(#[from] kernel::topics::TopicPageError),
+    #[error("the flagged jobs could not be read: {0}")]
+    Flagged(#[from] kernel::flagged::FlaggedError),
     #[error("the tidy store failed: {0}")]
     Tidy(#[from] kernel::tidy::TidyError),
     #[error("{message}")]

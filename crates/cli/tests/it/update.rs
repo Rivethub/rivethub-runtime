@@ -491,3 +491,102 @@ async fn cancellation_during_download_cleans_staging_and_preserves_installation(
     server.close().await?;
     Ok(())
 }
+
+async fn run_with_manifest_sig(
+    manifest_sig: Option<String>,
+    keyring: &gateway::account::ReleaseKeyring,
+) -> std::result::Result<(Fixture, cli::Report), Box<dyn std::error::Error>> {
+    let fixture = Fixture::new()?;
+    let srv = update_support::server_with_sigs(
+        Published::Good,
+        manifest_sig,
+        Vec::new(),
+        std::collections::BTreeMap::new(),
+    )
+    .await?;
+    let updater = Updater::new(
+        fixture.binary.clone(),
+        format!("http://{}/releases/", srv.addr).parse()?,
+        web_url(&srv)?,
+        Scope::User,
+    )
+    .keyring(keyring.clone());
+    let report = updater
+        .run(&args(), &fixture.env(), &CancellationToken::new())
+        .await;
+    srv.close().await?;
+    Ok((fixture, report))
+}
+
+fn served_checksums() -> Result<String> {
+    use sha2::{Digest as _, Sha256};
+    use std::fmt::Write as _;
+
+    let digest = hex::encode(Sha256::digest(update_support::archive(Published::Good)?));
+    let arch = std::env::consts::ARCH;
+    let mut manifest = String::new();
+    for version in ["0.9.0", "0.11.0", "0.10.0"] {
+        writeln!(
+            manifest,
+            "{digest}  rh-{version}-{arch}-unknown-linux-gnu.tar.gz"
+        )?;
+    }
+    Ok(manifest)
+}
+
+#[tokio::test]
+async fn release_signature_accepts_trusted_key_and_fails_closed_on_forged_or_unknown() -> Result {
+    let signer = update_support::Signer::new()?;
+    let manifest = served_checksums()?;
+    for required in [false, true] {
+        let keyring = signer.keyring(required)?;
+        let (fixture, report) =
+            run_with_manifest_sig(Some(signer.sign(manifest.as_bytes())), &keyring).await?;
+        assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+        assert_eq!(std::fs::read(&fixture.binary)?, BINARY);
+
+        for bad_sig in [
+            update_support::forged(),
+            format!("v1:rogue-key:{}\n", "AQ".repeat(43)),
+            format!("v1:test-key:{}\n", "A".repeat(2048)),
+        ] {
+            let (fixture, report) = run_with_manifest_sig(Some(bad_sig), &keyring).await?;
+            assert_eq!(report.exit, Exit::Failure);
+            assert!(
+                report.stderr.contains("signature verification failed"),
+                "{}",
+                report.stderr
+            );
+            assert_eq!(std::fs::read(&fixture.binary)?, b"old runtime");
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn unsigned_releases_install_only_while_signatures_are_optional() -> Result {
+    let signer = update_support::Signer::new()?;
+    let (fixture, report) = run_with_manifest_sig(None, &signer.keyring(false)?).await?;
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    assert_eq!(std::fs::read(&fixture.binary)?, BINARY);
+
+    let (fixture, report) = run_with_manifest_sig(None, &signer.keyring(true)?).await?;
+    assert_eq!(report.exit, Exit::Failure);
+    assert!(
+        report
+            .stderr
+            .contains("SHA256SUMS.sig signature verification failed for v0.9.0: the release does not publish it"),
+        "{}",
+        report.stderr
+    );
+    assert_eq!(std::fs::read(&fixture.binary)?, b"old runtime");
+    Ok(())
+}
+
+#[test]
+fn the_shipped_keyring_follows_the_build_time_signature_switch() {
+    assert_eq!(
+        gateway::account::ReleaseKeyring::default_trusted().requires_signatures(),
+        gateway::account::REQUIRE_SIGNED_RELEASES
+    );
+}

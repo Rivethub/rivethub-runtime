@@ -43,6 +43,12 @@ async fn replace_detaches_a_job_that_is_still_running(pool: PgPool) -> TestResul
     testkit::memory_jobs::replace_detaches_a_job_that_is_still_running(&queue, due).await
 }
 
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_handoff_leaves_a_running_job_with_its_key(pool: PgPool) -> TestResult {
+    let (memory, queue, due) = ready(pool).await?;
+    testkit::memory_jobs::a_handoff_leaves_a_running_job_with_its_key(&memory, &queue, due).await
+}
+
 async fn ready(
     pool: PgPool,
 ) -> TestResult<(

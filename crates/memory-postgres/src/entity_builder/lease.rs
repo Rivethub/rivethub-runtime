@@ -14,14 +14,17 @@ use kernel::wiki::entity_pass::PreparedEntity;
 use kernel::wiki::entity_pass::PublishOutcome;
 use kernel::wiki::entity_pass::StoredRewrite;
 use kernel::wiki::entity_pass::prose_article;
+use kernel::wiki::page::WikiSlug;
 use sqlx::Connection;
 use sqlx::PgConnection;
 use sqlx::Postgres;
 use sqlx::Transaction;
 use uuid::Uuid;
 
+use crate::wiki_scope::WikiScope;
 use crate::wiki_writer::{LockedRepository, WikiRepository};
 
+use super::bind::page_key;
 use super::error::query_error;
 
 use super::error::store_error;
@@ -56,6 +59,7 @@ pub(super) fn hold_payload(prepared: &PreparedEntity) -> serde_json::Value {
 pub(super) struct PgLease {
     pub(super) conn: Option<PgConnection>,
     pub(super) id: Uuid,
+    pub(super) home: WikiScope,
     pub(super) directory: PathBuf,
 }
 
@@ -66,7 +70,7 @@ impl EntityLease for PgLease {
         let mut tx = conn.begin().await.map_err(query_error)?;
         let current = super::claims::current_facts(&mut tx, self.id).await?;
         let view = load_view(&mut tx, self.id).await?;
-        let prose = load_page_prose(&mut tx, &view).await?;
+        let prose = load_page_prose(&mut tx, &view, &self.home).await?;
         let observed_types = observed_types(&mut tx, self.id).await?;
         tx.commit().await.map_err(query_error)?;
         Ok(EntityPage {
@@ -110,12 +114,10 @@ impl EntityLease for PgLease {
                     upsert_history(&mut tx, view.id, line, &body.owner).await?;
                 }
                 let fresh = load_view(&mut tx, self.id).await?;
-                let prose = chosen_prose(&mut tx, &view, body, older).await?;
-                let git_sha = write_page(&mut tx, &mut repository, &fresh, &prose, now).await?;
-                Ok(PublishOutcome::Stored {
-                    git_sha,
-                    slug: fresh.slug,
-                })
+                let prose = chosen_prose(&mut tx, &view, &self.home, body, older).await?;
+                write_page(&mut tx, &mut repository, &fresh, &self.home, &prose, now)
+                    .await
+                    .map(PublishOutcome::from)
             }
             .await;
             finish_page_write(tx, written).await
@@ -163,13 +165,14 @@ impl EntityLease for PgLease {
                     return Ok(None);
                 };
                 let fresh = load_view(&mut tx, self.id).await?;
-                let stored = load_page_prose(&mut tx, &fresh).await?;
+                let stored = load_page_prose(&mut tx, &fresh, &self.home).await?;
                 let prose = EntityProse {
                     summary: stored.summary,
                     article: prose_article(&stored.article),
                 };
-                let git_sha = write_page(&mut tx, repository, &fresh, &prose, now).await?;
-                Ok(Some(git_sha))
+                let written =
+                    write_page(&mut tx, repository, &fresh, &self.home, &prose, now).await?;
+                Ok(Some(written.git_sha))
             }
             .await;
             finish_page_write(tx, written).await
@@ -179,6 +182,15 @@ impl EntityLease for PgLease {
             Some(repository) => release_page(repository, recorded).await,
             None => recorded,
         }
+    }
+
+    async fn page_slug(&mut self, _view: &EntityView) -> Result<Option<String>, EntityStoreError> {
+        let conn = held(&mut self.conn)?;
+        sqlx::query_scalar("SELECT slug FROM rh_wiki_topics WHERE topic_id = $1")
+            .bind(self.id)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(query_error)
     }
 
     async fn release(&mut self) -> Result<(), EntityStoreError> {
@@ -228,15 +240,13 @@ struct ProseRow {
 pub(super) async fn load_page_prose(
     tx: &mut Transaction<'_, Postgres>,
     view: &EntityView,
+    home: &WikiScope,
 ) -> Result<PageText, EntityStoreError> {
+    let target = page_key(tx, view.id, &view.slug, home).await?;
     let row = sqlx::query_as::<_, ProseRow>(
-        "SELECT current_state, article FROM rh_wiki_topics
-          WHERE topic_id = $1 OR slug = $2 OR local_slug = $2
-          ORDER BY (topic_id = $1) DESC, updated_at DESC
-          LIMIT 1",
+        "SELECT current_state, article FROM rh_wiki_topics WHERE slug = $1",
     )
-    .bind(view.id)
-    .bind(&view.slug)
+    .bind(&target.key)
     .fetch_optional(&mut **tx)
     .await
     .map_err(query_error)?;
@@ -259,10 +269,26 @@ impl PageText {
     }
 }
 
+pub(super) async fn entity_home(
+    conn: &mut PgConnection,
+    id: Uuid,
+    primary: Option<&str>,
+) -> Result<WikiScope, EntityStoreError> {
+    crate::wiki_scope::topic_scope(conn, id, primary)
+        .await
+        .map_err(store_error)?
+        .ok_or_else(|| {
+            store_error(kernel::wiki::builder::WikiStoreError::TopicMissing(
+                format!("entity {id} has no wiki home"),
+            ))
+        })
+}
+
 pub(super) async fn publish_current_page(
     tx: &mut Transaction<'_, Postgres>,
     repository: &mut LockedRepository,
     view: &EntityView,
+    home: &WikiScope,
     prose: &EntityProse,
     now: Timestamp,
 ) -> Result<PublishOutcome, EntityStoreError> {
@@ -274,30 +300,49 @@ pub(super) async fn publish_current_page(
     if fresh.snapshot != view.snapshot {
         return Ok(PublishOutcome::Stale(Box::new(fresh)));
     }
-    let git_sha = write_page(tx, repository, &fresh, prose, now).await?;
-    Ok(PublishOutcome::Stored {
-        git_sha,
-        slug: fresh.slug,
-    })
+    write_page(tx, repository, &fresh, home, prose, now)
+        .await
+        .map(PublishOutcome::from)
 }
 
 async fn write_page(
     tx: &mut Transaction<'_, Postgres>,
     repository: &mut LockedRepository,
     view: &EntityView,
+    home: &WikiScope,
     prose: &EntityProse,
     now: Timestamp,
-) -> Result<String, EntityStoreError> {
+) -> Result<WrittenPage, EntityStoreError> {
+    let target = page_key(tx, view.id, &view.slug, home).await?;
     let mut page = entity_page(view, prose)?;
+    page.meta.slug = WikiSlug::try_from(target.local.clone())
+        .map_err(|_| EntityStoreError::SlugTaken(target.local.clone()))?;
     let message = format!("entity {}", view.slug);
     let sha = repository.fold(&mut page, &[], &message, now).await?;
-    crate::wiki_builder::store_wiki_page(tx, &page, &view.slug, None, &sha, now)
+    crate::wiki_builder::store_wiki_page(tx, &page, &target.key, Some(home), &sha, now)
         .await
         .map_err(store_error)?;
-    super::bind::bind_page(tx, view.id, &view.slug)
+    super::bind::bind_page(tx, view.id, &target.key)
         .await
         .map_err(query_error)?;
-    Ok(sha)
+    Ok(WrittenPage {
+        git_sha: sha,
+        slug: target.key,
+    })
+}
+
+struct WrittenPage {
+    git_sha: String,
+    slug: String,
+}
+
+impl From<WrittenPage> for PublishOutcome {
+    fn from(page: WrittenPage) -> Self {
+        Self::Stored {
+            git_sha: page.git_sha,
+            slug: page.slug,
+        }
+    }
 }
 
 pub(super) async fn finish_page_write<T>(

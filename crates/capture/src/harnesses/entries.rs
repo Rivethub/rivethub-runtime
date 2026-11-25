@@ -1,5 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::LazyLock;
+
+use regex::Regex;
 
 use serde::Deserialize;
 
@@ -19,6 +22,14 @@ pub(super) struct McpServer {
 }
 
 impl McpServer {
+    pub(super) fn from_command(command: &str, args: &[String]) -> Self {
+        Self {
+            command: Some(CommandField::Line(command.to_owned())),
+            args: args.to_vec(),
+            url: None,
+        }
+    }
+
     pub(super) fn invocation(&self) -> String {
         let mut parts: Vec<&str> = Vec::new();
         match &self.command {
@@ -32,8 +43,36 @@ impl McpServer {
     }
 
     pub(super) fn runs_rh_mcp(&self) -> bool {
-        runs_rh_mcp(&self.invocation())
+        let mut argv: Vec<&str> = match &self.command {
+            Some(CommandField::Line(line)) => vec![line.as_str()],
+            Some(CommandField::Argv(argv)) => argv.iter().map(String::as_str).collect(),
+            None => return false,
+        };
+        argv.extend(self.args.iter().map(String::as_str));
+        match argv.as_slice() {
+            [rh, "mcp", ..] => is_rh(rh),
+            [bash, "-c", script] => is_named(bash, "bash") && wrapper_runs_rh_mcp(script),
+            _ => false,
+        }
     }
+}
+
+const SHELL_WORD: &str = r#"(?:'[^']*'|"(?:[^"\\]|\\.)*"|\\.|[^\s'";&|<>()`\\#])(?:'[^']*'|"(?:[^"\\]|\\.)*"|\\.|[^\s'";&|<>()`\\])*"#;
+
+#[expect(clippy::expect_used)]
+static WRAPPER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r"^set -a; \. {SHELL_WORD}(?: >/dev/null 2>&1)?; set \+a; exec ({SHELL_WORD}) mcp$"
+    ))
+    .expect("the wrapper pattern compiles")
+});
+
+fn wrapper_runs_rh_mcp(script: &str) -> bool {
+    WRAPPER
+        .captures(script)
+        .and_then(|captures| captures.get(1))
+        .and_then(|rh| shlex::split(rh.as_str()))
+        .is_some_and(|words| matches!(words.as_slice(), [rh] if is_rh(rh)))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -48,6 +87,12 @@ pub(super) struct JsonServers {
 pub(super) struct TomlServers {
     #[serde(default)]
     pub(super) mcp_servers: BTreeMap<String, McpServer>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct YamlServers {
+    #[serde(default)]
+    pub(super) mcp_servers: Option<BTreeMap<String, McpServer>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -85,14 +130,14 @@ fn words(text: &str) -> Vec<String> {
         .collect()
 }
 
-fn is_rh(word: &str) -> bool {
-    Path::new(word).file_name().is_some_and(|name| name == "rh")
+fn is_named(word: &str, binary: &str) -> bool {
+    Path::new(word)
+        .file_name()
+        .is_some_and(|name| name == binary)
 }
 
-pub(super) fn runs_rh_mcp(text: &str) -> bool {
-    words(text)
-        .windows(2)
-        .any(|pair| matches!(pair, [binary, sub] if is_rh(binary) && sub == "mcp"))
+fn is_rh(word: &str) -> bool {
+    is_named(word, "rh")
 }
 
 pub(super) fn capture_hook_harness(text: &str) -> Option<String> {
@@ -128,11 +173,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_bash_wrapper_that_execs_rh_mcp_counts() {
-        assert!(runs_rh_mcp(
-            "bash -c set -a; . \"$HOME/.rivethub/.env\"; set +a; exec \"$HOME/.local/bin/rh\" mcp"
-        ));
-        assert!(!runs_rh_mcp("node server.js mcp"));
+    fn only_the_exact_generated_wrappers_count_as_running_rh_mcp() {
+        let server = |script: &str| McpServer {
+            command: Some(CommandField::Line("bash".to_owned())),
+            args: vec!["-c".to_owned(), script.to_owned()],
+            url: None,
+        };
+        assert!(
+            server("set -a; . \"$HOME/.rivethub/.env\"; set +a; exec \"$HOME/.local/bin/rh\" mcp")
+                .runs_rh_mcp()
+        );
+        assert!(
+            server("set -a; . /h/.env >/dev/null 2>&1; set +a; exec '/h/it'\"'\"'s/rh' mcp")
+                .runs_rh_mcp()
+        );
+        assert!(
+            !server("set -a; echo \"set\" \"+a;\" \"exec\" \"/usr/bin/rh\" \"mcp\"").runs_rh_mcp()
+        );
+        assert!(!server("set -a; . /h/.env; set +a; exec /usr/bin/other mcp").runs_rh_mcp());
+        assert!(!server("set -a; . #; set +a; exec /usr/bin/rh mcp").runs_rh_mcp());
+        assert!(!server("set -a; . /h/.env; set +a; exec #/usr/bin/rh mcp").runs_rh_mcp());
     }
 
     #[test]

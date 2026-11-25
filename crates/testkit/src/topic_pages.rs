@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use kernel::memory::MemoryStore;
 use kernel::queue::ClaimSelector;
 use kernel::queue::FixedJob;
@@ -8,6 +9,7 @@ use kernel::topics::Decision;
 use kernel::topics::DecisionStore;
 use kernel::topics::DecisionText;
 use kernel::topics::NewTopic;
+use kernel::topics::PageChange;
 use kernel::topics::PageEdit;
 use kernel::topics::PageSection;
 use kernel::topics::Placement;
@@ -29,6 +31,8 @@ use kernel::topics::edit_topic_page;
 use kernel::topics::sync_topic_page;
 use kernel::wiki::WikiLookup;
 use kernel::wiki::WikiPageResponse;
+use kernel::wiki::builder::WikiStoreError;
+use kernel::wiki::page::FoldMark;
 use kernel::wiki::page::WikiSlug;
 
 use crate::topics::Outcome;
@@ -52,7 +56,7 @@ impl PageStores<'_> {
         let selector = ClaimSelector::matching(vec![JobName::Fixed(FixedJob::SyncTopicPage)]);
         while let Some(job) = self.queue.claim(&selector).await? {
             let sync = SyncTopicPage::from_payload(&job.payload)?;
-            sync_topic_page(
+            let failures = sync_topic_page(
                 self.topics,
                 self.pages,
                 self.decisions,
@@ -61,6 +65,7 @@ impl PageStores<'_> {
                 at(30),
             )
             .await?;
+            same("sweep failures", failures.len(), 0)?;
             self.queue.complete(job.id).await?;
         }
         Ok(())
@@ -269,7 +274,7 @@ pub async fn syncing_twice_changes_nothing(stores: PageStores<'_>) -> Outcome {
         stores.shown("storage").await?,
         stores.lookup("disks").await?,
     );
-    sync_topic_page(
+    let failures = sync_topic_page(
         stores.topics,
         stores.pages,
         stores.decisions,
@@ -278,12 +283,127 @@ pub async fn syncing_twice_changes_nothing(stores: PageStores<'_>) -> Outcome {
         at(40),
     )
     .await?;
+    same("sweep failures", failures.len(), 0)?;
     let after = (
         stores.shown("storage").await?,
         stores.lookup("disks").await?,
     );
     same("second sync", after, before)?;
     Ok(())
+}
+
+pub async fn one_failing_topic_does_not_stop_the_sweep(stores: PageStores<'_>) -> Outcome {
+    let first = stores.topics.create(new_topic("Alpha", &[], None)?).await?;
+    let broken = stores.topics.create(new_topic("Bravo", &[], None)?).await?;
+    let last = stores
+        .topics
+        .create(new_topic("Charlie", &[], None)?)
+        .await?;
+    let pages = RefusingPages {
+        inner: stores.pages,
+        refused: broken.id,
+    };
+    let failures = sync_topic_page(
+        stores.topics,
+        &pages,
+        stores.decisions,
+        &SyncTopicPage::every_topic(),
+        SweepOwners::All,
+        at(20),
+    )
+    .await?;
+    let failed: Vec<TopicId> = failures.iter().map(|failure| failure.topic).collect();
+    same("failed topics", failed, vec![broken.id])?;
+    same("first page", stores.slug(&first).await?.as_ref(), "alpha")?;
+    same("last page", stores.slug(&last).await?.as_ref(), "charlie")?;
+    same(
+        "broken page",
+        stores.topics.page_slug(broken.id).await?,
+        None,
+    )?;
+    Ok(())
+}
+
+struct RefusingPages<'a> {
+    inner: &'a dyn TopicPageStore,
+    refused: TopicId,
+}
+
+#[async_trait::async_trait]
+impl TopicPageStore for RefusingPages<'_> {
+    async fn topic_page(&self, slug: &WikiSlug) -> Result<Option<TopicPage>, WikiStoreError> {
+        self.inner.topic_page(slug).await
+    }
+
+    async fn page_taken(&self, slug: &WikiSlug) -> Result<bool, WikiStoreError> {
+        self.inner.page_taken(slug).await
+    }
+
+    async fn save_topic_page(
+        &self,
+        topic: TopicId,
+        page: &TopicPage,
+        now: Timestamp,
+    ) -> Result<(), WikiStoreError> {
+        if topic == self.refused {
+            return Err(WikiStoreError::InvalidPatch("refused".to_owned()));
+        }
+        self.inner.save_topic_page(topic, page, now).await
+    }
+
+    async fn create_topic_page(
+        &self,
+        topic: TopicId,
+        page: &TopicPage,
+        now: Timestamp,
+    ) -> Result<bool, WikiStoreError> {
+        if topic == self.refused {
+            return Err(WikiStoreError::InvalidPatch("refused".to_owned()));
+        }
+        self.inner.create_topic_page(topic, page, now).await
+    }
+
+    async fn edit_page(
+        &self,
+        slug: &WikiSlug,
+        edit: &PageEdit,
+        now: Timestamp,
+    ) -> Result<bool, WikiStoreError> {
+        self.inner.edit_page(slug, edit, now).await
+    }
+
+    async fn change_page(
+        &self,
+        root: TopicId,
+        slug: &WikiSlug,
+        change: &PageChange<'_>,
+        now: Timestamp,
+    ) -> Result<(), WikiStoreError> {
+        self.inner.change_page(root, slug, change, now).await
+    }
+
+    async fn redirect_page(
+        &self,
+        from: &WikiSlug,
+        to: &WikiSlug,
+        now: Timestamp,
+    ) -> Result<(), WikiStoreError> {
+        self.inner.redirect_page(from, to, now).await
+    }
+
+    async fn fold_page(
+        &self,
+        child: &WikiSlug,
+        into: &WikiSlug,
+        mark: FoldMark,
+        now: Timestamp,
+    ) -> Result<(), WikiStoreError> {
+        self.inner.fold_page(child, into, mark, now).await
+    }
+
+    async fn remove_page(&self, slug: &WikiSlug) -> Result<(), WikiStoreError> {
+        self.inner.remove_page(slug).await
+    }
 }
 
 #[expect(clippy::too_many_lines)]

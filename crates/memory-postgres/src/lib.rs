@@ -67,6 +67,7 @@ mod topics;
 mod wiki;
 mod wiki_builder;
 mod wiki_citations;
+mod wiki_redirect;
 mod wiki_scope;
 pub use wiki_files::wiki_writer;
 mod worker_pauses;
@@ -96,7 +97,7 @@ pub use queue::PostgresQueue;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
-pub const SCHEMA_VERSION: i64 = 84;
+pub const SCHEMA_VERSION: i64 = 86;
 pub(crate) const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug)]

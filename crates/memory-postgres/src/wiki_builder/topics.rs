@@ -180,15 +180,6 @@ fn merge_base<'a>(
     Some(base)
 }
 
-pub(super) async fn store_topic(
-    tx: &mut Transaction<'_, Postgres>,
-    page: &WikiPage,
-    git_sha: &str,
-    now: Timestamp,
-) -> Result<(), WikiStoreError> {
-    store(tx, page, page.meta.slug.as_ref(), None, git_sha, now).await
-}
-
 pub(crate) async fn store(
     tx: &mut Transaction<'_, Postgres>,
     page: &WikiPage,
@@ -200,13 +191,7 @@ pub(crate) async fn store(
     let history_count = i32::try_from(page.history.len())
         .map_err(|error| WikiStoreError::InvalidPatch(error.to_string()))?;
     let search_text = kernel::wiki::page::build_wiki_search_text(page);
-    let owner = home.map(|home| {
-        if home.visibility == "private" {
-            home.owner_user_id.as_str()
-        } else {
-            home.scope.as_str()
-        }
-    });
+    let owner = home.map(WikiScope::row_owner);
     sqlx::query(
         "INSERT INTO rh_wiki_topics (slug, title, aliases, tags, entities, current_state, article, related,
             search_text, history_count, last_verified_at, created_at, updated_at, git_sha,
@@ -232,6 +217,56 @@ pub(crate) async fn store(
     .bind(home.map(|home| home.visibility.as_str()))
     .execute(&mut **tx).await.map_err(query_error)?;
     Ok(())
+}
+
+pub(crate) async fn claim(
+    tx: &mut Transaction<'_, Postgres>,
+    page: &WikiPage,
+    key: &str,
+    home: Option<&WikiScope>,
+    now: Timestamp,
+) -> Result<bool, WikiStoreError> {
+    let sql = "INSERT INTO rh_wiki_topics (slug, title, created_at, updated_at, scope, local_slug,
+            owner_user_id, visibility)
+         VALUES ($1, $2, $3, $3, $4, $5, $6, coalesce($7, 'private'))
+         ON CONFLICT DO NOTHING";
+    insert_row(tx, sql, page, key, home, now).await
+}
+
+pub(crate) async fn reserve(
+    tx: &mut Transaction<'_, Postgres>,
+    page: &WikiPage,
+    key: &str,
+    home: Option<&WikiScope>,
+    now: Timestamp,
+) -> Result<(), WikiStoreError> {
+    let sql = "INSERT INTO rh_wiki_topics (slug, title, created_at, updated_at, scope, local_slug,
+            owner_user_id, visibility)
+         VALUES ($1, $2, $3, $3, $4, $5, $6, coalesce($7, 'private'))
+         ON CONFLICT (slug) DO UPDATE SET title = EXCLUDED.title, updated_at = EXCLUDED.updated_at";
+    insert_row(tx, sql, page, key, home, now).await.map(drop)
+}
+
+async fn insert_row(
+    tx: &mut Transaction<'_, Postgres>,
+    sql: &'static str,
+    page: &WikiPage,
+    key: &str,
+    home: Option<&WikiScope>,
+    now: Timestamp,
+) -> Result<bool, WikiStoreError> {
+    let inserted = sqlx::query(sql)
+        .bind(key)
+        .bind(&page.meta.title)
+        .bind(crate::time::BindTime::bind_time(now))
+        .bind(home.map(|home| home.scope.as_str()))
+        .bind(home.map(|_| page.meta.slug.as_ref()))
+        .bind(home.map(WikiScope::row_owner))
+        .bind(home.map(|home| home.visibility.as_str()))
+        .execute(&mut **tx)
+        .await
+        .map_err(query_error)?;
+    Ok(inserted.rows_affected() == 1)
 }
 
 pub(super) async fn cite(

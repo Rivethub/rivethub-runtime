@@ -76,16 +76,13 @@ pub(super) enum MemoryCommand {
     RecompileWiki(super::recompile::RecompileArgs),
     Cleanup(super::cleanup::CleanupArgs),
     MergeStore(super::merge::MergeArgs),
-    Bundle {
-        out: PathBuf,
-        sessions: Vec<String>,
-        sqlite: Option<PathBuf>,
-    },
+    Bundle(super::bundle::BundleJob),
     IngestBundle {
         path: PathBuf,
         force: bool,
         dry_run: bool,
         decisions: capture::receive::Decisions,
+        gateway: Option<String>,
     },
     Sanitize(super::sanitize::Job),
     Share(super::share::ShareCommand),
@@ -466,7 +463,7 @@ fn positive_count(text: &str) -> Result<usize, Error> {
     }
 }
 
-fn timestamp(text: &str) -> Result<Timestamp, Error> {
+pub(super) fn timestamp(text: &str) -> Result<Timestamp, Error> {
     wire::time::parse_rfc3339(text).map_err(|_| Error::SinceInvalid(text.to_owned()))
 }
 

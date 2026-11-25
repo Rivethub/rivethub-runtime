@@ -217,6 +217,30 @@ impl fmt::Debug for FlagState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BundlesReply {
+    pub bundles: Vec<ReadyBundle>,
+}
+
+#[serde_with::serde_as]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ReadyBundle {
+    pub name: String,
+    pub sessions: u32,
+    pub bytes: u64,
+    pub open_flags: u32,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub created_at: Timestamp,
+    pub sanitized: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BundleDraftRequest {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MarksRequest {
     pub marks: Vec<Mark>,
@@ -268,6 +292,22 @@ pub struct SendRequest {
     pub confirm: SendConfirm,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PushRequest {
+    pub hub: String,
+    pub confirm: SendConfirm,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PushedReply {
+    pub hub: String,
+    pub user: String,
+    pub sessions: usize,
+    pub inserted: u64,
+    pub skipped: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SendConfirm {
@@ -306,6 +346,7 @@ impl fmt::Debug for SentReply {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ServersReply {
     pub servers: Vec<ServerView>,
+    pub cloud_disabled: bool,
     pub logins_file: String,
     pub token_store: TokenStore,
 }
@@ -323,9 +364,21 @@ pub struct ServerView {
     pub origin: String,
     pub kind: ServerKind,
     #[serde(default)]
+    pub hub: Option<String>,
+    #[serde(default)]
     pub user: Option<String>,
     pub signed_in: bool,
     pub default: bool,
+    pub delivery: Delivery,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub needs_reauth: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Delivery {
+    Push,
+    Code,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -408,6 +461,7 @@ pub struct ShareRefusal {
 pub enum RefusalReason {
     NotLocal,
     UnknownDraft,
+    UnknownBundle,
     Full,
     Invalid,
     OpenFlags,

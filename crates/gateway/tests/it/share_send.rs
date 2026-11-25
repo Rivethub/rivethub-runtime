@@ -10,9 +10,10 @@ use axum::http::{Method, Request, StatusCode};
 use gateway::Gateway;
 use gateway::tenancy::{Tenancy, UserId};
 use kernel::memory::share::desk::{
-    DeskError, Draft, DraftId, DraftRequest, DraftSession, DraftTotals, EscapedText, FindQuery,
-    FlagState, FlagView, Found, LoginId, LoginRequest, LoginStep, Mark, Marked, NodeKeyView,
-    SendRequest, Sent, ServerOrigin, Servers, ShareDesk, TokenStore,
+    BundleName, Delivery, DeskError, Draft, DraftId, DraftRequest, DraftSession, DraftTotals,
+    EscapedText, FindQuery, FlagState, FlagView, Found, LoginId, LoginRequest, LoginStep, Mark,
+    Marked, NodeKeyView, PushRequest, Pushed, ReadyBundle, SendRequest, Sent, ServerKind,
+    ServerOrigin, ServerView, Servers, ShareDesk, TokenStore,
 };
 use parking_lot::Mutex;
 use tower::ServiceExt as _;
@@ -34,6 +35,7 @@ struct FakeDesk {
     calls: Mutex<Vec<&'static str>>,
     failure: Mutex<Option<DeskError>>,
     draft: Mutex<Option<DraftId>>,
+    named: Mutex<Vec<BundleName>>,
 }
 
 impl FakeDesk {
@@ -100,6 +102,23 @@ impl ShareDesk for FakeDesk {
         Ok(self.drafted())
     }
 
+    async fn bundles(&self) -> Result<Vec<ReadyBundle>, DeskError> {
+        self.enter("bundles")?;
+        Ok(vec![ReadyBundle {
+            name: "dana-auth-2026-11-24".parse()?,
+            sessions: 2,
+            bytes: 4096,
+            open_flags: 1,
+            created_at: expiry(),
+        }])
+    }
+
+    async fn draft_bundle(&self, name: BundleName) -> Result<Draft, DeskError> {
+        self.enter("draft_bundle")?;
+        self.named.lock().push(name);
+        Ok(self.drafted())
+    }
+
     async fn report(&self, _id: DraftId) -> Result<Draft, DeskError> {
         self.enter("report")?;
         Ok(self.drafted())
@@ -124,6 +143,17 @@ impl ShareDesk for FakeDesk {
         })
     }
 
+    async fn push(&self, _id: DraftId, push: PushRequest) -> Result<Pushed, DeskError> {
+        self.enter("push")?;
+        Ok(Pushed {
+            hub: push.hub.to_string(),
+            user: "fay".to_owned(),
+            sessions: push.confirm.sessions,
+            inserted: 3,
+            skipped: 0,
+        })
+    }
+
     async fn discard(&self, _id: DraftId) -> Result<(), DeskError> {
         self.enter("discard")
     }
@@ -131,7 +161,29 @@ impl ShareDesk for FakeDesk {
     async fn servers(&self) -> Result<Servers, DeskError> {
         self.enter("servers")?;
         Ok(Servers {
-            servers: Vec::new(),
+            servers: vec![
+                ServerView {
+                    origin: ServerOrigin::from("hub.example:8443".to_owned()),
+                    kind: ServerKind::Cloud,
+                    delivery: Delivery::Push {
+                        hub: "team".to_owned(),
+                    },
+                    user: None,
+                    signed_in: true,
+                    default: false,
+                    needs_reauth: true,
+                },
+                ServerView {
+                    origin: ServerOrigin::from("drops.example".to_owned()),
+                    kind: ServerKind::Cloud,
+                    delivery: Delivery::Code,
+                    user: Some("fay".to_owned()),
+                    signed_in: false,
+                    default: true,
+                    needs_reauth: false,
+                },
+            ],
+            cloud_disabled: true,
             logins_file: "share-logins.json".to_owned(),
             token_store: TokenStore::File,
         })
@@ -230,8 +282,19 @@ fn routes() -> Vec<Route> {
             &format!("{}/send", draft_path()),
             Some(r#"{"server":"s","signed":false,"confirm":{"sessions":1,"kept_flags":0}}"#),
         ),
+        route(
+            Method::POST,
+            &format!("{}/push", draft_path()),
+            Some(r#"{"hub":"team","confirm":{"sessions":1,"kept_flags":0}}"#),
+        ),
         discard_draft(),
         route(Method::GET, "/api/share/servers", None),
+        route(Method::GET, "/api/share/bundles", None),
+        route(
+            Method::POST,
+            "/api/share/drafts/from-bundle",
+            Some(r#"{"name":"dana-auth-2026-11-24"}"#),
+        ),
         route(
             Method::POST,
             "/api/share/servers/login",
@@ -457,6 +520,18 @@ fn request_mappings() -> Vec<Mapping> {
             None,
         ),
         (
+            DeskError::UnknownBundle,
+            404,
+            RefusalReason::UnknownBundle,
+            None,
+        ),
+        (
+            DeskError::BundleFlags { flags: 1 },
+            409,
+            RefusalReason::OpenFlags,
+            None,
+        ),
+        (
             DeskError::UnknownLogin,
             404,
             RefusalReason::UnknownLogin,
@@ -560,6 +635,12 @@ fn server_mappings() -> Vec<Mapping> {
             None,
         ),
         (
+            DeskError::Refused("a second scan still finds prompt-injection patterns".to_owned()),
+            422,
+            RefusalReason::Invalid,
+            None,
+        ),
+        (
             DeskError::Failed("/home/dana/secret path".to_owned()),
             500,
             RefusalReason::Failed,
@@ -608,6 +689,21 @@ async fn a_malformed_request_is_an_invalid_refusal_that_never_reaches_the_desk()
                 r#"{{"sessions":[{{"id":"{SESSION}","decision":"approve","redact":{{"terms":["a"]}}}}]}}"#
             ),
         ),
+        bad("/api/share/drafts/from-bundle", r#"{"name":"../x"}"#),
+        bad("/api/share/drafts/from-bundle", r#"{"name":"a/b"}"#),
+        bad("/api/share/drafts/from-bundle", r#"{"name":"/etc/passwd"}"#),
+        bad("/api/share/drafts/from-bundle", r#"{"name":"a\\b"}"#),
+        bad("/api/share/drafts/from-bundle", r#"{"name":"x..json"}"#),
+        bad("/api/share/drafts/from-bundle", r#"{"name":".hidden"}"#),
+        bad("/api/share/drafts/from-bundle", r#"{"name":""}"#),
+        bad(
+            "/api/share/drafts/from-bundle",
+            r#"{"name":"b.review.local"}"#,
+        ),
+        bad(
+            "/api/share/drafts/from-bundle",
+            r#"{"name":"b","path":"x"}"#,
+        ),
     ] {
         let (status, _, body) = call(&app, &route, LOOPBACK, &[]).await?;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
@@ -622,5 +718,67 @@ async fn a_malformed_request_is_an_invalid_refusal_that_never_reaches_the_desk()
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_eq!(refusal(&body)?.reason, RefusalReason::UnknownDraft);
     assert_eq!(desk.calls(), Vec::<&str>::new());
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ready_bundles_and_the_cloud_policy_reach_the_wire_by_name() -> TestResult {
+    let desk = Arc::new(FakeDesk::default());
+    let app = node(&desk)?;
+    let (status, headers, body) = call(
+        &app,
+        &route(Method::GET, "/api/share/bundles", None),
+        LOOPBACK,
+        &[],
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        headers
+            .get("cache-control")
+            .map(axum::http::HeaderValue::as_bytes),
+        Some(&b"no-store"[..])
+    );
+    assert_eq!(
+        body,
+        r#"{"bundles":[{"name":"dana-auth-2026-11-24","sessions":2,"bytes":4096,"open_flags":1,"created_at":"1970-01-01T00:00:00Z","sanitized":true}]}"#
+    );
+
+    let (status, _, body) = call(
+        &app,
+        &route(
+            Method::POST,
+            "/api/share/drafts/from-bundle",
+            Some(r#"{"name":"dana-auth-2026-11-24"}"#),
+        ),
+        LOOPBACK,
+        &[],
+    )
+    .await?;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let report: DraftReport = serde_json::from_str(&body)?;
+    assert_eq!(report.draft, desk.id().to_string());
+    assert_eq!(
+        desk.named
+            .lock()
+            .iter()
+            .map(BundleName::as_str)
+            .collect::<Vec<_>>(),
+        ["dana-auth-2026-11-24"]
+    );
+
+    let (status, _, body) = call(
+        &app,
+        &route(Method::GET, "/api/share/servers", None),
+        LOOPBACK,
+        &[],
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body,
+        r#"{"servers":[{"origin":"hub.example:8443","kind":"cloud","hub":"team","signed_in":true,"default":false,"delivery":"push","needs_reauth":true},{"origin":"drops.example","kind":"cloud","user":"fay","signed_in":false,"default":true,"delivery":"code"}],"cloud_disabled":true,"logins_file":"share-logins.json","token_store":"file"}"#
+    );
+    assert_eq!(desk.calls(), ["bundles", "draft_bundle", "servers"]);
     Ok(())
 }

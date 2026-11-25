@@ -263,11 +263,13 @@ where
         topics: Arc<dyn TopicStore>,
         pages: Arc<dyn TopicPageStore>,
         decisions: Arc<dyn DecisionStore>,
+        flagged: Arc<dyn kernel::flagged::FlaggedJobs>,
     ) -> Self {
         self.topic_pages = Some(crate::topic_page::TopicPages {
             topics,
             pages,
             decisions,
+            flagged,
         });
         self
     }

@@ -318,7 +318,7 @@ pub struct CaptureSection {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CaptureGateway {
     pub url: String,
-    pub ca: PathBuf,
+    pub ca: Option<PathBuf>,
     pub token: Option<String>,
 }
 

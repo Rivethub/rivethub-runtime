@@ -8,7 +8,8 @@ use cli::update::Updater;
 use tokio_util::sync::CancellationToken;
 
 use super::update_support::{
-    BINARY, Fixture, Published, Result, WebRelease, args, server_with_web, web_url,
+    BINARY, Fixture, Published, Result, Signer, WebRelease, args, forged, server_with_web,
+    web_manifest, web_url,
 };
 
 #[derive(Clone, Copy)]
@@ -285,5 +286,132 @@ async fn web_only_leaves_legacy_state_available_for_first_start() -> Result {
     assert!(report.stderr.contains("adopt its legacy state"));
     assert!(legacy.is_dir());
     assert!(!home.path().join(".rivethub").exists());
+    Ok(())
+}
+
+async fn signed_run(
+    releases: Vec<WebRelease>,
+    sigs: &[(&str, String)],
+    keyring: gateway::account::ReleaseKeyring,
+) -> Result<(Fixture, cli::Report)> {
+    let fixture = Fixture::new()?;
+    let sigs = sigs
+        .iter()
+        .map(|(version, sig)| ((*version).to_owned(), sig.clone()))
+        .collect();
+    let server =
+        super::update_support::server_with_sigs(Published::Good, None, releases, sigs).await?;
+    let mut web_only = args();
+    web_only.web_only = true;
+    let report = updater(&fixture, &server, "0.9.0")?
+        .keyring(keyring)
+        .run(&web_only, &fixture.env(), &CancellationToken::new())
+        .await;
+    server.close().await?;
+    Ok((fixture, report))
+}
+
+#[tokio::test]
+async fn web_signature_fails_closed_when_forged_and_accepts_trusted_key() -> Result {
+    let signer = Signer::new()?;
+    for required in [false, true] {
+        let release = build("1.2.0", "0.9.0", Contents::Site)?;
+        let good = signer.sign(&web_manifest(&release));
+        let (fixture, report) =
+            signed_run(vec![release], &[("1.2.0", good)], signer.keyring(required)?).await?;
+        assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+        assert_active(&fixture, "1.2.0")?;
+
+        let release = build("1.2.0", "0.9.0", Contents::Site)?;
+        let (fixture, report) = signed_run(
+            vec![release],
+            &[("1.2.0", forged())],
+            signer.keyring(required)?,
+        )
+        .await?;
+        assert_eq!(report.exit, Exit::Failure);
+        assert!(
+            report.stderr.contains("signature verification failed"),
+            "{}",
+            report.stderr
+        );
+        assert!(!web_root(&fixture).join("current").exists());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn unsigned_web_releases_install_only_while_signatures_are_optional() -> Result {
+    let signer = Signer::new()?;
+    let release = build("1.2.0", "0.9.0", Contents::Site)?;
+    let (fixture, report) = signed_run(vec![release], &[], signer.keyring(false)?).await?;
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    assert_active(&fixture, "1.2.0")?;
+
+    let release = build("1.2.0", "0.9.0", Contents::Site)?;
+    let (fixture, report) = signed_run(vec![release], &[], signer.keyring(true)?).await?;
+    assert_eq!(report.exit, Exit::Failure);
+    assert!(
+        report.stderr.contains("the release does not publish it"),
+        "{}",
+        report.stderr
+    );
+    assert!(!web_root(&fixture).join("current").exists());
+    Ok(())
+}
+
+#[tokio::test]
+async fn bad_signatures_on_releases_that_would_not_be_selected_do_not_block_the_newest_valid_one()
+-> Result {
+    let signer = Signer::new()?;
+    for required in [false, true] {
+        let newest = build("2.0.0", "0.10.0", Contents::Site)?;
+        let selected = build("1.2.0", "0.9.0", Contents::Site)?;
+        let older = build("1.1.0", "0.9.0", Contents::Site)?;
+        let sigs = [
+            ("2.0.0", forged()),
+            ("1.2.0", signer.sign(&web_manifest(&selected))),
+            ("1.1.0", format!("v1:rogue-key:{}\n", "A".repeat(88))),
+        ];
+        let (fixture, report) = signed_run(
+            vec![older, newest, selected],
+            &sigs,
+            signer.keyring(required)?,
+        )
+        .await?;
+        assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+        assert_active(&fixture, "1.2.0")?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_malformed_signature_on_the_selected_release_fails_closed_without_falling_back() -> Result
+{
+    let signer = Signer::new()?;
+    for required in [false, true] {
+        for malformed in [
+            format!("v1:test-key:{}\n", "A".repeat(2048)),
+            "not a signature\n".to_owned(),
+        ] {
+            let selected = build("1.2.0", "0.9.0", Contents::Site)?;
+            let older = build("1.1.0", "0.9.0", Contents::Site)?;
+            let sigs = [
+                ("1.2.0", malformed),
+                ("1.1.0", signer.sign(&web_manifest(&older))),
+            ];
+            let (fixture, report) =
+                signed_run(vec![selected, older], &sigs, signer.keyring(required)?).await?;
+            assert_eq!(report.exit, Exit::Failure, "{}", report.stdout);
+            assert!(
+                report
+                    .stderr
+                    .contains("web-manifest.json.sig signature verification failed for web-v1.2.0"),
+                "{}",
+                report.stderr
+            );
+            assert!(!web_root(&fixture).join("current").exists());
+        }
+    }
     Ok(())
 }

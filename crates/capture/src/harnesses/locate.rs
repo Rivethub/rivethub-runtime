@@ -2,6 +2,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use config::Environment;
+use config::Paths;
 
 use super::registry::Base;
 use super::registry::Location;
@@ -18,6 +19,7 @@ pub struct Locator {
     roots: StoreRoots,
     path_dirs: Vec<PathBuf>,
     opencode_plugin: Option<PathBuf>,
+    env_file: Result<PathBuf, String>,
 }
 
 impl Locator {
@@ -51,6 +53,9 @@ impl Locator {
             claude_json_dir,
             antigravity_config,
             roots: store_roots(env),
+            env_file: Paths::new(env)
+                .map(|paths| paths.env_file())
+                .map_err(|error| error.to_string()),
             path_dirs,
             opencode_plugin: env
                 .text("RIVETHUB_OPENCODE_PLUGIN")
@@ -63,6 +68,10 @@ impl Locator {
     #[must_use]
     pub fn home(&self) -> Option<&Path> {
         self.home.as_deref()
+    }
+
+    pub fn env_file(&self) -> Result<&Path, &str> {
+        self.env_file.as_deref().map_err(String::as_str)
     }
 
     #[must_use]

@@ -157,6 +157,7 @@ async fn a_serving_login_that_bypasses_row_security_is_refused(pool: PgPool) -> 
 
 #[sqlx::test(migrations = false)]
 async fn memory_transfer_requires_postgres_migrations_through_84(pool: PgPool) -> TestResult {
+    const _: () = assert!(SCHEMA_VERSION >= 84);
     let through_82 = migrate::POSTGRES
         .migrations
         .partition_point(|migration| migration.version <= 82);
@@ -170,7 +171,9 @@ async fn memory_transfer_requires_postgres_migrations_through_84(pool: PgPool) -
     };
     before.run(&pool).await?;
     match PostgresMemory::connect(&url(&pool)).await {
-        Err(Error::SchemaBehind { found, required }) => assert_eq!((found, required), (82, 84)),
+        Err(Error::SchemaBehind { found, required }) => {
+            assert_eq!((found, required), (82, SCHEMA_VERSION));
+        }
         other => panic!("expected SchemaBehind, got {other:?}"),
     }
     let versions: Vec<i64> = migrate::POSTGRES
@@ -179,9 +182,9 @@ async fn memory_transfer_requires_postgres_migrations_through_84(pool: PgPool) -
         .filter(|migration| migration.version > 82)
         .map(|migration| migration.version)
         .collect();
-    assert_eq!(versions, vec![83, 84]);
+    assert_eq!(versions, (83..=SCHEMA_VERSION).collect::<Vec<_>>());
     let stats = migrate::postgres_pool(&pool).await?;
-    assert_eq!((stats.current, stats.pending), (84, 0));
+    assert_eq!((stats.current, stats.pending), (SCHEMA_VERSION, 0));
     PostgresMemory::connect(&url(&pool)).await?;
     Ok(())
 }

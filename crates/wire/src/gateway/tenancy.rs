@@ -69,6 +69,15 @@ pub struct MeResponse {
     pub user: String,
     pub spaces: Vec<SpaceRecord>,
     pub settings: UserSettings,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<MeAccess>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MeAccess {
+    pub scopes: Vec<String>,
+    pub drops_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

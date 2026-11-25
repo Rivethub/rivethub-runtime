@@ -97,10 +97,10 @@ fn holder(gateway: &Gateway, headers: &HeaderMap) -> Result<UserId, Turned> {
     if !headers.contains_key(header::AUTHORIZATION) {
         return Err(Turned::NoToken);
     }
-    let (user, scope) = crate::auth::bearer(headers)
+    let (user, scopes) = crate::auth::bearer(headers)
         .and_then(|token| gateway.tenancy.user_for_token(token))
         .ok_or(Turned::InvalidToken)?;
-    if scope.allows(TokenScope::DropsWrite) {
+    if scopes.allows(TokenScope::DropsWrite) {
         Ok(user)
     } else {
         Err(Turned::InsufficientScope)

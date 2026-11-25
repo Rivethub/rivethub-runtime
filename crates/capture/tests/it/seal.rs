@@ -8,7 +8,6 @@ use capture::seal::SealError;
 use capture::seal::ShareCode;
 use capture::seal::ShareKey;
 use capture::sign::NodeKey;
-use capture::sign::Trust;
 use capture::sign::TrustStore;
 use capture::sign::Verification;
 use jiff::Timestamp;
@@ -295,40 +294,29 @@ fn signature_states_map_to_verification() -> TestResult {
     assert_eq!(open(&unsigned, &trust)?, Verification::Unsigned);
     assert_eq!(
         open(&sealed, &trust)?,
-        Verification::Signed {
-            key: signer.public_key(),
-            trust: Trust::NotListed {
-                trusted_as: Vec::new()
-            },
+        Verification::UnknownKey {
+            key: signer.public_key()
         }
     );
     trust.add("ines", signer.public_key())?;
-    let wrong_name = open(&sealed, &trust)?;
+    let renamed = open(&sealed, &trust)?;
     assert_eq!(
-        wrong_name,
-        Verification::Signed {
+        renamed,
+        Verification::Trusted {
             key: signer.public_key(),
-            trust: Trust::NotListed {
-                trusted_as: vec!["ines".to_owned()]
-            },
+            trusted_as: "ines".to_owned(),
+            author: "dana".to_owned(),
         }
     );
-    assert!(
-        wrong_name
-            .reason("dana")
-            .contains("you trust as ines, not as dana")
-    );
+    assert_eq!(renamed.kind(), wire::capture::ReceiptVerification::Verified);
+    let reason = renamed.reason();
+    assert!(reason.starts_with("verified, signed by ines ("), "{reason}");
+    assert!(reason.contains("; bundle author '"), "{reason}");
     trust.add("dana", signer.public_key())?;
     assert_eq!(
         open(&sealed, &trust)?,
-        Verification::Signed {
-            key: signer.public_key(),
-            trust: Trust::Listed,
-        }
-    );
-    assert_eq!(
-        open(&sealed, &trust)?.kind(),
-        wire::capture::ReceiptVerification::Verified
+        renamed,
+        "a label that matches the author does not outrank the first one stored"
     );
     Ok(())
 }

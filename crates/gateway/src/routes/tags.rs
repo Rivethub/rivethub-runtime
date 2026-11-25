@@ -408,8 +408,10 @@ async fn lookup(
 
 async fn taxonomy_upsert(
     State(gateway): State<Arc<Gateway>>,
+    user: UserId,
     Body(body): Body<TagTaxonomyUpsertRequest>,
 ) -> Result<Json<TagTaxonomyUpsertResult>, ApiError> {
+    gateway.tenancy.owner(&user)?;
     let required = || ApiError::BadRequest("key and value required".to_owned());
     let key = body
         .key
@@ -439,8 +441,10 @@ async fn taxonomy_upsert(
 
 async fn taxonomy_decide(
     State(gateway): State<Arc<Gateway>>,
+    user: UserId,
     Body(body): Body<TagTaxonomyDecideRequest>,
 ) -> Result<Json<TagDecisionResult>, ApiError> {
+    gateway.tenancy.owner(&user)?;
     let decision = match body.state {
         Some(TagState::Accepted) => TagDecision::Accept,
         Some(TagState::Rejected) => TagDecision::Reject,
@@ -472,8 +476,10 @@ async fn taxonomy_decide(
 
 async fn taxonomy_merge(
     State(gateway): State<Arc<Gateway>>,
+    user: UserId,
     Body(body): Body<TagTaxonomyMergeRequest>,
 ) -> Result<Json<TagTaxonomyMergeResult>, ApiError> {
+    gateway.tenancy.owner(&user)?;
     let merge = (
         body.key.as_deref().filter(|value| present(value)),
         body.from.as_deref().filter(|value| present(value)),

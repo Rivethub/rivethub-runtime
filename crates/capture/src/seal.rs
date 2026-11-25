@@ -342,6 +342,20 @@ pub struct Sealed {
     pub signed: Option<PublicKey>,
 }
 
+pub fn shareable(bundle: &SessionBundle, confirmed_flags: usize) -> Result<(), SealError> {
+    if bundle.manifest.sanitization == Sanitization::Raw {
+        return Err(SealError::Raw);
+    }
+    let flags = crate::sanitize::open_flags(bundle)?;
+    if flags.withheld > 0 {
+        return Err(SealError::Withheld(flags.withheld));
+    }
+    if flags.unreviewed > 0 && flags.unreviewed != confirmed_flags {
+        return Err(SealError::Unconfirmed(flags.unreviewed));
+    }
+    Ok(())
+}
+
 pub fn seal(
     text: &[u8],
     signer: Option<&NodeKey>,
@@ -360,16 +374,7 @@ pub fn seal(
         | OpenError::TooLarge
         | OpenError::Signature(_) => SealError::Text,
     })?;
-    if bundle.manifest.sanitization == Sanitization::Raw {
-        return Err(SealError::Raw);
-    }
-    let flags = crate::sanitize::open_flags(&bundle)?;
-    if flags.withheld > 0 {
-        return Err(SealError::Withheld(flags.withheld));
-    }
-    if flags.unreviewed > 0 && flags.unreviewed != confirmed_flags {
-        return Err(SealError::Unconfirmed(flags.unreviewed));
-    }
+    shareable(&bundle, confirmed_flags)?;
     let signature = signer.map(|key| key.sign(text, &bundle.manifest.exported_by.user));
     let signer_key = signature.as_ref().map(|signature| signature.public_key);
     let titles = bundle

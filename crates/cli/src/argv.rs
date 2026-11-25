@@ -1,3 +1,5 @@
+use crate::Error;
+
 pub(crate) struct Scan<'a> {
     args: &'a [String],
     at: usize,
@@ -84,5 +86,35 @@ fn taken(rest: &str) -> Taken {
         Taken::Missing
     } else {
         Taken::Value(rest.to_owned())
+    }
+}
+
+pub(crate) fn take_gateway(scan: &mut Scan<'_>, into: &mut Option<String>) -> Result<bool, Error> {
+    match scan.option("--gateway", None) {
+        Taken::Value(raw) => {
+            let url = url::Url::parse(&raw)?;
+            if !matches!(url.scheme(), "http" | "https") {
+                return Err(Error::GatewayScheme(url.scheme().to_owned()));
+            }
+            if url.query().is_some() || url.fragment().is_some() {
+                return Err(Error::GatewayUrlSuffix);
+            }
+            *into = Some(raw);
+            Ok(true)
+        }
+        Taken::Missing => Err(Error::GatewayRequired),
+        Taken::Absent => Ok(false),
+    }
+}
+
+pub(crate) fn with_gateway(
+    env: &config::Environment,
+    gateway: Option<&str>,
+) -> config::Environment {
+    match gateway {
+        Some(url) => env
+            .clone()
+            .with_override(crate::gateway_target::GATEWAY_URL_ENV, url),
+        None => env.clone(),
     }
 }

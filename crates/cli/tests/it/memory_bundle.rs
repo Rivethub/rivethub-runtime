@@ -170,6 +170,229 @@ async fn bundle_refuses_an_unknown_session_and_writes_nothing() {
     assert!(!node.directory.path().join("s.json.tmp").exists());
 }
 
+fn sqlite_with_two_owners(directory: &Path) -> String {
+    let path = directory.join("memory.sqlite");
+    migrate::sqlite(&path).expect("migrate");
+    let connection = rusqlite::Connection::open(&path).expect("sqlite");
+    connection
+        .execute_batch(
+            "INSERT INTO ros_conversations (id, session_key, agent, owner_user_id, settings, created_at, updated_at) VALUES
+               ('d1', 'claude-code:dana-old', 'rivet', 'dana', '{}', '2026-10-20T09:00:00.000Z', '2026-10-21T10:00:00.000Z'),
+               ('d2', 'claude-code:dana-new', 'rivet', 'dana', '{}', '2026-10-22T09:00:00.000Z', '2026-10-25T10:00:00.000Z'),
+               ('p1', 'claude-code:pt-old', 'rivet', 'ben', '{}', '2026-05-11T09:00:00.000Z', '2026-05-12T10:00:00.000Z'),
+               ('p2', 'claude-code:pt-new', 'rivet', 'ben', '{}', '2026-08-30T09:00:00.000Z', '2026-09-01T10:00:00.000Z');
+             INSERT INTO ros_messages (id, conversation_id, agent, channel, role, content, metadata, created_at) VALUES
+               ('d1a', 'd1', 'rivet', 'claude-code', 'user', 'a', '{}', '2026-10-20T09:00:00.000Z'),
+               ('d2a', 'd2', 'rivet', 'claude-code', 'user', 'a', '{}', '2026-10-22T09:00:00.000Z'),
+               ('d2b', 'd2', 'rivet', 'claude-code', 'assistant', 'b', '{}', '2026-10-22T09:01:00.000Z'),
+               ('d2c', 'd2', 'rivet', 'claude-code', 'user', 'c', '{}', '2026-10-25T10:00:00.000Z'),
+               ('p1a', 'p1', 'rivet', 'claude-code', 'user', 'a', '{}', '2026-05-11T09:00:00.000Z'),
+               ('p2a', 'p2', 'rivet', 'claude-code', 'user', 'a', '{}', '2026-08-30T09:00:00.000Z'),
+               ('p2b', 'p2', 'rivet', 'claude-code', 'assistant', 'b', '{}', '2026-08-30T09:01:00.000Z'),
+               ('p2c', 'p2', 'rivet', 'claude-code', 'user', 'c', '{}', '2026-09-01T10:00:00.000Z');",
+        )
+        .expect("seed");
+    path.display().to_string()
+}
+
+async fn attempt(node: &Node, sqlite: &str, selectors: &[&str]) -> Report {
+    let out = node.directory.path().join("selected.json");
+    let out_text = out.display().to_string();
+    std::fs::remove_file(&out).ok();
+    let mut parts = vec!["memory", "bundle", "--out", &out_text, "--sqlite", sqlite];
+    parts.extend_from_slice(selectors);
+    run(&parts, &node.environment).await
+}
+
+async fn exported(node: &Node, sqlite: &str, selectors: &[&str]) -> (Report, SessionBundle) {
+    let report = attempt(node, sqlite, selectors).await;
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    let bundle = bundle_at(&node.directory.path().join("selected.json"));
+    (report, bundle)
+}
+
+async fn refused(node: &Node, sqlite: &str, selectors: &[&str]) -> String {
+    let report = attempt(node, sqlite, selectors).await;
+    assert_eq!(report.exit, Exit::Failure);
+    assert!(!node.directory.path().join("selected.json").exists());
+    report.stderr
+}
+
+fn authors(bundle: &SessionBundle) -> Vec<(&str, &str)> {
+    bundle
+        .sessions
+        .iter()
+        .map(|session| {
+            (
+                session.origin.session_key.as_str(),
+                session.origin.author.as_str(),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn bundle_defaults_to_the_node_owner_when_the_store_holds_two_owners() {
+    let node = node(&[]);
+    let sqlite = sqlite_with_two_owners(node.directory.path());
+
+    let (_, bundle) = exported(&node, &sqlite, &[]).await;
+    assert_eq!(
+        authors(&bundle),
+        [
+            ("claude-code:dana-old", "dana"),
+            ("claude-code:dana-new", "dana")
+        ]
+    );
+}
+
+#[tokio::test]
+async fn bundle_owner_selects_another_owner_and_keeps_each_sessions_real_author() {
+    let node = node(&[]);
+    let sqlite = sqlite_with_two_owners(node.directory.path());
+
+    let (_, bundle) = exported(&node, &sqlite, &["--owner", "ben"]).await;
+    assert_eq!(
+        authors(&bundle),
+        [("claude-code:pt-old", "ben"), ("claude-code:pt-new", "ben")]
+    );
+    assert_eq!(bundle.manifest.exported_by.user, "dana");
+
+    let (_, bundle) = exported(&node, &sqlite, &["--owner", "ben", "--owner", "dana"]).await;
+    assert_eq!(bundle.sessions.len(), 4);
+}
+
+#[tokio::test]
+async fn bundle_all_owners_takes_every_owner() {
+    let node = node(&[]);
+    let sqlite = sqlite_with_two_owners(node.directory.path());
+
+    let (_, bundle) = exported(&node, &sqlite, &["--all-owners"]).await;
+    assert_eq!(
+        authors(&bundle),
+        [
+            ("claude-code:pt-old", "ben"),
+            ("claude-code:pt-new", "ben"),
+            ("claude-code:dana-old", "dana"),
+            ("claude-code:dana-new", "dana"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn bundle_window_and_limit_count_conversations_by_last_activity() {
+    let node = node(&[]);
+    let sqlite = sqlite_with_two_owners(node.directory.path());
+
+    let (_, bundle) = exported(
+        &node,
+        &sqlite,
+        &[
+            "--all-owners",
+            "--since",
+            "2026-09-01T00:00:00Z",
+            "--until",
+            "2026-10-25T00:00:00Z",
+        ],
+    )
+    .await;
+    assert_eq!(
+        session_keys(&bundle),
+        ["claude-code:pt-new", "claude-code:dana-old"]
+    );
+
+    let (_, bundle) = exported(&node, &sqlite, &["--all-owners", "--limit", "2"]).await;
+    assert_eq!(
+        session_keys(&bundle),
+        ["claude-code:dana-old", "claude-code:dana-new"],
+        "the two most recently active conversations, not the first two message rows"
+    );
+    assert_eq!(bundle.manifest.session_count, 2);
+    assert_eq!(
+        bundle
+            .sessions
+            .iter()
+            .map(|session| session.batch.messages.len())
+            .collect::<Vec<_>>(),
+        [1, 3]
+    );
+}
+
+#[tokio::test]
+async fn bundle_names_the_owner_of_a_session_the_export_does_not_include() {
+    let node = node(&[]);
+    let sqlite = sqlite_with_two_owners(node.directory.path());
+
+    assert_eq!(
+        refused(&node, &sqlite, &["--session", "p2"]).await,
+        "Error: session p2 belongs to owner ben, not dana; pass --owner ben or --all-owners\n"
+    );
+
+    let (_, bundle) = exported(&node, &sqlite, &["--session", "p2", "--owner", "ben"]).await;
+    assert_eq!(session_keys(&bundle), ["claude-code:pt-new"]);
+
+    assert_eq!(
+        refused(&node, &sqlite, &["--session", "gone", "--all-owners"]).await,
+        "Error: no session this node can export has the id gone\n"
+    );
+}
+
+#[tokio::test]
+async fn bundle_rejects_conflicting_selectors() {
+    let node = node(&[]);
+    let sqlite = sqlite_with_two_owners(node.directory.path());
+
+    assert_eq!(
+        refused(&node, &sqlite, &["--owner", "dana", "--all-owners"]).await,
+        "Error: --owner and --all-owners cannot be combined\n"
+    );
+
+    assert_eq!(
+        refused(&node, &sqlite, &["--session", "d1", "--limit", "1"]).await,
+        "Error: --session names sessions directly and cannot be combined with --since, --until or --limit\n"
+    );
+
+    assert_eq!(
+        refused(&node, &sqlite, &["--until", "yesterday"]).await,
+        "Error: invalid --until timestamp: yesterday\n"
+    );
+}
+
+#[tokio::test]
+async fn bundle_dry_run_lists_each_session_with_its_owner_and_writes_nothing() {
+    let node = node(&[]);
+    let sqlite = sqlite_with_two_owners(node.directory.path());
+    let before = std::fs::read(&sqlite).expect("database bytes");
+
+    let report = run(
+        &[
+            "memory",
+            "bundle",
+            "--dry-run",
+            "--all-owners",
+            "--sqlite",
+            &sqlite,
+        ],
+        &node.environment,
+    )
+    .await;
+
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    assert_eq!(
+        report.stdout,
+        "claude-code:pt-old (rivet): 1 message from ben, 2026-05-11 to 2026-05-12\n\
+         claude-code:pt-new (rivet): 3 messages from ben, 2026-08-30 to 2026-09-01\n\
+         claude-code:dana-old (rivet): 1 message from dana, 2026-10-20 to 2026-10-21\n\
+         claude-code:dana-new (rivet): 3 messages from dana, 2026-10-22 to 2026-10-25\n\
+         would bundle 4 sessions from ben, dana; nothing written\n"
+    );
+    assert_eq!(std::fs::read(&sqlite).expect("database bytes"), before);
+    assert_eq!(
+        listing(node.directory.path()),
+        ["memory.sqlite", "users.json"]
+    );
+}
+
 fn listing(directory: &Path) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(directory)
         .expect("listing")
@@ -180,6 +403,7 @@ fn listing(directory: &Path) -> Vec<String> {
                 .to_string_lossy()
                 .into_owned()
         })
+        .filter(|name| !name.ends_with("-shm") && !name.ends_with("-wal"))
         .collect();
     names.sort();
     names
@@ -356,6 +580,15 @@ fn said(event_id: &str, content: &str) -> CaptureMessage {
 }
 
 async fn captured(store: &PostgresMemory, owner: &str, session_key: &str) -> String {
+    captured_message(store, owner, session_key, 1).await
+}
+
+async fn captured_message(
+    store: &PostgresMemory,
+    owner: &str,
+    session_key: &str,
+    number: u32,
+) -> String {
     let batch = CaptureBatchRequest {
         session_key: session_key.to_owned(),
         agent: "rivet".to_owned(),
@@ -366,7 +599,7 @@ async fn captured(store: &PostgresMemory, owner: &str, session_key: &str) -> Str
         finalize: None,
         created_at: None,
         updated_at: None,
-        messages: vec![said(&format!("{session_key}-1"), "hello")],
+        messages: vec![said(&format!("{session_key}-{number}"), "hello")],
     };
     let owner = Owner::new(owner.to_owned()).expect("owner");
     store
@@ -382,6 +615,7 @@ async fn postgres_bundle_exports_only_the_node_owners_named_sessions(pool: PgPoo
     let mine = captured(&store, "dana", "claude-code:mine").await;
     let other = captured(&store, "dana", "claude-code:other").await;
     let iness = captured(&store, "ines", "claude-code:ines").await;
+    captured_message(&store, "ines", "claude-code:ines", 2).await;
     let url = pool.connect_options().to_url_lossy().to_string();
     let node = node(&[("RIVETHUB_PG_URL", &url)]);
     let out = node.directory.path().join("s.json");
@@ -419,9 +653,57 @@ async fn postgres_bundle_exports_only_the_node_owners_named_sessions(pool: PgPoo
     assert_eq!(refused.exit, Exit::Failure);
     assert_eq!(
         refused.stderr,
-        format!("Error: no session this node can export has the id {iness}\n")
+        format!(
+            "Error: session {iness} belongs to owner ines, not dana; pass --owner ines or --all-owners\n"
+        )
     );
     assert_eq!(bundle_at(&out), bundle);
+
+    let ines = run(
+        &["memory", "bundle", "--out", &out_text, "--owner", "ines"],
+        &node.environment,
+    )
+    .await;
+    assert_eq!(ines.exit, Exit::Ok, "{}", ines.stderr);
+    assert_eq!(authors(&bundle_at(&out)), [("claude-code:ines", "ines")]);
+
+    let newest = run(
+        &[
+            "memory",
+            "bundle",
+            "--out",
+            &out_text,
+            "--all-owners",
+            "--limit",
+            "1",
+        ],
+        &node.environment,
+    )
+    .await;
+    assert_eq!(newest.exit, Exit::Ok, "{}", newest.stderr);
+    let newest = bundle_at(&out);
+    assert_eq!(authors(&newest), [("claude-code:ines", "ines")]);
+    assert_eq!(
+        newest.sessions.first().map(|s| s.batch.messages.len()),
+        Some(2),
+        "the limit counts conversations, so the kept one keeps both messages"
+    );
+
+    let future = run(
+        &[
+            "memory",
+            "bundle",
+            "--out",
+            &out_text,
+            "--all-owners",
+            "--since",
+            "2999-01-01T00:00:00Z",
+        ],
+        &node.environment,
+    )
+    .await;
+    assert_eq!(future.exit, Exit::Ok, "{}", future.stderr);
+    assert_eq!(bundle_at(&out).sessions, []);
 }
 
 const PLANTED_TOKEN: &str = concat!("ghp_", "Zq8RmT2vLx9WcN4bKp7HyJ3dFs6GtA1eUo5V");
@@ -652,4 +934,49 @@ async fn a_mapping_with_a_bad_regex_names_its_line_and_writes_nothing() {
         listing(node.directory.path()),
         ["planted.json", "redactions.toml", "users.json"]
     );
+}
+
+fn sqlite_with_an_imported_session(directory: &Path) -> String {
+    let path = directory.join("memory.sqlite");
+    migrate::sqlite(&path).expect("migrate");
+    let connection = rusqlite::Connection::open(&path).expect("sqlite");
+    connection
+        .execute_batch(
+            "INSERT INTO ros_conversations (id, session_key, agent, owner_user_id, settings, created_at, updated_at) VALUES
+               ('i1', 'import:abc', 'rivet', 'ben', '{\"origin\":{\"author\":\"alice\",\"node\":\"laptop\",\"conversation_id\":\"x1\",\"session_key\":\"claude-code:orig\",\"agent\":\"rivet\",\"created_at\":\"2026-10-01T09:00:00Z\",\"updated_at\":\"2026-10-02T10:00:00Z\"}}', '2026-11-01T09:00:00.000Z', '2026-11-01T10:00:00.000Z');
+             INSERT INTO ros_messages (id, conversation_id, agent, channel, role, content, metadata, created_at) VALUES
+               ('i1a', 'i1', 'rivet', 'claude-code', 'user', 'a', '{}', '2026-11-01T09:00:00.000Z');",
+        )
+        .expect("seed");
+    path.display().to_string()
+}
+
+#[tokio::test]
+async fn bundle_dry_run_lists_an_imported_session_under_its_local_owner() {
+    let node = node(&[]);
+    let sqlite = sqlite_with_an_imported_session(node.directory.path());
+
+    let report = run(
+        &[
+            "memory",
+            "bundle",
+            "--dry-run",
+            "--owner",
+            "ben",
+            "--sqlite",
+            &sqlite,
+        ],
+        &node.environment,
+    )
+    .await;
+
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    assert_eq!(
+        report.stdout,
+        "claude-code:orig (rivet): 1 message from ben, 2026-10-01 to 2026-10-02\n\
+         would bundle 1 session from ben; nothing written\n"
+    );
+
+    let (_, bundle) = exported(&node, &sqlite, &["--owner", "ben"]).await;
+    assert_eq!(authors(&bundle), [("claude-code:orig", "alice")]);
 }

@@ -305,7 +305,8 @@ async fn a_recompile_rebases_onto_a_write_that_landed_meanwhile(pool: PgPool) ->
         slug,
         since: "2026-10-01T00:00:00Z".parse()?,
     };
-    recompile(&memory, &merger, &job, now()?)
+    kernel::tenancy::Scope::Maintenance
+        .run(recompile(&memory, &merger, &job, now()?))
         .await?
         .ok_or("the page exists")?;
     let stored =

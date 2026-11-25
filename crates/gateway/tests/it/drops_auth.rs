@@ -4,7 +4,7 @@ use reqwest::{Method, StatusCode};
 
 use wire::gateway::GatewayError;
 use wire::gateway::drops::Uploaded;
-use wire::gateway::tenancy::MeResponse;
+use wire::gateway::tenancy::{MeAccess, MeResponse};
 
 use crate::drops::{Answer, Failure, Node, Outcome, Payload, Shape, fresh_id, sealed, send};
 
@@ -285,4 +285,29 @@ async fn a_drops_only_token_shares_and_nothing_else() -> Outcome {
     let full = stats(&local, &[("authorization", "Bearer alice-token")]).await?;
     assert_eq!(full.status, StatusCode::OK);
     local.stop().await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn me_names_the_token_scopes_and_whether_drops_are_on() -> Outcome {
+    for (shape, drops_enabled) in [(Shape::default(), true), (personal(), false)] {
+        let node = Node::start(shape).await?;
+        for (token, scopes) in [
+            ("Bearer alice-token", vec!["full".to_owned()]),
+            ("Bearer erin-token", vec!["drops:write".to_owned()]),
+        ] {
+            let answer = me(&node, &[("authorization", token)]).await?;
+            assert_eq!(answer.status, StatusCode::OK, "{token}");
+            let access = serde_json::from_slice::<MeResponse>(&answer.body)?.access;
+            assert_eq!(
+                access,
+                Some(MeAccess {
+                    scopes,
+                    drops_enabled
+                }),
+                "{token}"
+            );
+        }
+        node.stop().await?;
+    }
+    Ok(())
 }

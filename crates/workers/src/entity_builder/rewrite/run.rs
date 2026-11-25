@@ -232,9 +232,10 @@ async fn rewrite_open(
     if let Some(session) = session_of(leaves) {
         let mark = lease.applied_through().await?;
         if already_applied(session, mark) {
-            return Ok(Some(StoredPage {
+            let slug = lease.page_slug(view).await?;
+            return Ok(slug.map(|slug| StoredPage {
                 git_sha: String::new(),
-                slug: view.slug.clone(),
+                slug,
             }));
         }
     }
@@ -296,11 +297,11 @@ async fn note_empty(
         return Ok(None);
     }
     let note = mention_note(view, leaves, sentence)?;
-    let sha = lease.record_mention(&note, env.now).await?;
-    Ok(sha.map(|git_sha| StoredPage {
-        git_sha,
-        slug: view.slug.clone(),
-    }))
+    let Some(git_sha) = lease.record_mention(&note, env.now).await? else {
+        return Ok(None);
+    };
+    let slug = lease.page_slug(view).await?;
+    Ok(slug.map(|slug| StoredPage { git_sha, slug }))
 }
 
 fn page_is_blank(page: &EntityPage) -> bool {

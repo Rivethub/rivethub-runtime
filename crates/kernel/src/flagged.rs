@@ -82,6 +82,8 @@ pub trait FlaggedJobs: Send + Sync {
     async fn retry(&self, id: FlaggedId) -> Result<(), FlaggedError>;
 
     async fn dismiss(&self, id: FlaggedId, at: Timestamp) -> Result<(), FlaggedError>;
+
+    async fn queue_unless_flagged(&self, job: &crate::queue::Job) -> Result<bool, FlaggedError>;
 }
 
 #[expect(clippy::expect_used)]

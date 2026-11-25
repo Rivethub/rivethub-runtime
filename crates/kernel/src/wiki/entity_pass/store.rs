@@ -167,5 +167,9 @@ pub trait EntityLease: Send {
         now: Timestamp,
     ) -> Result<Option<String>, EntityStoreError>;
 
+    async fn page_slug(&mut self, view: &EntityView) -> Result<Option<String>, EntityStoreError> {
+        Ok(Some(view.slug.clone()))
+    }
+
     async fn release(&mut self) -> Result<(), EntityStoreError>;
 }

@@ -1,3 +1,4 @@
+mod bundles;
 mod send;
 mod servers;
 
@@ -43,6 +44,14 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
             post(send::draft).fallback(super::method_not_allowed),
         )
         .route(
+            "/api/share/drafts/from-bundle",
+            post(bundles::draft).fallback(super::method_not_allowed),
+        )
+        .route(
+            "/api/share/bundles",
+            get(bundles::list).fallback(super::method_not_allowed),
+        )
+        .route(
             "/api/share/drafts/{id}",
             get(send::report)
                 .delete(send::discard)
@@ -55,6 +64,10 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
         .route(
             "/api/share/drafts/{id}/send",
             post(send::send).fallback(super::method_not_allowed),
+        )
+        .route(
+            "/api/share/drafts/{id}/push",
+            post(send::push).fallback(super::method_not_allowed),
         )
         .route(
             "/api/share/servers",
@@ -117,11 +130,14 @@ impl From<DeskError> for Refusal {
         let message = error.to_string();
         let (status, reason, upstream_status) = match &error {
             DeskError::UnknownDraft => (StatusCode::NOT_FOUND, RefusalReason::UnknownDraft, None),
+            DeskError::UnknownBundle => (StatusCode::NOT_FOUND, RefusalReason::UnknownBundle, None),
             DeskError::UnknownLogin => (StatusCode::NOT_FOUND, RefusalReason::UnknownLogin, None),
             DeskError::UnknownSessions(_) => {
                 (StatusCode::NOT_FOUND, RefusalReason::UnknownSessions, None)
             }
-            DeskError::OpenFlags { .. } => (StatusCode::CONFLICT, RefusalReason::OpenFlags, None),
+            DeskError::OpenFlags { .. } | DeskError::BundleFlags { .. } => {
+                (StatusCode::CONFLICT, RefusalReason::OpenFlags, None)
+            }
             DeskError::Counts { .. } => (StatusCode::CONFLICT, RefusalReason::Counts, None),
             DeskError::DecideUnconfigured => (
                 StatusCode::CONFLICT,
@@ -132,6 +148,11 @@ impl From<DeskError> for Refusal {
             DeskError::Choices(_) | DeskError::Marks(_) => {
                 (StatusCode::BAD_REQUEST, RefusalReason::Invalid, None)
             }
+            DeskError::Refused(_) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                RefusalReason::Invalid,
+                None,
+            ),
             DeskError::BadToken(_) => (StatusCode::BAD_REQUEST, RefusalReason::BadToken, None),
             DeskError::BadServer(_) => (StatusCode::BAD_REQUEST, RefusalReason::BadServer, None),
             DeskError::SignedOut(_) => (StatusCode::UNAUTHORIZED, RefusalReason::SignedOut, None),

@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use config::{Config, Environment};
 use kernel::filing::FilingStore;
+use kernel::flagged::FlaggedJobs;
 use kernel::memory::{EmbeddingStore, MemoryStore, SummaryStore};
 use kernel::queue::JobQueue;
 use kernel::shutdown::Activities;
@@ -146,36 +147,24 @@ async fn run(
             .claiming_at_most(settings.claim_ceiling.or_else(|| {
                 (!settings.backfill_enabled).then_some(kernel::wiki::builder::BACKFILL_PRIORITY - 1)
             }));
-        let targets: Arc<dyn EmbeddingStore> = memory.clone();
-        let summaries: Arc<dyn SummaryStore> = memory.clone();
-        let wiki: Arc<dyn WikiBuilderStore> = memory.clone();
-        let entities: Arc<dyn EntityStore> = memory.clone();
-        let consolidate: Arc<dyn WikiConsolidateStore> = memory.clone();
-        let recompile: Arc<dyn WikiRecompileStore> = memory.clone();
-        let topics: Arc<dyn TopicStore> = memory.clone();
-        let filing: Arc<dyn FilingStore> = memory.clone();
-        let pages: Arc<dyn TopicPageStore> = memory.clone();
-        let decisions: Arc<dyn DecisionStore> = memory.clone();
-        let changes: Arc<dyn kernel::changes::ChangeFeed> = memory.clone();
-        let digests: Arc<dyn kernel::changes::DigestStore> = memory.clone();
-        let tidy: Arc<dyn TidyStore> = memory.clone();
         let mut runner = build_runner(
             role,
             WorkerPorts {
                 queue: Arc::new(queue),
-                targets,
-                summaries,
-                wiki,
-                entity: Some(entities),
-                consolidate: Some(consolidate),
-                recompile: Some(recompile),
-                topics,
-                filing,
-                pages,
-                decisions,
-                changes,
-                digests,
-                tidy,
+                targets: memory.clone(),
+                summaries: memory.clone(),
+                wiki: memory.clone(),
+                entity: Some(memory.clone()),
+                consolidate: Some(memory.clone()),
+                recompile: Some(memory.clone()),
+                topics: memory.clone(),
+                filing: memory.clone(),
+                pages: memory.clone(),
+                decisions: memory.clone(),
+                flagged: memory.clone(),
+                changes: memory.clone(),
+                digests: memory.clone(),
+                tidy: memory.clone(),
                 lineage: session_lineage(env),
                 load: model_load(env)?,
                 scopes: Some(owner_scopes(&memory, &config, env).await?),
@@ -244,6 +233,7 @@ pub struct WorkerPorts<Q> {
     pub filing: Arc<dyn FilingStore>,
     pub pages: Arc<dyn TopicPageStore>,
     pub decisions: Arc<dyn DecisionStore>,
+    pub flagged: Arc<dyn FlaggedJobs>,
     pub changes: Arc<dyn kernel::changes::ChangeFeed>,
     pub digests: Arc<dyn kernel::changes::DigestStore>,
     pub tidy: Arc<dyn TidyStore>,
@@ -338,7 +328,12 @@ pub fn with_models<Q: JobQueue + 'static>(
         runner
     };
     let runner = runner
-        .with_topic_pages(Arc::clone(&ports.topics), ports.pages, ports.decisions)
+        .with_topic_pages(
+            Arc::clone(&ports.topics),
+            ports.pages,
+            ports.decisions,
+            ports.flagged,
+        )
         .with_tidy(ports.tidy)
         .with_daily_digests(ports.changes, ports.digests)
         .with_session_topics(workers::SessionTopics {

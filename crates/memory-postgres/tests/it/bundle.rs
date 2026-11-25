@@ -9,6 +9,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 use wire::JsonObject;
 use wire::capture::BundleAuthor;
+use wire::capture::BundleFilter;
 use wire::message::Role;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -162,7 +163,11 @@ async fn export_selects_only_named_sessions_in_message_order(pool: PgPool) -> Te
     let third_id = captured(&store, "dana", &third).await?;
 
     let sessions = store
-        .bundled_sessions(&author("dana"), Some(&[third_id, first_id]))
+        .bundled_sessions(
+            &author("dana"),
+            Some(&[third_id, first_id]),
+            &BundleFilter::default(),
+        )
         .await?;
 
     let mut ids: Vec<_> = sessions
@@ -229,9 +234,15 @@ async fn export_never_returns_another_owners_session(pool: PgPool) -> TestResult
     .await?;
 
     let named = store
-        .bundled_sessions(&author("dana"), Some(&[iness, danas]))
+        .bundled_sessions(
+            &author("dana"),
+            Some(&[iness, danas]),
+            &BundleFilter::default(),
+        )
         .await?;
-    let everything = store.bundled_sessions(&author("dana"), None).await?;
+    let everything = store
+        .bundled_sessions(&author("dana"), None, &BundleFilter::default())
+        .await?;
 
     for sessions in [&named, &everything] {
         let ids: Vec<_> = sessions
@@ -269,9 +280,11 @@ async fn a_trashed_session_is_exported_only_when_named(pool: PgPool) -> TestResu
         .trash_session("claude-code:trashed", None, at("2026-10-15T00:00:00Z")?)
         .await?;
 
-    let everything = store.bundled_sessions(&author("dana"), None).await?;
+    let everything = store
+        .bundled_sessions(&author("dana"), None, &BundleFilter::default())
+        .await?;
     let named = store
-        .bundled_sessions(&author("dana"), Some(&[trashed]))
+        .bundled_sessions(&author("dana"), Some(&[trashed]), &BundleFilter::default())
         .await?;
 
     let ids = |sessions: &[wire::capture::BundledSession]| -> Vec<String> {
@@ -301,7 +314,9 @@ async fn export_keeps_capture_order_among_messages_captured_without_a_timestamp(
         .collect();
     let id = captured(&store, "dana", &batch("claude-code:undated", messages)).await?;
 
-    let sessions = store.bundled_sessions(&author("dana"), Some(&[id])).await?;
+    let sessions = store
+        .bundled_sessions(&author("dana"), Some(&[id]), &BundleFilter::default())
+        .await?;
 
     let session = sessions.first().ok_or("undated session")?;
     let exported: Vec<&str> = session
@@ -370,7 +385,9 @@ async fn a_batch_that_waits_on_the_session_lock_sorts_after_the_batch_holding_it
     holder.commit().await?;
     second.await??;
 
-    let sessions = store.bundled_sessions(&author("dana"), Some(&[id])).await?;
+    let sessions = store
+        .bundled_sessions(&author("dana"), Some(&[id]), &BundleFilter::default())
+        .await?;
 
     let session = sessions.first().ok_or("overlap session")?;
     let exported: Vec<&str> = session
@@ -389,5 +406,57 @@ async fn a_batch_that_waits_on_the_session_lock_sorts_after_the_batch_holding_it
         Some(expected.len() - 1)
     );
     assert_eq!(exported, expected);
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn an_rls_login_bundles_every_owner_only_in_the_maintenance_scope(
+    pool: PgPool,
+) -> TestResult {
+    let seeded = PostgresMemory::new(pool.clone());
+    let stamp = at("2026-03-01T10:00:00Z")?;
+    let mine = captured(
+        &seeded,
+        "dana",
+        &batch("claude-code:mine", vec![said("a", "a", stamp)]),
+    )
+    .await?;
+    let theirs = captured(
+        &seeded,
+        "ben",
+        &batch("claude-code:theirs", vec![said("b", "b", stamp)]),
+    )
+    .await?;
+    let store = PostgresMemory::new(crate::common::probe(&pool).await?);
+    let everyone = BundleFilter {
+        owners: wire::capture::OwnerScope::All,
+        ..BundleFilter::default()
+    };
+    let bens = BundleFilter {
+        owners: wire::capture::OwnerScope::Listed(vec!["ben".to_owned()]),
+        ..BundleFilter::default()
+    };
+
+    let unscoped = store
+        .bundled_sessions(&author("dana"), None, &everyone)
+        .await?;
+    assert_eq!(unscoped.len(), 0);
+
+    let all = kernel::tenancy::Scope::Maintenance
+        .run(store.bundled_sessions(&author("dana"), None, &everyone))
+        .await?;
+    let mut found: Vec<String> = all
+        .iter()
+        .map(|session| session.origin.conversation_id.clone())
+        .collect();
+    found.sort();
+    let mut expected = vec![mine.to_string(), theirs.to_string()];
+    expected.sort();
+    assert_eq!(found, expected);
+
+    let only_ben = kernel::tenancy::Scope::Maintenance
+        .run(store.bundled_sessions(&author("dana"), Some(&[theirs]), &bens))
+        .await?;
+    assert_eq!(only_ben.len(), 1);
     Ok(())
 }

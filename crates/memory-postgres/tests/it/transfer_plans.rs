@@ -154,6 +154,7 @@ async fn merging_entities_adopts_a_legacy_redirect(pool: PgPool) -> TestResult {
 async fn redirect_page_adopts_a_legacy_redirect_even_with_the_same_target(
     pool: PgPool,
 ) -> TestResult {
+    use kernel::tenancy::Scope;
     use kernel::topics::TopicPageStore as _;
     use kernel::wiki::page::WikiSlug;
 
@@ -163,18 +164,30 @@ async fn redirect_page_adopts_a_legacy_redirect_even_with_the_same_target(
     )
     .execute(&pool)
     .await?;
-    memory_postgres::PostgresMemory::new(pool.clone())
-        .redirect_page(
-            &WikiSlug::try_from("legacy".to_owned())?,
-            &WikiSlug::try_from("page".to_owned())?,
-            jiff::Timestamp::now(),
+    let legacy = WikiSlug::try_from("legacy".to_owned())?;
+    let page = WikiSlug::try_from("page".to_owned())?;
+    let owner = || {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT owner_user_id FROM rh_wiki_redirects WHERE from_slug = 'legacy'",
         )
+        .fetch_one(&pool)
+    };
+    let store = memory_postgres::PostgresMemory::new(crate::common::probe(&pool).await?);
+    Scope::Viewer(crate::visibility::viewer("alice")?)
+        .run(store.redirect_page(&legacy, &page, jiff::Timestamp::now()))
         .await?;
-    let owner: Option<String> = sqlx::query_scalar(
-        "SELECT owner_user_id FROM rh_wiki_redirects WHERE from_slug = 'legacy'",
-    )
-    .fetch_one(&pool)
-    .await?;
-    assert_eq!(owner.as_deref(), Some("alice"));
+    assert_eq!(
+        owner().await?,
+        None,
+        "topic sync leaves an alias that already points at the page"
+    );
+    Scope::Maintenance
+        .run(store.redirect_page(&legacy, &page, jiff::Timestamp::now()))
+        .await?;
+    assert_eq!(
+        owner().await?.as_deref(),
+        Some("alice"),
+        "maintenance adopts an ownerless alias of a personal page for its owner"
+    );
     Ok(())
 }

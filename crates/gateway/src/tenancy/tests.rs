@@ -83,7 +83,7 @@ fn resolve_at(tenancy: &Tenancy, token: &str, method: Method, path: &str) -> Tes
         .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
         .body(())?;
     let (parts, ()) = request.into_parts();
-    Ok(tenancy.resolve_bearer(token, &parts)?.as_str().to_owned())
+    Ok(tenancy.resolve_bearer(token, &parts)?.0.as_str().to_owned())
 }
 
 #[test]
@@ -125,8 +125,51 @@ fn a_bare_digest_is_full_access_and_a_drops_token_only_shares() -> TestResult {
         (Method::GET, drop),
         (Method::PATCH, "/api/me"),
         (Method::POST, "/api/drops/extra"),
+        (Method::POST, "/api/capture"),
     ] {
         let refused = resolve_at(&tenancy, "erin-secret", method.clone(), path);
+        assert!(
+            refused.is_err_and(|error| matches!(
+                error.downcast_ref::<ApiError>(),
+                Some(ApiError::InsufficientScope)
+            )),
+            "{method} {path}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_memory_import_token_only_captures_into_its_own_memory() -> TestResult {
+    let users = format!(
+        r#"{{"ownerUserId":"owner","unmappedIsOwner":false,"users":{{
+            "fay":{{"tokens":[{{"digest":"{fay}","scopes":["memory:import"]}}]}},
+            "gus":{{"tokens":[{{"digest":"{gus}","scopes":["drops:write","memory:import"]}}]}}}}}}"#,
+        fay = digest("fay-secret"),
+        gus = digest("gus-secret"),
+    );
+    let tenancy = tenancy_of(&users)?;
+    for (token, user) in [("fay-secret", "fay"), ("gus-secret", "gus")] {
+        for (method, path) in [(Method::POST, "/api/capture"), (Method::GET, "/api/me")] {
+            assert_eq!(
+                resolve_at(&tenancy, token, method.clone(), path)?,
+                user,
+                "{user} {method} {path}"
+            );
+        }
+    }
+    assert_eq!(
+        resolve_at(&tenancy, "gus-secret", Method::POST, "/api/drops")?,
+        "gus",
+        "a token may hold both scopes"
+    );
+    for (method, path) in [
+        (Method::GET, "/api/memory/stats"),
+        (Method::POST, "/api/memory/search"),
+        (Method::GET, "/api/capture"),
+        (Method::POST, "/api/drops"),
+    ] {
+        let refused = resolve_at(&tenancy, "fay-secret", method.clone(), path);
         assert!(
             refused.is_err_and(|error| matches!(
                 error.downcast_ref::<ApiError>(),

@@ -14,6 +14,7 @@ use wiki_files::wiki_writer::LockedRepository;
 
 use crate::SqliteStore;
 use crate::time;
+use crate::topic_pages::Claim;
 use crate::topic_pages::read;
 use crate::topic_pages::save;
 use crate::wiki_builder::query;
@@ -24,8 +25,9 @@ pub(crate) async fn save_filed(
     topic: TopicId,
     page: &TopicPage,
     now: Timestamp,
-    origin: Option<Uuid>,
-) -> Result<(), WikiStoreError> {
+    claim: Claim,
+) -> Result<bool, WikiStoreError> {
+    let origin = kernel::wiki::origin::NoteOrigin::current();
     let path = crate::page_files::database_path(store).await?;
     let page = page.clone();
     let locked = crate::page_files::Files::wiki(root).lock().await?;
@@ -33,6 +35,12 @@ pub(crate) async fn save_filed(
         let mut held = crate::page_files::HeldTx::open(&path)?;
         let tx = held.immediate()?;
         share(&tx, origin)?;
+        let filed = tokio::runtime::Handle::current()
+            .block_on(locked.read(page.slug.as_ref()))?
+            .is_some();
+        if (filed && matches!(claim, Claim::Vacant)) || !claim.allows(&tx, topic, &page.slug)? {
+            return Ok(false);
+        }
         let existing = read(&tx, &page.slug)?;
         if let Some(existing) = existing.as_ref() {
             tokio::runtime::Handle::current().block_on(crate::wiki_materialize::record_stored(
@@ -42,13 +50,22 @@ pub(crate) async fn save_filed(
                 now,
             ))?;
         }
-        let (stored, sha) = tokio::runtime::Handle::current()
-            .block_on(crate::wiki_page_files::rewrite(locked, &page, now))?;
+        let written = tokio::runtime::Handle::current().block_on(async {
+            match claim {
+                Claim::Overwrite => crate::wiki_page_files::rewrite(locked, &page, now)
+                    .await
+                    .map(Some),
+                Claim::Vacant => crate::wiki_page_files::create(locked, &page, now).await,
+            }
+        })?;
+        let Some((stored, sha)) = written else {
+            return Ok(false);
+        };
         crate::page_files::pause_before_row();
         crate::wiki_page_files::upsert(&tx, &stored, &sha, now)?;
         save(&tx, topic, &page, &time::stamp(now))?;
         tx.commit().map_err(query)?;
-        Ok(())
+        Ok(true)
     })
     .await
 }

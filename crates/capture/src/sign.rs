@@ -163,13 +163,14 @@ impl Signature {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verification {
     Unsigned,
-    Signed { key: PublicKey, trust: Trust },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Trust {
-    Listed,
-    NotListed { trusted_as: Vec<String> },
+    UnknownKey {
+        key: PublicKey,
+    },
+    Trusted {
+        key: PublicKey,
+        trusted_as: String,
+        author: String,
+    },
 }
 
 impl Verification {
@@ -177,47 +178,41 @@ impl Verification {
     pub const fn kind(&self) -> ReceiptVerification {
         match self {
             Self::Unsigned => ReceiptVerification::Unsigned,
-            Self::Signed {
-                trust: Trust::Listed,
-                ..
-            } => ReceiptVerification::Verified,
-            Self::Signed {
-                trust: Trust::NotListed { .. },
-                ..
-            } => ReceiptVerification::UnknownKey,
+            Self::UnknownKey { .. } => ReceiptVerification::UnknownKey,
+            Self::Trusted { .. } => ReceiptVerification::Verified,
         }
     }
 
     #[must_use]
     pub const fn key(&self) -> Option<&PublicKey> {
         match self {
-            Self::Signed { key, .. } => Some(key),
+            Self::Trusted { key, .. } | Self::UnknownKey { key } => Some(key),
             Self::Unsigned => None,
         }
     }
 
     #[must_use]
-    pub fn reason(&self, user: &str) -> String {
+    pub fn reason(&self) -> String {
         match self {
             Self::Unsigned => "unverified: the bundle is unsigned".to_owned(),
-            Self::Signed {
-                key,
-                trust: Trust::Listed,
-            } => format!("verified, signed by {}", key.fingerprint()),
-            Self::Signed {
-                key,
-                trust: Trust::NotListed { trusted_as },
-            } if trusted_as.is_empty() => format!(
+            Self::UnknownKey { key } => format!(
                 "unverified: signed by {}, which is not in your trusted senders",
                 key.fingerprint()
             ),
-            Self::Signed {
+            Self::Trusted {
                 key,
-                trust: Trust::NotListed { trusted_as },
+                trusted_as,
+                author,
+            } if trusted_as == author => {
+                format!("verified, signed by {trusted_as} ({})", key.fingerprint())
+            }
+            Self::Trusted {
+                key,
+                trusted_as,
+                author,
             } => format!(
-                "unverified: signed by {}, which you trust as {}, not as {user}",
-                key.fingerprint(),
-                trusted_as.join(", ")
+                "verified, signed by {trusted_as} ({}); bundle author '{author}'",
+                key.fingerprint()
             ),
         }
     }
@@ -345,26 +340,99 @@ impl TrustStore {
             return Ok(Verification::Unsigned);
         };
         let key = signature.verify(bundle, user)?;
-        if self
-            .senders
-            .iter()
-            .any(|sender| sender.name == user && sender.key == key)
-        {
-            return Ok(Verification::Signed {
-                key,
-                trust: Trust::Listed,
-            });
-        }
-        Ok(Verification::Signed {
+        let Some(sender) = self.senders.iter().find(|sender| sender.key == key) else {
+            return Ok(Verification::UnknownKey { key });
+        };
+        Ok(Verification::Trusted {
             key,
-            trust: Trust::NotListed {
-                trusted_as: self
-                    .senders
-                    .iter()
-                    .filter(|sender| sender.key == key)
-                    .map(|sender| sender.name.clone())
-                    .collect(),
-            },
+            trusted_as: sender.name.clone(),
+            author: user.to_owned(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn signed_by(user: &str) -> Result<(NodeKey, Signature, Vec<u8>), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let key = NodeKey::load_or_create(&directory.path().join("node.key"))?;
+        let bundle = b"{}".to_vec();
+        let signature = key.sign(&bundle, user);
+        Ok((key, signature, bundle))
+    }
+
+    #[test]
+    fn a_trusted_key_verifies_under_any_author_name() -> TestResult {
+        let (key, signature, bundle) = signed_by("owner")?;
+        let mut trust = TrustStore::default();
+        trust.add("ben-laptop", key.public_key())?;
+        let verified = trust.verification(Some(&signature), &bundle, "owner")?;
+        assert_eq!(
+            verified,
+            Verification::Trusted {
+                key: key.public_key(),
+                trusted_as: "ben-laptop".to_owned(),
+                author: "owner".to_owned(),
+            }
+        );
+        let reason = verified.reason();
+        assert!(reason.starts_with("verified, signed by ben-laptop (ed25519:"));
+        assert!(reason.ends_with("; bundle author 'owner'"), "{reason}");
+        Ok(())
+    }
+
+    #[test]
+    fn the_first_stored_label_shows_whatever_the_author_claims() -> TestResult {
+        let (key, signature, bundle) = signed_by("owner")?;
+        let mut trust = TrustStore::default();
+        trust.add("laptop", key.public_key())?;
+        trust.add("owner", key.public_key())?;
+        let Verification::Trusted { trusted_as, .. } =
+            trust.verification(Some(&signature), &bundle, "owner")?
+        else {
+            return Err("expected a verified bundle".into());
+        };
+        assert_eq!(trusted_as, "laptop");
+        Ok(())
+    }
+
+    #[test]
+    fn an_unlisted_or_removed_key_stays_unverified() -> TestResult {
+        let (key, signature, bundle) = signed_by("owner")?;
+        let mut trust = TrustStore::default();
+        let unknown = Verification::UnknownKey {
+            key: key.public_key(),
+        };
+        assert_eq!(
+            trust.verification(Some(&signature), &bundle, "owner")?,
+            unknown
+        );
+        trust.add("laptop", key.public_key())?;
+        trust.remove("laptop", Some(&key.public_key()));
+        assert_eq!(
+            trust.verification(Some(&signature), &bundle, "owner")?,
+            unknown
+        );
+        assert!(unknown.reason().contains("not in your trusted senders"));
+        Ok(())
+    }
+
+    #[test]
+    fn another_trusted_key_does_not_vouch_for_the_signer() -> TestResult {
+        let (key, signature, bundle) = signed_by("owner")?;
+        let (other, _, _) = signed_by("owner")?;
+        let mut trust = TrustStore::default();
+        trust.add("owner", other.public_key())?;
+        assert_eq!(
+            trust.verification(Some(&signature), &bundle, "owner")?,
+            Verification::UnknownKey {
+                key: key.public_key()
+            }
+        );
+        Ok(())
     }
 }

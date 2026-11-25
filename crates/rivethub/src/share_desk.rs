@@ -6,29 +6,22 @@ use async_trait::async_trait;
 use capture::sanitize::LocalKey;
 use capture::sanitize::ReportFlags;
 use capture::sanitize::decide::DecideError;
-use capture::sanitize::decide::Mode;
-use capture::sanitize::decide::Resolution;
 use capture::share;
 use cli::memory::SessionStore;
 use cli::memory::desk as cli_desk;
+use cli::memory::push as cli_push;
 use config::Config;
 use config::Environment;
 use kernel::memory::MemoryStore;
-use kernel::memory::share::DecideMode;
 use kernel::memory::share::SessionShare as _;
 use kernel::memory::share::ShareFailure;
+use kernel::memory::share::desk::BundleName;
 use kernel::memory::share::desk::DeskError;
 use kernel::memory::share::desk::Draft;
-use kernel::memory::share::desk::DraftDecision;
 use kernel::memory::share::desk::DraftId;
 use kernel::memory::share::desk::DraftRequest;
-use kernel::memory::share::desk::DraftSession;
-use kernel::memory::share::desk::DraftTotals;
-use kernel::memory::share::desk::EscapedText;
 use kernel::memory::share::desk::FindQuery;
 use kernel::memory::share::desk::FlagChoice;
-use kernel::memory::share::desk::FlagState;
-use kernel::memory::share::desk::FlagView;
 use kernel::memory::share::desk::Found;
 use kernel::memory::share::desk::FoundSession;
 use kernel::memory::share::desk::LoginId;
@@ -37,7 +30,9 @@ use kernel::memory::share::desk::LoginStep;
 use kernel::memory::share::desk::Mark;
 use kernel::memory::share::desk::Marked;
 use kernel::memory::share::desk::NodeKeyView;
-use kernel::memory::share::desk::RuleCount;
+use kernel::memory::share::desk::PushRequest;
+use kernel::memory::share::desk::Pushed;
+use kernel::memory::share::desk::ReadyBundle;
 use kernel::memory::share::desk::SendRequest;
 use kernel::memory::share::desk::Sent;
 use kernel::memory::share::desk::ServerOrigin;
@@ -51,12 +46,14 @@ use uuid::Uuid;
 
 use crate::sessions::NodeShare;
 
+mod bundles;
 mod drafts;
 mod logins;
 
 use drafts::DraftState;
 use drafts::Drafts;
 use drafts::Phase;
+use drafts::view;
 use logins::OriginGates;
 use logins::Pending;
 
@@ -71,6 +68,7 @@ pub struct NodeDesk {
     env: Environment,
     memory: Arc<dyn MemoryStore>,
     clock: Clock,
+    share_dir: std::path::PathBuf,
     drafts: Drafts,
     logins: parking_lot::Mutex<BTreeMap<LoginId, Pending>>,
     sign_in_out: OriginGates,
@@ -103,6 +101,7 @@ impl NodeDesk {
             env: env.clone(),
             memory,
             clock: Arc::new(Timestamp::now),
+            share_dir: crate::sessions::share_dir(env)?,
             drafts: Drafts::new(),
             logins: parking_lot::Mutex::default(),
             sign_in_out: OriginGates::default(),
@@ -145,74 +144,6 @@ impl NodeDesk {
     }
 }
 
-fn view(id: DraftId, state: &DraftState, expires_at: Timestamp) -> Draft {
-    let report = &state.report;
-    let totals = report.totals();
-    let decision = report.decision.as_ref();
-    Draft {
-        id,
-        expires_at,
-        totals: DraftTotals {
-            secrets: totals.secrets,
-            mapped: totals.mapped,
-            redacted: totals.redacted,
-            escaped: totals.escaped,
-            rechecked: report.rechecked,
-        },
-        rules: share::rule_totals(report)
-            .into_iter()
-            .map(|(rule, count)| RuleCount { rule, count })
-            .collect(),
-        sessions: state
-            .sealed
-            .bundle
-            .sessions
-            .iter()
-            .zip(&state.conversations)
-            .map(|(session, id)| DraftSession {
-                id: *id,
-                agent: session.origin.agent.clone(),
-                messages: session.batch.messages.len(),
-            })
-            .collect(),
-        not_scanned: share::NOT_SCANNED.to_owned(),
-        best_effort: share::BEST_EFFORT.to_owned(),
-        decision: decision.map(|decision| DraftDecision {
-            model: decision.model.clone(),
-            scored: decision.scored,
-            calls: decision.calls,
-            trivial: decision.trivial,
-            mode: match decision.review.mode {
-                Mode::Advisory => DecideMode::Advisory,
-                Mode::Block => DecideMode::Block,
-            },
-        }),
-        flags: decision
-            .map(|decision| {
-                decision
-                    .flags
-                    .iter()
-                    .map(|flag| {
-                        let place = crate::sessions::flag_place(flag);
-                        FlagView {
-                            number: flag.number,
-                            score: flag.score,
-                            session: place
-                                .as_ref()
-                                .and_then(|place| state.conversations.get(place.session))
-                                .copied(),
-                            place,
-                            length: flag.text.chars().count(),
-                            text: EscapedText::escape(&flag.text),
-                            state: flag_state(state.resolved.get(&flag.number)),
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
-    }
-}
-
 impl NodeDesk {
     async fn upload(&self, text: &[u8], send: &SendRequest) -> Result<cli_desk::Shared, DeskError> {
         let sealed = cli_desk::seal_bytes(&self.env, with_newline(text), send.signed, 0)
@@ -246,18 +177,6 @@ impl NodeDesk {
                 .map_err(failed)?;
         }
         Ok(Some(offered.message))
-    }
-}
-
-fn flag_state(resolution: Option<&Resolution>) -> FlagState {
-    match resolution {
-        None => FlagState::Open,
-        Some(Resolution::Keep) => FlagState::Keep,
-        Some(Resolution::Redact) => FlagState::Redact,
-        Some(Resolution::Map { term, placeholder }) => FlagState::Map {
-            term: term.clone(),
-            placeholder: placeholder.clone(),
-        },
     }
 }
 
@@ -412,9 +331,18 @@ impl ShareDesk for NodeDesk {
                 report: outcome.report,
                 resolved: BTreeMap::new(),
                 conversations,
+                file: None,
             },
             (self.clock)(),
         )
+    }
+
+    async fn bundles(&self) -> Result<Vec<ReadyBundle>, DeskError> {
+        bundles::list(self.share_dir.clone()).await
+    }
+
+    async fn draft_bundle(&self, name: BundleName) -> Result<Draft, DeskError> {
+        self.draft_from(&name).await
     }
 
     async fn report(&self, id: DraftId) -> Result<Draft, DeskError> {
@@ -467,45 +395,40 @@ impl ShareDesk for NodeDesk {
     async fn send(&self, id: DraftId, send: SendRequest) -> Result<Sent, DeskError> {
         let (slot, _) = self.slot(id)?;
         let mut state = slot.lock().await;
-        state.open()?;
-        let flags = state
-            .report
-            .decision
-            .as_ref()
-            .map_or(0, |decision| decision.flags.len());
-        let open = flags.saturating_sub(state.resolved.len());
-        if open > 0 {
-            return Err(DeskError::OpenFlags { open });
-        }
-        let sessions = state.sealed.bundle.sessions.len();
-        let kept = state
-            .resolved
-            .values()
-            .filter(|resolution| **resolution == Resolution::Keep)
-            .count();
-        if send.confirm.sessions != sessions || send.confirm.kept_flags != kept {
-            return Err(DeskError::Counts {
-                sessions,
-                kept,
-                confirmed_sessions: send.confirm.sessions,
-                confirmed_kept: send.confirm.kept_flags,
-            });
-        }
+        state.confirm(send.confirm)?;
         state.phase = Phase::Sending;
         let shared = self.upload(&state.sealed.text, &send).await;
-        state.phase = if shared.is_ok() {
-            Phase::Closed
-        } else {
-            Phase::Open
-        };
+        let file = state.settle(shared.is_ok());
         drop(state);
         let shared = shared?;
         self.drafts.remove(id);
+        bundles::forget(file).await;
         Ok(Sent {
             code: shared.code,
             expires_at: shared.expires_at,
             bytes: shared.uploaded,
             signed: shared.signed.map(|key| key.fingerprint()),
+        })
+    }
+
+    async fn push(&self, id: DraftId, push: PushRequest) -> Result<Pushed, DeskError> {
+        let (slot, _) = self.slot(id)?;
+        let mut state = slot.lock().await;
+        state.confirm(push.confirm)?;
+        let pushed = cli_push::push_to_hub(&self.env, push.hub.as_str(), &state.sealed.text, 0)
+            .await
+            .map_err(cli_desk::desk_error);
+        let file = state.settle(pushed.is_ok());
+        drop(state);
+        let pushed = pushed?;
+        self.drafts.remove(id);
+        bundles::forget(file).await;
+        Ok(Pushed {
+            hub: pushed.hub,
+            user: pushed.user,
+            sessions: pushed.sessions,
+            inserted: pushed.inserted,
+            skipped: pushed.skipped,
         })
     }
 

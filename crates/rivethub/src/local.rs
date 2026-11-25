@@ -221,6 +221,7 @@ async fn supervise(
         "gateway listening on {addr}{}",
         if secure { " (tls)" } else { " (plain)" }
     );
+    let _record = publish_record(env, addr, secure);
     let tracker = TaskTracker::new();
     let (failed_tx, mut failed_rx) = mpsc::unbounded_channel();
     if let Err(error) = (NodeBoot {
@@ -262,6 +263,26 @@ async fn supervise(
     }
     tracing::info!("gateway stopped");
     Ok(())
+}
+
+fn publish_record(
+    env: &Environment,
+    addr: std::net::SocketAddr,
+    tls: bool,
+) -> Option<gateway::runtime_record::Published> {
+    let published = gateway::state_dir(env)
+        .map_err(|error| error.to_string())
+        .and_then(|state_dir| {
+            gateway::runtime_record::publish(&state_dir, addr, tls)
+                .map_err(|error| error.to_string())
+        });
+    match published {
+        Ok(record) => Some(record),
+        Err(error) => {
+            tracing::warn!("{error}; rh commands will find this gateway through the config port");
+            None
+        }
+    }
 }
 
 struct NodeBoot<'a> {
@@ -443,6 +464,7 @@ async fn build_runners(
             filing: Arc::clone(store) as Arc<dyn FilingStore>,
             pages: Arc::clone(store) as Arc<dyn TopicPageStore>,
             decisions: Arc::clone(store) as Arc<dyn DecisionStore>,
+            flagged: Arc::clone(store) as Arc<dyn kernel::flagged::FlaggedJobs>,
             changes: Arc::clone(store) as Arc<dyn kernel::changes::ChangeFeed>,
             digests: Arc::clone(store) as Arc<dyn kernel::changes::DigestStore>,
             tidy: Arc::clone(store) as Arc<dyn TidyStore>,

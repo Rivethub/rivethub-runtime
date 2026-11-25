@@ -108,16 +108,36 @@ pub trait CaptureTransport: Send + Sync {
     async fn post(&self, body: String) -> Result<CaptureResult, PostError>;
 }
 
-#[derive(Debug)]
 pub struct HttpCaptureTransport {
     endpoint: String,
     client: reqwest::Client,
+    bearer: Option<String>,
+}
+
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
+impl std::fmt::Debug for HttpCaptureTransport {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("HttpCaptureTransport")
+            .field("endpoint", &self.endpoint)
+            .finish_non_exhaustive()
+    }
 }
 
 impl HttpCaptureTransport {
     #[must_use]
     pub fn new(endpoint: String, client: reqwest::Client) -> Self {
-        Self { endpoint, client }
+        Self {
+            endpoint,
+            client,
+            bearer: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_bearer(mut self, token: String) -> Self {
+        self.bearer = Some(token);
+        self
     }
 }
 
@@ -125,9 +145,11 @@ impl HttpCaptureTransport {
 impl CaptureTransport for HttpCaptureTransport {
     async fn post(&self, body: String) -> Result<CaptureResult, PostError> {
         let url = format!("{}/api/capture", self.endpoint.trim_end_matches('/'));
-        let response = self
-            .client
-            .post(url)
+        let mut request = self.client.post(url);
+        if let Some(token) = &self.bearer {
+            request = request.bearer_auth(token);
+        }
+        let response = request
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .body(body)
             .send()
@@ -311,6 +333,19 @@ impl<T: CaptureTransport> CaptureWriter<T> {
             None => Ok(totals),
         }
     }
+}
+
+pub async fn deliver<T: CaptureTransport>(
+    transport: &T,
+    batch: &CaptureBatchRequest,
+    redaction: Option<&Redaction>,
+) -> Result<Totals, WriteError> {
+    let prepared = prepare(batch, redaction)?;
+    let mut totals = Totals::default();
+    for chunk in split_chunks(&prepared, DEFAULT_CHUNK_BYTES)? {
+        totals.add(&transport.post(body_text(&chunk)?).await?);
+    }
+    Ok(totals)
 }
 
 pub fn prepare(

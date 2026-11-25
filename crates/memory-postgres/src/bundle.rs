@@ -3,6 +3,7 @@ use kernel::memory::MemoryEntry;
 use uuid::Uuid;
 use wire::JsonObject;
 use wire::capture::BundleAuthor;
+use wire::capture::BundleFilter;
 use wire::capture::BundledSession;
 use wire::capture::CaptureBatchRequest;
 use wire::capture::CaptureMessage;
@@ -42,12 +43,20 @@ impl crate::PostgresMemory {
         &self,
         author: &BundleAuthor,
         conversation_ids: Option<&[Uuid]>,
+        filter: &BundleFilter,
     ) -> Result<Vec<BundledSession>, Error> {
+        let owners = filter.owner_list(&author.user);
+        let since = filter.since.map(jiff_sqlx::Timestamp::from);
+        let until = filter.until.map(jiff_sqlx::Timestamp::from);
+        let limit = filter.limit.map(i64::from);
         let rows = sqlx::query_as!(
             BundleRow,
-            r#"select c.id as conversation_id, c.session_key, c.agent, c.channel, c.title, c.settings as "settings: sqlx::types::Json<JsonObject>", c.node, c.owner_user_id, c.created_at as "conversation_created_at!: jiff_sqlx::Timestamp", c.updated_at as "conversation_updated_at!: jiff_sqlx::Timestamp", m.id::text as message_id, m.role as role_text, m.content, m.tool_name, m.tool_args::text as tool_args, m.tool_result, m.metadata::text as metadata, m.created_at as "message_at!: jiff_sqlx::Timestamp" from rh_conversations c join rh_messages m on m.conversation_id = c.id where c.owner_user_id = $1 and (c.id = any($2) or ($2::uuid[] is null and not exists (select 1 from rh_session_trash tr where tr.session_key = c.session_key))) order by c.created_at, c.id, m.created_at, m.id"#,
-            author.user,
+            r#"with picked as (select c.id from rh_conversations c where ($2::text[] is null or c.owner_user_id = any($2)) and (c.id = any($1) or ($1::uuid[] is null and not exists (select 1 from rh_session_trash tr where tr.session_key = c.session_key))) and ($3::timestamptz is null or c.updated_at >= $3) and ($4::timestamptz is null or c.updated_at < $4) and exists (select 1 from rh_messages x where x.conversation_id = c.id) order by c.updated_at desc, c.id limit $5) select c.id as conversation_id, c.session_key, c.agent, c.channel, c.title, c.settings as "settings: sqlx::types::Json<JsonObject>", c.node, c.owner_user_id, c.created_at as "conversation_created_at!: jiff_sqlx::Timestamp", c.updated_at as "conversation_updated_at!: jiff_sqlx::Timestamp", m.id::text as message_id, m.role as role_text, m.content, m.tool_name, m.tool_args::text as tool_args, m.tool_result, m.metadata::text as metadata, m.created_at as "message_at!: jiff_sqlx::Timestamp" from picked p join rh_conversations c on c.id = p.id join rh_messages m on m.conversation_id = c.id order by c.created_at, c.id, m.created_at, m.id"#,
             conversation_ids as Option<&[Uuid]>,
+            owners as Option<Vec<String>>,
+            since as Option<jiff_sqlx::Timestamp>,
+            until as Option<jiff_sqlx::Timestamp>,
+            limit,
         )
         .fetch_all(&self.pool)
         .await
