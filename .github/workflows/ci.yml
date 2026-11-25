@@ -57,6 +57,8 @@ jobs:
           git config --global url."${clippy}".insteadOf https://github.com/rust-lang/rust-clippy
       - name: cargo xtask check
         run: cargo xtask check --locked --no-nextest-list
+      - name: Release signer tests
+        run: node --test .github/scripts/sign-release.test.mjs
 
   commits:
     name: Commits (no AI attribution, Conventional Commits)

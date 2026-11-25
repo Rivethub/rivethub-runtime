@@ -285,3 +285,43 @@ async fn only_a_caller_holding_the_tools_token_reaches_the_tools_socket() -> Tes
     host.gateway.close().await;
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn passthrough_strips_cors_and_refresh_headers_and_caps_request_body() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let source = root.path().join("source");
+    write_manifest(&source, &BASE)?;
+    let host = harness(root.path()).await?;
+    host.install_and_enable(&source).await?;
+
+    let answer = host
+        .send(get("/api/plugins/fixture/http/evil-headers")?)
+        .await?;
+    assert_eq!(answer.status, StatusCode::OK);
+    assert!(answer.headers.get("access-control-allow-origin").is_none());
+    assert!(answer.headers.get("refresh").is_none());
+    assert_eq!(
+        answer
+            .headers
+            .get("x-content-type-options")
+            .and_then(|v| v.to_str().ok()),
+        Some("nosniff")
+    );
+    let csp = answer
+        .headers
+        .get("content-security-policy")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    assert!(csp.starts_with("sandbox "), "{csp}");
+
+    let oversized = Request::builder()
+        .method(Method::POST)
+        .uri("/api/plugins/fixture/http/upload")
+        .header("host", "127.0.0.1:5174")
+        .body(Body::from(vec![b'x'; 16 * 1024 * 1024 + 1]))?;
+    let rejected = host.send(oversized).await?;
+    assert_eq!(rejected.status, StatusCode::PAYLOAD_TOO_LARGE);
+
+    host.gateway.close().await;
+    Ok(())
+}

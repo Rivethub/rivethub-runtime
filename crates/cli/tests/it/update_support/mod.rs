@@ -10,9 +10,12 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse as _, Redirect, Response};
 use axum::routing::get;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use cli::service::Scope;
 use cli::update::{Channel, UpdateArgs, Updater};
 use config::Environment;
+use gateway::account::{ReleaseKeyring, UpdateKey};
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
@@ -233,8 +236,10 @@ pub(crate) fn archive(published: Published) -> Result<Vec<u8>> {
 
 struct Assets {
     manifest: String,
+    manifest_sig: Option<String>,
     archive: Vec<u8>,
     web: Vec<WebRelease>,
+    web_sigs: std::collections::BTreeMap<String, String>,
 }
 
 pub(crate) fn web_url(server: &testkit::Stub) -> Result<url::Url> {
@@ -256,12 +261,27 @@ impl WebRelease {
 }
 
 pub(crate) async fn server(published: Published) -> Result<testkit::Stub> {
-    server_with_web(published, Vec::new()).await
+    server_with_sigs(
+        published,
+        None,
+        Vec::new(),
+        std::collections::BTreeMap::new(),
+    )
+    .await
 }
 
 pub(crate) async fn server_with_web(
     published: Published,
     web: Vec<WebRelease>,
+) -> Result<testkit::Stub> {
+    server_with_sigs(published, None, web, std::collections::BTreeMap::new()).await
+}
+
+pub(crate) async fn server_with_sigs(
+    published: Published,
+    manifest_sig: Option<String>,
+    web: Vec<WebRelease>,
+    web_sigs: std::collections::BTreeMap<String, String>,
 ) -> Result<testkit::Stub> {
     let archive = archive(published)?;
     let digest = hex::encode(Sha256::digest(if published == Published::BadChecksum {
@@ -282,8 +302,10 @@ pub(crate) async fn server_with_web(
         .route("/web-assets/{version}/{name}", get(web_download))
         .with_state(Arc::new(Assets {
             manifest,
+            manifest_sig,
             archive,
             web,
+            web_sigs,
         }));
     Ok(testkit::stub_server(routes).await?)
 }
@@ -291,17 +313,22 @@ pub(crate) async fn server_with_web(
 fn release(
     headers: &HeaderMap,
     (tag_name, draft, prerelease): (&'static str, bool, bool),
+    has_sig: bool,
 ) -> Release {
     let host = headers
         .get("host")
         .expect("host")
         .to_str()
         .expect("host text");
+    let mut names = vec![archive_name(tag_name), "SHA256SUMS".to_owned()];
+    if has_sig {
+        names.push("SHA256SUMS.sig".to_owned());
+    }
     Release {
         tag_name: tag_name.to_owned(),
         draft,
         prerelease,
-        assets: [archive_name(tag_name), "SHA256SUMS".to_owned()]
+        assets: names
             .into_iter()
             .map(|name| Asset {
                 browser_download_url: format!("http://{host}/assets/{name}"),
@@ -311,21 +338,33 @@ fn release(
     }
 }
 
-async fn list(headers: HeaderMap) -> Response {
+async fn list(headers: HeaderMap, State(assets): State<Arc<Assets>>) -> Response {
+    let has_sig = assets.manifest_sig.is_some();
     let releases: Vec<_> = RELEASES
         .into_iter()
-        .map(|entry| release(&headers, entry))
+        .map(|entry| release(&headers, entry, has_sig))
         .collect();
     axum::Json(releases).into_response()
 }
 
-async fn latest(headers: HeaderMap) -> Response {
-    axum::Json(release(&headers, RELEASES[0])).into_response()
+async fn latest(headers: HeaderMap, State(assets): State<Arc<Assets>>) -> Response {
+    axum::Json(release(
+        &headers,
+        RELEASES[0],
+        assets.manifest_sig.is_some(),
+    ))
+    .into_response()
 }
 
-async fn tagged(Path(tag): Path<String>, headers: HeaderMap) -> Response {
+async fn tagged(
+    Path(tag): Path<String>,
+    headers: HeaderMap,
+    State(assets): State<Arc<Assets>>,
+) -> Response {
     match RELEASES.into_iter().find(|(name, _, _)| *name == tag) {
-        Some(entry) => axum::Json(release(&headers, entry)).into_response(),
+        Some(entry) => {
+            axum::Json(release(&headers, entry, assets.manifest_sig.is_some())).into_response()
+        }
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -333,6 +372,11 @@ async fn tagged(Path(tag): Path<String>, headers: HeaderMap) -> Response {
 async fn download(Path(name): Path<String>, State(assets): State<Arc<Assets>>) -> Response {
     if name == "SHA256SUMS" {
         assets.manifest.clone().into_response()
+    } else if name == "SHA256SUMS.sig" {
+        match &assets.manifest_sig {
+            Some(sig) => sig.clone().into_response(),
+            None => StatusCode::NOT_FOUND.into_response(),
+        }
     } else if RELEASES
         .into_iter()
         .any(|(tag, _, _)| name == archive_name(tag))
@@ -351,13 +395,21 @@ async fn web_list(headers: HeaderMap, State(assets): State<Arc<Assets>>) -> Resp
         .expect("host")
         .to_str()
         .expect("host text");
-    let mut releases = vec![release(&headers, RELEASES[0])];
+    let mut releases = vec![release(
+        &headers,
+        RELEASES[0],
+        assets.manifest_sig.is_some(),
+    )];
     releases.extend(assets.web.iter().map(|web| {
+        let mut names = vec!["web-manifest.json".to_owned(), web.asset_name()];
+        if assets.web_sigs.contains_key(web.version) {
+            names.push("web-manifest.json.sig".to_owned());
+        }
         Release {
             tag_name: format!("web-v{}", web.version),
             draft: false,
             prerelease: web.version.contains('-'),
-            assets: ["web-manifest.json".to_owned(), web.asset_name()]
+            assets: names
                 .into_iter()
                 .map(|name| Asset {
                     browser_download_url: format!(
@@ -384,6 +436,60 @@ struct WebManifest {
     sha256: String,
 }
 
+pub(crate) fn web_manifest(web: &WebRelease) -> Vec<u8> {
+    let data = if web.bad_digest {
+        b"wrong".as_slice()
+    } else {
+        &web.archive
+    };
+    serde_json::to_vec(&WebManifest {
+        schema_version: 1,
+        version: web.version,
+        commit: "a".repeat(40),
+        channel: "stable",
+        min_rh_version: web.minimum,
+        asset: web.asset_name(),
+        sha256: hex::encode(Sha256::digest(data)),
+    })
+    .expect("web manifest serializes")
+}
+
+pub(crate) struct Signer {
+    pair: aws_lc_rs::signature::Ed25519KeyPair,
+}
+
+impl Signer {
+    pub(crate) fn new() -> Result<Self> {
+        Ok(Self {
+            pair: aws_lc_rs::signature::Ed25519KeyPair::generate()?,
+        })
+    }
+
+    pub(crate) fn keyring(&self, require_signatures: bool) -> Result<ReleaseKeyring> {
+        use aws_lc_rs::signature::KeyPair as _;
+        let key: [u8; 32] = self
+            .pair
+            .public_key()
+            .as_ref()
+            .try_into()
+            .map_err(|_| "ed25519 public key length")?;
+        Ok(ReleaseKeyring::default_trusted()
+            .with_key("test-key", UpdateKey::from_bytes(key))
+            .require_signatures(require_signatures))
+    }
+
+    pub(crate) fn sign(&self, payload: &[u8]) -> String {
+        format!(
+            "v1:test-key:{}\n",
+            STANDARD.encode(self.pair.sign(payload).as_ref())
+        )
+    }
+}
+
+pub(crate) fn forged() -> String {
+    format!("v1:test-key:{}\n", STANDARD.encode([0_u8; 64]))
+}
+
 async fn web_download(
     Path((version, name)): Path<(String, String)>,
     State(assets): State<Arc<Assets>>,
@@ -395,21 +501,12 @@ async fn web_download(
         if web.broken_manifest {
             return "{}".into_response();
         }
-        let data = if web.bad_digest {
-            b"wrong".as_slice()
-        } else {
-            &web.archive
-        };
-        axum::Json(WebManifest {
-            schema_version: 1,
-            version: web.version,
-            commit: "a".repeat(40),
-            channel: "stable",
-            min_rh_version: web.minimum,
-            asset: web.asset_name(),
-            sha256: hex::encode(Sha256::digest(data)),
-        })
-        .into_response()
+        web_manifest(web).into_response()
+    } else if name == "web-manifest.json.sig" {
+        match assets.web_sigs.get(web.version) {
+            Some(sig) => sig.clone().into_response(),
+            None => StatusCode::NOT_FOUND.into_response(),
+        }
     } else if name == web.asset_name() {
         web.archive.clone().into_response()
     } else {

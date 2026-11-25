@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use clap::{Args, ValueEnum};
 use config::Environment;
+use gateway::account::ReleaseKeyring;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 use wire::gateway::account::UpdateSource;
@@ -86,6 +87,7 @@ pub struct Updater {
     web_releases: Url,
     scope: Scope,
     running: String,
+    keyring: ReleaseKeyring,
 }
 
 #[derive(Debug)]
@@ -104,12 +106,19 @@ impl Updater {
             web_releases,
             scope,
             running: env!("CARGO_PKG_VERSION").to_owned(),
+            keyring: ReleaseKeyring::default_trusted(),
         }
     }
 
     #[must_use]
     pub fn running(mut self, version: &str) -> Self {
         version.clone_into(&mut self.running);
+        self
+    }
+
+    #[must_use]
+    pub fn keyring(mut self, keyring: ReleaseKeyring) -> Self {
+        self.keyring = keyring;
         self
     }
 
@@ -147,7 +156,13 @@ impl Updater {
             (Err(error), Ok(Some(_))) => web::Outcome::Refused(error.to_string()),
             (Ok(Some(store)), Ok(None)) => {
                 match store
-                    .refresh(&self.web_releases, args.channel, &runtime, shutdown)
+                    .refresh(
+                        &self.web_releases,
+                        args.channel,
+                        &runtime,
+                        &self.keyring,
+                        shutdown,
+                    )
                     .await
                 {
                     Ok(outcome) => outcome,
@@ -238,10 +253,13 @@ impl Updater {
     ) -> Result<Staged, UpdateError> {
         release::stage(
             &self.releases,
-            args.version.as_deref(),
-            args.channel == Channel::Beta,
-            &self.running,
+            release::StageTarget {
+                version: args.version.as_deref(),
+                beta: args.channel == Channel::Beta,
+                running: &self.running,
+            },
             directory,
+            &self.keyring,
             shutdown,
         )
         .await
