@@ -15,6 +15,7 @@ pub use chunks::unchunked_counts_trimmed_characters_and_caps_tool_output;
 pub use coverage::a_recent_leaf_is_queued_ahead_of_an_old_one;
 pub use coverage::dead_wiki_jobs_outside_the_windows_stay_put;
 pub use ledger::a_dismissed_ledger_id_can_be_retried;
+pub use ledger::a_handoff_leaves_a_running_job_with_its_key;
 pub use ledger::a_job_past_the_flag_threshold_is_claimed_before_the_sweep;
 pub use ledger::a_re_added_key_is_flagged_on_the_next_failure;
 pub use ledger::a_swept_job_keeps_the_queue_time;

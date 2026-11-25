@@ -103,15 +103,21 @@ where
         .await?;
     fail_due(queue, &mut due, "dismiss me").await?;
     let flagged = only(store).await?;
-    let key = flagged.key.clone().ok_or("the flagged job has a key")?;
     store.dismiss(flagged.id, Timestamp::now()).await?;
     assert_eq!(store.flagged().await?, Vec::new());
     assert!(
-        store.holds_key(&key).await?,
-        "a dismissed flag keeps its key"
+        !store
+            .queue_unless_flagged(&embed("dismissed", 1, JobKeyMode::Replace)?)
+            .await?,
+        "a dismissed flag keeps its key out of the queue"
     );
     store.retry(flagged.id).await?;
-    assert!(!store.holds_key(&key).await?, "a retry releases the key");
+    assert!(
+        store
+            .queue_unless_flagged(&embed("dismissed", 1, JobKeyMode::Replace)?)
+            .await?,
+        "a retry releases the key"
+    );
     let claimed = claim_embed(queue)
         .await?
         .ok_or("the dismissed job was not retried")?;
@@ -173,6 +179,50 @@ where
     assert_eq!(next.key.as_deref(), Some("held"));
     assert_eq!(next.attempts, 0);
     assert_eq!(next.max_attempts, 9);
+    Ok(())
+}
+
+pub async fn a_handoff_leaves_a_running_job_with_its_key<S, Q, D>(
+    store: &S,
+    queue: &Q,
+    mut due: D,
+) -> Outcome
+where
+    S: FlaggedJobs,
+    Q: JobQueue,
+    D: AsyncFnMut() -> Outcome,
+{
+    let running = queue
+        .enqueue(embed("held", 4, JobKeyMode::Replace)?)
+        .await?;
+    due().await?;
+    let claimed = claim_embed(queue).await?.ok_or("the running job")?;
+    assert!(
+        store
+            .queue_unless_flagged(&embed("held", 9, JobKeyMode::Replace)?)
+            .await?,
+        "a key with no flag is handed off"
+    );
+    let held = queued_job(queue, running).await?;
+    assert_eq!(
+        held.key.as_deref(),
+        Some("held"),
+        "the running job keeps its key"
+    );
+    assert_eq!(held.attempts, 1, "the running job keeps its retries");
+    queue.fail(claimed.id, "held failure").await?;
+    due().await?;
+    let again = claim_embed(queue).await?.ok_or("the running job retries")?;
+    assert_eq!(
+        again.attempt, 2,
+        "the retry is the running job, not a second one"
+    );
+    due().await?;
+    assert_eq!(
+        claim_embed(queue).await?,
+        None,
+        "no second job shares the key"
+    );
     Ok(())
 }
 

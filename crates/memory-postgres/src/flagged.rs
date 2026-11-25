@@ -5,6 +5,7 @@ use kernel::flagged::FlaggedId;
 use kernel::flagged::FlaggedJob;
 use kernel::flagged::FlaggedJobs;
 use kernel::memory::summary_reference::summary_job_target;
+use kernel::queue::Job;
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 use wire::JsonObject;
@@ -84,6 +85,10 @@ const RETRY: &str = "WITH taken AS (
 SELECT (graphile_worker.add_job(t.task, t.payload::json, null, null, t.max_attempts,
         t.job_key, t.priority, null, 'replace')).id
 FROM taken t";
+
+const HANDOFF: &str = "SELECT (graphile_worker.add_job($1, $2::json, $3, $4, $5, $6, $7, null,
+        'unsafe_dedupe')).id
+ WHERE NOT EXISTS (SELECT 1 FROM rh_flagged_jobs WHERE job_key = $6)";
 
 #[derive(Debug, sqlx::FromRow)]
 struct FailedRow {
@@ -270,12 +275,34 @@ impl FlaggedJobs for PostgresMemory {
         Ok(())
     }
 
-    async fn holds_key(&self, key: &str) -> Result<bool, FlaggedError> {
-        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM rh_flagged_jobs WHERE job_key = $1)")
-            .bind(key)
-            .fetch_one(&self.pool)
+    async fn queue_unless_flagged(&self, job: &Job) -> Result<bool, FlaggedError> {
+        let mut tx = self.pool.begin().await.map_err(unavailable)?;
+        sqlx::query(HANDOFF)
+            .bind(job.name.to_string())
+            .bind(sqlx::types::Json(&job.payload))
+            .bind(crate::graphile::single_flight(job))
+            .bind(crate::time::BindTime::bind_time(job.run_at))
+            .bind(match job.max_attempts {
+                Some(attempts) => attempts,
+                None => crate::graphile::attempts_for(&job.name),
+            })
+            .bind(&job.key)
+            .bind(i32::from(job.priority))
+            .execute(&mut *tx)
             .await
-            .map_err(unavailable)
+            .map_err(unavailable)?;
+        let flagged: bool =
+            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM rh_flagged_jobs WHERE job_key = $1)")
+                .bind(&job.key)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(unavailable)?;
+        if flagged {
+            tx.rollback().await.map_err(unavailable)?;
+        } else {
+            tx.commit().await.map_err(unavailable)?;
+        }
+        Ok(!flagged)
     }
 }
 

@@ -83,7 +83,7 @@ pub trait FlaggedJobs: Send + Sync {
 
     async fn dismiss(&self, id: FlaggedId, at: Timestamp) -> Result<(), FlaggedError>;
 
-    async fn holds_key(&self, key: &str) -> Result<bool, FlaggedError>;
+    async fn queue_unless_flagged(&self, job: &crate::queue::Job) -> Result<bool, FlaggedError>;
 }
 
 #[expect(clippy::expect_used)]

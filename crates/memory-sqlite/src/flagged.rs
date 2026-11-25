@@ -5,6 +5,7 @@ use kernel::flagged::FlaggedError;
 use kernel::flagged::FlaggedId;
 use kernel::flagged::FlaggedJob;
 use kernel::flagged::FlaggedJobs;
+use kernel::queue::Job;
 use rusqlite::Transaction;
 use rusqlite::params;
 use rusqlite::{Connection, OptionalExtension as _};
@@ -257,18 +258,39 @@ impl FlaggedJobs for SqliteStore {
         Ok(())
     }
 
-    async fn holds_key(&self, key: &str) -> Result<bool, FlaggedError> {
-        let key = key.to_owned();
-        self.with_conn(move |conn| {
-            conn.query_row(
-                "SELECT EXISTS (SELECT 1 FROM rh_flagged_jobs WHERE job_key = ?1)",
-                [key],
-                |row| row.get(0),
-            )
-            .map_err(SqliteError::query("flagged job key"))
-        })
-        .await
-        .map_err(unavailable)
+    async fn queue_unless_flagged(&self, job: &Job) -> Result<bool, FlaggedError> {
+        let payload = serde_json::to_string(&job.payload).map_err(|source| {
+            unavailable(SqliteError::Encode {
+                column: "payload",
+                source,
+            })
+        })?;
+        let insert = crate::port::job_insert(job, payload, Timestamp::now())
+            .map_err(|error| FlaggedError::Unavailable(Box::new(error)))?;
+        let (queued, inserted) = self
+            .with_conn(move |conn| {
+                let tx = crate::summary_replace::immediate(conn)
+                    .map_err(SqliteError::query("hand off job"))?;
+                let flagged: bool = tx
+                    .query_row(
+                        "SELECT EXISTS (SELECT 1 FROM rh_flagged_jobs WHERE job_key = ?1)",
+                        [&insert.key],
+                        |row| row.get(0),
+                    )
+                    .map_err(SqliteError::query("hand off job"))?;
+                if flagged {
+                    return Ok((false, false));
+                }
+                let inserted = crate::queue::insert_job(&tx, &insert)?.is_some();
+                tx.commit().map_err(SqliteError::query("hand off job"))?;
+                Ok((true, inserted))
+            })
+            .await
+            .map_err(unavailable)?;
+        if inserted {
+            self.notifications.send_replace(());
+        }
+        Ok(queued)
     }
 }
 
