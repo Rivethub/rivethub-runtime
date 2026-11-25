@@ -60,16 +60,26 @@ pub enum ShareError {
         "the bundle still withholds {0} flagged chunks; nothing was imported and the ciphertext stays in the inbox"
     )]
     Withheld(usize),
+    #[error("a second scan of the bundle still finds {found}; nothing was pushed; {advice}")]
+    Rescanned { found: String, advice: String },
     #[error("{0}")]
     Usage(&'static str),
+}
+
+#[derive(Debug)]
+pub(super) enum ShareTo {
+    Drop {
+        server: Option<String>,
+        signed: bool,
+    },
+    Hub(String),
 }
 
 #[derive(Debug)]
 pub(super) enum ShareCommand {
     Share {
         path: PathBuf,
-        server: Option<String>,
-        signed: bool,
+        to: ShareTo,
         flags: usize,
     },
     Receive {
@@ -92,8 +102,7 @@ pub(super) enum ShareCommand {
     },
 }
 
-const SHARE_USAGE: &str =
-    "usage: rh memory share <sanitized bundle> [--server <host>] [--unsigned] [--flags <n>]";
+const SHARE_USAGE: &str = "usage: rh memory share <sanitized bundle> [--server <host>] [--unsigned] [--flags <n>] | rh memory share <sanitized bundle> --hub <name|host> [--flags <n>]";
 const RECEIVE_USAGE: &str = "usage: rh memory receive <share code> [--from <host[:port]>] [--dry-run] [--session <n>=import|skip|hold-spans]... [--all=import|skip|hold-spans] [--force] [--gateway <url>]";
 const KEY_USAGE: &str = "usage: rh memory key show";
 const TRUST_USAGE: &str =
@@ -107,6 +116,7 @@ pub(super) fn share_args(args: &[String]) -> Result<MemoryCommand, Error> {
     let mut scan = Scan::new(args);
     let mut path = None;
     let mut server = None;
+    let mut hub = None;
     let mut signed = true;
     let mut flags = 0;
     while let Some(token) = scan.current().map(str::to_owned) {
@@ -117,6 +127,14 @@ pub(super) fn share_args(args: &[String]) -> Result<MemoryCommand, Error> {
         match scan.option("--server", None) {
             Taken::Value(value) if !value.trim().is_empty() => {
                 server = Some(value);
+                continue;
+            }
+            Taken::Value(_) | Taken::Missing => return Err(usage(SHARE_USAGE)),
+            Taken::Absent => {}
+        }
+        match scan.option("--hub", None) {
+            Taken::Value(value) if !value.trim().is_empty() => {
+                hub = Some(value);
                 continue;
             }
             Taken::Value(_) | Taken::Missing => return Err(usage(SHARE_USAGE)),
@@ -137,10 +155,14 @@ pub(super) fn share_args(args: &[String]) -> Result<MemoryCommand, Error> {
         scan.bump();
     }
     let path = path.ok_or_else(|| usage(SHARE_USAGE))?;
+    let to = match (hub, server, signed) {
+        (Some(hub), None, true) => ShareTo::Hub(hub),
+        (Some(_), _, _) => return Err(usage(SHARE_USAGE)),
+        (None, server, signed) => ShareTo::Drop { server, signed },
+    };
     Ok(MemoryCommand::Share(ShareCommand::Share {
         path,
-        server,
-        signed,
+        to,
         flags,
     }))
 }
@@ -223,22 +245,25 @@ pub(super) fn trust_args(args: &[String]) -> Result<MemoryCommand, Error> {
 
 pub(super) async fn run(command: ShareCommand, env: &Environment) -> Result<Report, Error> {
     match command {
-        ShareCommand::Share {
-            path,
-            server,
-            signed,
-            flags,
-        } => {
+        ShareCommand::Share { path, to, flags } => {
             let text = read_bundle_file(&path).await?;
-            let sealed = super::desk::seal_bytes(env, text, signed, flags).await?;
-            let shared = super::desk::upload_to(env, server.as_deref(), sealed).await?;
-            let kept = tokio::fs::remove_file(&path).await.err().map(|error| {
-                format!(
+            let mut report = match to {
+                ShareTo::Drop { server, signed } => {
+                    let sealed = super::desk::seal_bytes(env, text, signed, flags).await?;
+                    share_report(&super::desk::upload_to(env, server.as_deref(), sealed).await?)
+                }
+                ShareTo::Hub(hub) => {
+                    push_report(&super::push::push_to_hub(env, &hub, &text, flags).await?)
+                }
+            };
+            if let Err(error) = tokio::fs::remove_file(&path).await {
+                let warning = format!(
                     "warning: the bundle was shared but {} could not be removed ({error}); delete it yourself\n",
                     path.display()
-                )
-            });
-            Ok(share_report(&shared, kept.as_deref()))
+                );
+                report.stderr.push_str(&warning);
+            }
+            Ok(report)
         }
         ShareCommand::Receive {
             code,
@@ -328,21 +353,29 @@ pub fn code_line(shared: &Shared) -> String {
     )
 }
 
-fn share_report(shared: &Shared, kept: Option<&str>) -> Report {
+fn share_report(shared: &Shared) -> Report {
     let signed = shared.signed.map_or_else(
         || "unsigned".to_owned(),
         |key| format!("signed {}", key.fingerprint()),
     );
-    let mut report = Report::success(format!(
+    Report::success(format!(
         "sealed {} ({signed}), uploaded {} KiB; {}\n",
         sessions_noun(shared.sessions),
         shared.uploaded.div_ceil(1024),
         code_line(shared)
-    ));
-    if let Some(kept) = kept {
-        report.stderr.push_str(kept);
-    }
-    report
+    ))
+}
+
+fn push_report(pushed: &super::push::Pushed) -> Report {
+    Report::success(format!(
+        "pushed {} to {} as {}: {} messages inserted, {} skipped; they are in {}'s memory on that hub, with nothing to receive\n",
+        sessions_noun(pushed.sessions),
+        pushed.hub,
+        pushed.user,
+        pushed.inserted,
+        pushed.skipped,
+        pushed.user
+    ))
 }
 
 fn sessions_noun(count: usize) -> String {

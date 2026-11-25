@@ -14,12 +14,11 @@ use config::Environment;
 use kernel::memory::share::desk::TokenStore;
 use oauth2::RefreshToken;
 use oauth2::RequestTokenError;
-use oauth2::TokenResponse as _;
-use oauth2::basic::BasicTokenResponse;
 use serde::Deserialize;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use url::Url;
+use wire::gateway::users::TokenScope;
 
 use crate::Report;
 use crate::memory::desk;
@@ -29,8 +28,10 @@ use logins::Forgot;
 use logins::Listed;
 use logins::LoginStore;
 
+pub(crate) mod hub;
 pub(crate) mod logins;
 pub(crate) mod oauth;
+mod preflight;
 
 pub(crate) const CLIENT_ID: &str = "rivethub-cli";
 pub(crate) const SCOPE: &str = "drops:write offline_access";
@@ -67,8 +68,17 @@ pub enum ShareCommand {
         #[arg(help = "Share server host (default: memory.share.server.url, else rivethub.cloud)")]
         server: Option<String>,
     },
-    #[command(about = "Show the share servers this machine is signed in to")]
-    Status,
+    #[command(
+        about = "Show the share servers this machine is signed in to, or check one server or hub"
+    )]
+    Status {
+        #[arg(
+            long,
+            value_name = "HOST|HUB",
+            help = "Check this server or hubs: entry now: reachable, TLS, the login, its token scopes, drops, and memory import"
+        )]
+        server: Option<String>,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -90,14 +100,52 @@ pub enum ServerError {
     Denied(&'static str),
     #[error("{} holds no single token", .0.display())]
     TokenFile(std::path::PathBuf),
-    #[error("{server} refused the team token (HTTP {status}); sign in again with a valid token")]
+    #[error(
+        "{server} refused the login (HTTP {status}); sign in again with a valid token: rh share login {server} --token-file <file>"
+    )]
     TokenRefused { server: ShareServer, status: u16 },
+    #[error(
+        "your login on {server} lacks the {scope} scope; ask the admin of {server} for a token with {scope}, then run rh share login {server} --token-file <file>"
+    )]
+    MissingScope {
+        server: ShareServer,
+        scope: TokenScope,
+    },
+    #[error(
+        "{server} refused this with 403; the usual cause is a login without the {scope} scope, so check it with rh share status --server {server}"
+    )]
+    Forbidden {
+        server: ShareServer,
+        scope: TokenScope,
+    },
+    #[error(
+        "{0} has drops turned off, so it cannot hold a share code; push to it with rh memory share <bundle> --hub {0}, or share through another server"
+    )]
+    DropsOff(ShareServer),
+    #[error("no hub in hubs: is named {0}, and it is not a host name either")]
+    UnknownHub(String),
+    #[error(
+        "{name} is both the name of the hub at {named} and a host of its own, so it is ambiguous; rename the hub {name} in hubs: so each name means one destination"
+    )]
+    AmbiguousHub {
+        name: String,
+        named: ShareServer,
+        host: ShareServer,
+    },
+    #[error("the hub {name} has the url {url}, which is not a bare host rh can push to")]
+    HubUrl { name: String, url: String },
     #[error("the share server could not be reached: {0}")]
     Http(#[from] reqwest::Error),
+    #[error("the hub could not be reached: {0}")]
+    Unreachable(String),
     #[error("the share server refused the request ({0})")]
     Refused(OauthErrorCode),
     #[error("the share server answered {0}")]
     Answered(u16),
+    #[error(
+        "{0} has no capture route for this push (HTTP 404), so it is an older RivetHub or not a RivetHub server; the bundle file is kept"
+    )]
+    NoCaptureRoute(ShareServer),
     #[error("the share server is busy or down (HTTP {status}); try again {}", retry_hint(*.retry_after))]
     Unavailable {
         status: u16,
@@ -201,6 +249,7 @@ pub(crate) struct ShareServers {
     logins: LoginStore,
     lock: PathBuf,
     cas: Vec<config::model::TrustedCa>,
+    hubs: Vec<config::model::HubEntry>,
 }
 
 #[derive(Debug, Clone)]
@@ -229,6 +278,7 @@ impl ShareServers {
             logins: LoginStore::choose(env, state.join(STORE_FILE)).await?,
             lock: state.join(LOCK_FILE),
             cas: loaded.config.share_trusted_cas().to_vec(),
+            hubs: loaded.config.hubs.clone().unwrap_or_default(),
         })
     }
 
@@ -340,9 +390,13 @@ impl ShareServers {
             return Ok(Report::success(
                 match self.policy.default_server(self.configured.clone()) {
                     Ok(host) => format!(
-                        "not signed in to any share server; rh share login signs in to {host}\n{kept}"
+                        "not signed in to any share server; rh share login signs in to {host}\n{}{kept}",
+                        self.hub_lines()
                     ),
-                    Err(refused) => format!("not signed in to any share server; {refused}\n{kept}"),
+                    Err(refused) => format!(
+                        "not signed in to any share server; {refused}\n{}{kept}",
+                        self.hub_lines()
+                    ),
                 },
             ));
         }
@@ -367,6 +421,7 @@ impl ShareServers {
                 lines.push('\n');
                 lines
             });
+        lines.push_str(&self.hub_lines());
         lines.push_str(&kept);
         Ok(Report::success(lines))
     }
@@ -482,40 +537,6 @@ impl Server {
     }
 }
 
-impl Tokens {
-    pub(crate) fn issued(
-        issued: &BasicTokenResponse,
-        previous: Option<&Self>,
-    ) -> Result<Self, ServerError> {
-        let refresh_token = issued
-            .refresh_token()
-            .map(|token| token.secret().clone())
-            .or_else(|| previous.map(|tokens| tokens.refresh_token.clone()))
-            .ok_or_else(|| ServerError::Protocol("the token response has no refresh_token"))?;
-        let scope = issued
-            .scopes()
-            .map(|scopes| {
-                scopes
-                    .iter()
-                    .map(|scope| scope.as_str())
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            })
-            .or_else(|| previous.map(|tokens| tokens.scope.clone()))
-            .unwrap_or_else(|| SCOPE.to_owned());
-        let lifetime = issued.expires_in().unwrap_or(LIFETIME_WHEN_UNSTATED);
-        let expires_at = Timestamp::now()
-            .saturating_add(lifetime)
-            .map_err(|_error| ServerError::Lifetime(lifetime.as_secs()))?;
-        Ok(Self {
-            access_token: issued.access_token().secret().clone(),
-            refresh_token,
-            expires_at,
-            scope,
-        })
-    }
-}
-
 pub(crate) fn checked(response: reqwest::Response) -> Result<reqwest::Response, ServerError> {
     if response.status().is_success() {
         return Ok(response);
@@ -565,7 +586,10 @@ pub async fn run(
                 }
             })
         }
-        ShareCommand::Status => servers.status()?,
+        ShareCommand::Status { server: None } => servers.status()?,
+        ShareCommand::Status {
+            server: Some(server),
+        } => servers.preflight(&server).await?,
     })
 }
 

@@ -414,6 +414,7 @@ pub async fn servers(env: &Environment) -> Result<Servers, Error> {
         views.push(ServerView {
             origin: default.clone().into(),
             kind: ServerKind::Cloud,
+            hub: servers.hub_named(default),
             user: None,
             signed_in: false,
             default: true,
@@ -426,11 +427,25 @@ pub async fn servers(env: &Environment) -> Result<Servers, Error> {
         };
         views.push(ServerView {
             default: default.as_deref() == Some(host.as_str()),
+            hub: servers.hub_named(&host),
             origin: host.into(),
             kind,
             user,
             signed_in: true,
         });
+    }
+    for hub in servers.hubs() {
+        let host = hub.server.to_string();
+        if views.iter().all(|view| view.origin.as_str() != host) {
+            views.push(ServerView {
+                default: default.as_deref() == Some(host.as_str()),
+                origin: host.into(),
+                kind: ServerKind::Team,
+                hub: hub.name,
+                user: None,
+                signed_in: false,
+            });
+        }
     }
     views.sort_by_key(|view| !view.default);
     Ok(Servers {
@@ -541,14 +556,28 @@ fn server_error(error: ServerError) -> DeskError {
         ServerError::Denied(reason) => DeskError::LoginDenied(reason),
         ServerError::TokenRefused { status, .. } => DeskError::BadToken(format!("HTTP {status}")),
         ServerError::Http(error) => DeskError::Unreachable(error.to_string()),
+        ServerError::Unreachable(reason) => DeskError::Unreachable(reason),
         error @ ServerError::Unavailable { .. } => DeskError::Unreachable(error.to_string()),
         error @ ServerError::Answered(status) => DeskError::DropBox {
             status,
             message: error.to_string(),
         },
         ServerError::Finished => DeskError::UnknownLogin,
+        error @ (ServerError::MissingScope { .. } | ServerError::Forbidden { .. }) => {
+            DeskError::DropBox {
+                status: 403,
+                message: error.to_string(),
+            }
+        }
+        error @ (ServerError::DropsOff(_) | ServerError::NoCaptureRoute(_)) => DeskError::DropBox {
+            status: 404,
+            message: error.to_string(),
+        },
         ServerError::Server(error) => DeskError::BadServer(error.to_string()),
-        error @ ServerError::Policy(_) => DeskError::BadServer(error.to_string()),
+        error @ (ServerError::UnknownHub(_)
+        | ServerError::AmbiguousHub { .. }
+        | ServerError::HubUrl { .. }
+        | ServerError::Policy(_)) => DeskError::BadServer(error.to_string()),
         other @ (ServerError::Store(_)
         | ServerError::Keyring(_)
         | ServerError::Ca { .. }

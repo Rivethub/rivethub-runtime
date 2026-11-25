@@ -13,6 +13,7 @@ use kernel::memory::share::desk::Draft;
 use kernel::memory::share::desk::DraftId;
 use kernel::memory::share::desk::MAX_DRAFT_BYTES;
 use kernel::memory::share::desk::MAX_DRAFTS;
+use kernel::memory::share::desk::SendConfirm;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -54,6 +55,34 @@ impl DraftState {
             Phase::Open => Ok(()),
             Phase::Sending | Phase::Closed => Err(DeskError::UnknownDraft),
         }
+    }
+
+    pub(super) fn confirm(&self, confirm: SendConfirm) -> Result<(), DeskError> {
+        self.open()?;
+        let flags = self
+            .report
+            .decision
+            .as_ref()
+            .map_or(0, |decision| decision.flags.len());
+        let open = flags.saturating_sub(self.resolved.len());
+        if open > 0 {
+            return Err(DeskError::OpenFlags { open });
+        }
+        let sessions = self.sealed.bundle.sessions.len();
+        let kept = self
+            .resolved
+            .values()
+            .filter(|resolution| **resolution == Resolution::Keep)
+            .count();
+        if confirm.sessions != sessions || confirm.kept_flags != kept {
+            return Err(DeskError::Counts {
+                sessions,
+                kept,
+                confirmed_sessions: confirm.sessions,
+                confirmed_kept: confirm.kept_flags,
+            });
+        }
+        Ok(())
     }
 }
 

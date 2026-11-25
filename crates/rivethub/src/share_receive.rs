@@ -455,7 +455,9 @@ fn server(error: &ServerError) -> ReceiveError {
                 .to_owned(),
         ),
         ServerError::Http(_)
+        | ServerError::Unreachable(_)
         | ServerError::Answered(_)
+        | ServerError::NoCaptureRoute(_)
         | ServerError::Unavailable { .. }
         | ServerError::Protocol(_)
         | ServerError::Lifetime(_) => ReceiveError::Unreachable(shown(&error.to_string())),
@@ -466,6 +468,12 @@ fn server(error: &ServerError) -> ReceiveError {
         | ServerError::Denied(_)
         | ServerError::Refused(_)
         | ServerError::TokenRefused { .. }
+        | ServerError::MissingScope { .. }
+        | ServerError::Forbidden { .. }
+        | ServerError::DropsOff(_)
+        | ServerError::UnknownHub(_)
+        | ServerError::AmbiguousHub { .. }
+        | ServerError::HubUrl { .. }
         | ServerError::Keyring(_)
         | ServerError::Finished
         | ServerError::NoDeviceFlow(_)

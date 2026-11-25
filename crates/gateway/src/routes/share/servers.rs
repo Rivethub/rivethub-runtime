@@ -31,6 +31,7 @@ pub(super) async fn list(
                     desk::ServerKind::Cloud => body::ServerKind::Cloud,
                     desk::ServerKind::Team => body::ServerKind::Team,
                 },
+                hub: server.hub,
                 user: server.user,
                 signed_in: server.signed_in,
                 default: server.default,

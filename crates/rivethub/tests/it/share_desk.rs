@@ -20,6 +20,7 @@ use kernel::memory::share::desk::FindQuery;
 use kernel::memory::share::desk::FlagChoice;
 use kernel::memory::share::desk::FlagState;
 use kernel::memory::share::desk::Mark;
+use kernel::memory::share::desk::PushRequest;
 use kernel::memory::share::desk::SendConfirm;
 use kernel::memory::share::desk::SendRequest;
 use kernel::memory::share::desk::ShareDesk as _;
@@ -845,5 +846,252 @@ async fn a_login_stalled_on_one_origin_does_not_delay_logout_on_another() -> Tes
     other_logout?;
     started?;
     share.close().await?;
+    Ok(())
+}
+
+#[derive(Clone, Default)]
+struct Pushes(Arc<Mutex<Vec<(String, wire::capture::CaptureBatchRequest)>>>);
+
+async fn hub_me() -> axum::response::Response {
+    let me = wire::gateway::tenancy::MeResponse {
+        user: "fay".to_owned(),
+        spaces: Vec::new(),
+        settings: wire::gateway::tenancy::UserSettings {
+            default_visibility: "private".to_owned(),
+            chosen: false,
+            default_since: None,
+        },
+        access: Some(wire::gateway::tenancy::MeAccess {
+            scopes: vec!["memory:import".to_owned()],
+            drops_enabled: false,
+        }),
+    };
+    axum::Json(me).into_response()
+}
+
+async fn hub_capture(
+    axum::extract::State(pushes): axum::extract::State<Pushes>,
+    headers: axum::http::HeaderMap,
+    axum::Json(batch): axum::Json<wire::capture::CaptureBatchRequest>,
+) -> axum::response::Response {
+    let bearer = match headers
+        .get(axum::http::header::AUTHORIZATION)
+        .map(axum::http::HeaderValue::to_str)
+    {
+        Some(Ok(text)) => text.to_owned(),
+        Some(Err(_)) | None => String::new(),
+    };
+    let inserted = batch.messages.len() as u64;
+    pushes.0.lock().push((bearer, batch));
+    axum::Json(wire::capture::CaptureResult {
+        ok: true,
+        conversation_id: String::new(),
+        inserted,
+        skipped: 0,
+    })
+    .into_response()
+}
+
+fn add_hub(node: &Node, host: &str) -> TestResult {
+    let config = node.home.path().join(".rivethub/config.yaml");
+    let text = std::fs::read_to_string(&config)?;
+    let hubs = format!("hubs:\n  - name: team\n    url: http://{host}\n    kind: team\n");
+    std::fs::write(&config, text + &hubs)?;
+    Ok(())
+}
+
+fn team_login(node: &Node, host: &str) -> TestResult {
+    let logins = node
+        .home
+        .path()
+        .join(".local/state/rivethub/share-logins.json");
+    std::fs::create_dir_all(logins.parent().ok_or("no parent")?)?;
+    std::fs::write(
+        &logins,
+        format!(r#"{{"logins":{{"{host}":{{"team_token":"fay-team-token","user":"fay"}}}}}}"#),
+    )?;
+    std::fs::set_permissions(&logins, std::fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+async fn hub_view(
+    desk: &NodeDesk,
+    host: &str,
+) -> TestResult<(Option<String>, bool, Option<String>)> {
+    let listed = desk.servers().await?;
+    let shown = listed
+        .servers
+        .into_iter()
+        .find(|server| server.origin.as_str() == host)
+        .ok_or("the hub is listed")?;
+    Ok((shown.hub, shown.signed_in, shown.user))
+}
+
+#[tokio::test]
+async fn the_desk_lists_a_connected_hub_and_pushes_a_draft_to_it() -> TestResult {
+    let model = model().await?;
+    let captured = Pushes::default();
+    let hub = testkit::stub_server(
+        axum::Router::new()
+            .route("/api/me", axum::routing::get(hub_me))
+            .route("/api/capture", axum::routing::post(hub_capture))
+            .with_state(captured.clone()),
+    )
+    .await?;
+    let host = hub.addr.to_string();
+    let dana = Node::new("dana", &format!("http://{}", model.addr), &sessions()).await?;
+    let (alpha, gamma, _) = chosen(&dana)?;
+    let desk = desk(&dana, false)?;
+    add_hub(&dana, &host)?;
+    assert_eq!(
+        hub_view(&desk, &host).await?,
+        (Some("team".to_owned()), false, None)
+    );
+    team_login(&dana, &host)?;
+    assert_eq!(
+        hub_view(&desk, &host).await?,
+        (Some("team".to_owned()), true, Some("fay".to_owned()))
+    );
+
+    let draft = desk.draft(request(&[&alpha, &gamma], false)?).await?;
+    let confirm = SendConfirm {
+        sessions: 2,
+        kept_flags: 0,
+    };
+    let delivered = desk
+        .push(
+            draft.id,
+            PushRequest {
+                hub: "team".to_owned().into(),
+                confirm,
+            },
+        )
+        .await?;
+    assert_eq!(
+        (delivered.user.as_str(), delivered.sessions, delivered.hub),
+        ("fay", 2, format!("team ({host})"))
+    );
+    let seen = captured.0.lock().clone();
+    assert_eq!(seen.len(), 2, "one capture post per session");
+    for (bearer, batch) in &seen {
+        assert_eq!(bearer, "Bearer fay-team-token");
+        assert!(
+            batch.session_key.starts_with("import:"),
+            "{}",
+            batch.session_key
+        );
+    }
+    assert!(matches!(
+        desk.report(draft.id).await,
+        Err(DeskError::UnknownDraft)
+    ));
+    model.close().await?;
+    hub.close().await?;
+    Ok(())
+}
+
+#[derive(Clone)]
+struct HeldHub {
+    arrived: Arc<tokio::sync::Notify>,
+    gate: Arc<tokio::sync::Semaphore>,
+    pushes: Pushes,
+}
+
+async fn held_capture(
+    axum::extract::State(hub): axum::extract::State<HeldHub>,
+    headers: axum::http::HeaderMap,
+    batch: axum::Json<wire::capture::CaptureBatchRequest>,
+) -> axum::response::Response {
+    hub.arrived.notify_one();
+    match hub.gate.acquire().await {
+        Ok(_permit) => hub_capture(axum::extract::State(hub.pushes), headers, batch).await,
+        Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+#[tokio::test]
+async fn a_push_cut_off_mid_delivery_can_be_retried() -> TestResult {
+    let held = HeldHub {
+        arrived: Arc::default(),
+        gate: Arc::new(tokio::sync::Semaphore::new(0)),
+        pushes: Pushes::default(),
+    };
+    let hub = testkit::stub_server(
+        axum::Router::new()
+            .route("/api/me", axum::routing::get(hub_me))
+            .route("/api/capture", axum::routing::post(held_capture))
+            .with_state(held.clone()),
+    )
+    .await?;
+    let host = hub.addr.to_string();
+    let dana = Node::new("dana", "http://127.0.0.1:9", &sessions()).await?;
+    let (alpha, _, _) = chosen(&dana)?;
+    let desk = desk(&dana, false)?;
+    add_hub(&dana, &host)?;
+    team_login(&dana, &host)?;
+    let draft = desk.draft(request(&[&alpha], false)?).await?;
+    let push = || PushRequest {
+        hub: "team".to_owned().into(),
+        confirm: SendConfirm {
+            sessions: 1,
+            kept_flags: 0,
+        },
+    };
+
+    tokio::select! {
+        cut = desk.push(draft.id, push()) => {
+            return Err(format!("the push finished before it was cut off: {cut:?}").into());
+        }
+        () = held.arrived.notified() => {}
+    }
+    held.gate.add_permits(8);
+    let retried = desk.push(draft.id, push()).await?;
+
+    assert_eq!((retried.user.as_str(), retried.sessions), ("fay", 1));
+    assert!(matches!(
+        desk.report(draft.id).await,
+        Err(DeskError::UnknownDraft)
+    ));
+    hub.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_push_to_a_hub_without_a_capture_route_says_so() -> TestResult {
+    let hub =
+        testkit::stub_server(axum::Router::new().route("/api/me", axum::routing::get(hub_me)))
+            .await?;
+    let host = hub.addr.to_string();
+    let dana = Node::new("dana", "http://127.0.0.1:9", &sessions()).await?;
+    let (alpha, _, _) = chosen(&dana)?;
+    let desk = desk(&dana, false)?;
+    add_hub(&dana, &host)?;
+    team_login(&dana, &host)?;
+    let draft = desk.draft(request(&[&alpha], false)?).await?;
+
+    let refused = desk
+        .push(
+            draft.id,
+            PushRequest {
+                hub: "team".to_owned().into(),
+                confirm: SendConfirm {
+                    sessions: 1,
+                    kept_flags: 0,
+                },
+            },
+        )
+        .await;
+
+    let Err(DeskError::DropBox { status, message }) = refused else {
+        return Err(format!("expected a drop box refusal, got {refused:?}").into());
+    };
+    assert_eq!(status, 404);
+    assert_eq!(
+        message,
+        format!(
+            "{host} has no capture route for this push (HTTP 404), so it is an older RivetHub or not a RivetHub server; the bundle file is kept"
+        )
+    );
+    hub.close().await?;
     Ok(())
 }

@@ -12,7 +12,7 @@ use gateway::tenancy::{Tenancy, UserId};
 use kernel::memory::share::desk::{
     DeskError, Draft, DraftId, DraftRequest, DraftSession, DraftTotals, EscapedText, FindQuery,
     FlagState, FlagView, Found, LoginId, LoginRequest, LoginStep, Mark, Marked, NodeKeyView,
-    SendRequest, Sent, ServerOrigin, Servers, ShareDesk, TokenStore,
+    PushRequest, Pushed, SendRequest, Sent, ServerOrigin, Servers, ShareDesk, TokenStore,
 };
 use parking_lot::Mutex;
 use tower::ServiceExt as _;
@@ -124,6 +124,17 @@ impl ShareDesk for FakeDesk {
         })
     }
 
+    async fn push(&self, _id: DraftId, push: PushRequest) -> Result<Pushed, DeskError> {
+        self.enter("push")?;
+        Ok(Pushed {
+            hub: push.hub.to_string(),
+            user: "fay".to_owned(),
+            sessions: push.confirm.sessions,
+            inserted: 3,
+            skipped: 0,
+        })
+    }
+
     async fn discard(&self, _id: DraftId) -> Result<(), DeskError> {
         self.enter("discard")
     }
@@ -229,6 +240,11 @@ fn routes() -> Vec<Route> {
             Method::POST,
             &format!("{}/send", draft_path()),
             Some(r#"{"server":"s","signed":false,"confirm":{"sessions":1,"kept_flags":0}}"#),
+        ),
+        route(
+            Method::POST,
+            &format!("{}/push", draft_path()),
+            Some(r#"{"hub":"team","confirm":{"sessions":1,"kept_flags":0}}"#),
         ),
         discard_draft(),
         route(Method::GET, "/api/share/servers", None),

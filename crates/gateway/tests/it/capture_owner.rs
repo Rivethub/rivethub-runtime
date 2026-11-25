@@ -5,9 +5,11 @@ use std::sync::Arc;
 
 use gateway::Gateway;
 use gateway::tenancy::Tenancy;
+use sha2::{Digest, Sha256};
 use testkit::FakeMemoryStore;
 use testkit::MemoryRequest;
 use testkit::Request;
+use wire::gateway::users::{ScopedToken, TokenScope, UserToken};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -153,5 +155,60 @@ async fn the_owner_token_records_a_verified_receipt() -> TestResult {
     let provenance = origins.get(&key).ok_or("no provenance")?;
     assert!(provenance.verification.is_verified());
     assert_eq!(provenance.author.as_deref(), Some("Dana"));
+    Ok(())
+}
+
+fn scoped(secret: &str, scopes: Vec<TokenScope>) -> UserToken {
+    UserToken::Scoped(ScopedToken {
+        digest: hex::encode(Sha256::digest(secret.as_bytes())),
+        scopes,
+    })
+}
+
+fn get(target: &str, token: &str) -> Request {
+    Request {
+        method: "GET".to_owned(),
+        target: target.to_owned(),
+        headers: vec![
+            ("Host".to_owned(), "127.0.0.1:5174".to_owned()),
+            ("Authorization".to_owned(), format!("Bearer {token}")),
+        ],
+        body: Vec::new(),
+        recipe: None,
+        via: None,
+    }
+}
+
+#[tokio::test]
+async fn a_memory_import_token_writes_only_its_own_memory() -> TestResult {
+    const FAY: &str = "fay-import-token";
+    const ERIN: &str = "erin-drops-token";
+    let store = Arc::new(FakeMemoryStore::default());
+    let tenancy = Tenancy::local(user("dana"))
+        .with_users_file_token(&scoped(FAY, vec![TokenScope::MemoryImport]), user("fay"))?
+        .with_users_file_token(&scoped(ERIN, vec![TokenScope::DropsWrite]), user("erin"))?;
+    let app = Gateway::new(Arc::clone(&store) as _, common::settings())
+        .with_local_owner(crate::common::local_owner())
+        .with_tenancy(tenancy);
+    let app = Arc::new(app).router(false);
+    let pushed = common::answer(app.clone(), post("/api/capture", &received(), Some(FAY))).await?;
+    assert_eq!(
+        pushed.status,
+        200,
+        "{}",
+        String::from_utf8_lossy(&pushed.body)
+    );
+    assert_eq!(owners(&store).await, ["fay"]);
+    let key = imported_key()?;
+    let origins = kernel::memory::MemoryStore::lookup_origins(&*store, vec![key.clone()]).await?;
+    let provenance = origins.get(&key).ok_or("no provenance")?;
+    assert!(!provenance.verification.is_verified());
+    for target in ["/api/memory/stats", "/api/sessions"] {
+        let read = common::answer(app.clone(), get(target, FAY)).await?;
+        assert_eq!(read.status, 403, "{target}");
+    }
+    let refused = common::answer(app, post("/api/capture", BATCH, Some(ERIN))).await?;
+    assert_eq!(refused.status, 403, "a drops:write token cannot import");
+    assert_eq!(owners(&store).await, ["fay"]);
     Ok(())
 }

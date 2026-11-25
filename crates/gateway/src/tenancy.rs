@@ -10,7 +10,7 @@ use kernel::tenancy::Viewer;
 use kernel::tenancy::Visibility;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
-use wire::gateway::users::{TokenScope, UserToken};
+use wire::gateway::users::{TokenScope, TokenScopes, UserToken};
 
 use crate::auth_event::AuthEvent;
 use crate::error::ApiError;
@@ -38,7 +38,7 @@ impl UserId {
 #[derive(Debug, Clone, Default)]
 pub struct Tenancy {
     local: Option<UserId>,
-    tokens: Vec<([u8; 32], UserId, TokenScope)>,
+    tokens: Vec<([u8; 32], UserId, TokenScopes)>,
     spaces: Vec<Space>,
     admins: Vec<UserId>,
 }
@@ -93,7 +93,7 @@ impl Tenancy {
         self.tokens.push((
             Sha256::digest(token.as_bytes()).into(),
             user,
-            TokenScope::Full,
+            TokenScopes::FULL,
         ));
         Ok(self)
     }
@@ -107,13 +107,13 @@ impl Tenancy {
         hex::decode_to_slice(token.digest().trim(), &mut secret).map_err(|_| {
             ApiError::BadRequest("a users-file token must be the hex SHA-256 of the secret".into())
         })?;
-        let scope = token.scope().ok_or_else(|| {
+        let scopes = token.scopes().ok_or_else(|| {
             ApiError::BadRequest("a scoped users-file token must name at least one scope".into())
         })?;
         if self.tokens.iter().any(|(known, ..)| *known == secret) {
             return Err(ApiError::BadRequest("duplicate users-file token".into()));
         }
-        self.tokens.push((secret, user, scope));
+        self.tokens.push((secret, user, scopes));
         Ok(self)
     }
 
@@ -125,31 +125,43 @@ impl Tenancy {
         }
     }
 
-    pub(crate) fn user_for_token(&self, token: &str) -> Option<(UserId, TokenScope)> {
+    pub(crate) fn user_for_token(&self, token: &str) -> Option<(UserId, TokenScopes)> {
         let digest: [u8; 32] = Sha256::digest(token.as_bytes()).into();
         let mut found = None;
-        for (secret, user, scope) in &self.tokens {
+        for (secret, user, scopes) in &self.tokens {
             if bool::from(secret.ct_eq(&digest)) {
-                found = Some((user.clone(), *scope));
+                found = Some((user.clone(), *scopes));
             }
         }
         found
     }
 
-    pub(crate) fn resolve_bearer(&self, token: &str, parts: &Parts) -> Result<UserId, ApiError> {
-        let (user, scope) = self.user_for_token(token).ok_or(ApiError::InvalidToken)?;
-        if scope.allows(TokenScope::Full) || drops_scoped(&parts.method, parts.uri.path()) {
-            Ok(user)
+    pub(crate) fn resolve_bearer(
+        &self,
+        token: &str,
+        parts: &Parts,
+    ) -> Result<(UserId, TokenScopes), ApiError> {
+        let (user, scopes) = self.user_for_token(token).ok_or(ApiError::InvalidToken)?;
+        if reaches(scopes, &parts.method, parts.uri.path()) {
+            Ok((user, scopes))
         } else {
             Err(ApiError::InsufficientScope)
         }
     }
 }
 
-fn drops_scoped(method: &Method, path: &str) -> bool {
-    crate::drops::is_upload(method, path)
-        || crate::drops::is_revoke(method, path)
-        || (method == Method::GET && path == "/api/me")
+fn reaches(scopes: TokenScopes, method: &Method, path: &str) -> bool {
+    if method == Method::GET && path == "/api/me" {
+        return true;
+    }
+    let needed = if crate::drops::is_upload(method, path) || crate::drops::is_revoke(method, path) {
+        TokenScope::DropsWrite
+    } else if method == Method::POST && path == crate::routes::capture::PATH {
+        TokenScope::MemoryImport
+    } else {
+        TokenScope::Full
+    };
+    scopes.allows(needed)
 }
 
 impl FromRequestParts<std::sync::Arc<crate::Gateway>> for UserId {
@@ -167,13 +179,20 @@ impl FromRequestParts<std::sync::Arc<crate::Gateway>> for UserId {
 pub(crate) enum Credential {
     Plugin,
     OwnerToken,
-    Bearer,
+    Bearer(TokenScopes),
     Session { auth_time: i64 },
 }
 
 impl Credential {
     pub(crate) fn is_local_owner(self) -> bool {
         matches!(self, Self::OwnerToken | Self::Session { .. })
+    }
+
+    pub(crate) const fn scopes(self) -> TokenScopes {
+        match self {
+            Self::Bearer(scopes) => scopes,
+            Self::Plugin | Self::OwnerToken | Self::Session { .. } => TokenScopes::FULL,
+        }
     }
 }
 
@@ -224,7 +243,7 @@ pub(crate) fn authenticate(
     gateway
         .tenancy
         .resolve_bearer(token, parts)
-        .map(|user| (user, Credential::Bearer))
+        .map(|(user, scopes)| (user, Credential::Bearer(scopes)))
 }
 
 pub(crate) enum OwnerRefused {

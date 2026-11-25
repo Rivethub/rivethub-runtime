@@ -268,6 +268,22 @@ pub struct SendRequest {
     pub confirm: SendConfirm,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PushRequest {
+    pub hub: String,
+    pub confirm: SendConfirm,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PushedReply {
+    pub hub: String,
+    pub user: String,
+    pub sessions: usize,
+    pub inserted: u64,
+    pub skipped: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SendConfirm {
@@ -322,6 +338,8 @@ pub enum TokenStore {
 pub struct ServerView {
     pub origin: String,
     pub kind: ServerKind,
+    #[serde(default)]
+    pub hub: Option<String>,
     #[serde(default)]
     pub user: Option<String>,
     pub signed_in: bool,

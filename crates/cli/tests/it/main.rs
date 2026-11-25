@@ -35,6 +35,7 @@ mod search_eval;
 mod search_eval_mcp;
 mod service;
 mod share;
+mod share_hub;
 mod share_login;
 mod status;
 mod status_tls;

@@ -161,6 +161,36 @@ pub(super) async fn send(
     Ok((NO_STORE, Json(reply)).into_response())
 }
 
+pub(super) async fn push(
+    State(gateway): State<Arc<Gateway>>,
+    _caller: ShareCaller,
+    _fresh: FreshLogin,
+    Path(id): Path<String>,
+    ShareJson(request): ShareJson<body::PushRequest>,
+) -> Result<Response, Refusal> {
+    let pushed = gateway
+        .share_desk()?
+        .push(
+            draft_id(&id)?,
+            desk::PushRequest {
+                hub: request.hub.into(),
+                confirm: desk::SendConfirm {
+                    sessions: request.confirm.sessions,
+                    kept_flags: request.confirm.kept_flags,
+                },
+            },
+        )
+        .await?;
+    let reply = body::PushedReply {
+        hub: pushed.hub,
+        user: pushed.user,
+        sessions: pushed.sessions,
+        inserted: pushed.inserted,
+        skipped: pushed.skipped,
+    };
+    Ok((NO_STORE, Json(reply)).into_response())
+}
+
 pub(super) async fn discard(
     State(gateway): State<Arc<Gateway>>,
     _caller: ShareCaller,

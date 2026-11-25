@@ -42,21 +42,63 @@ pub struct UserRecord {
     pub admin: Option<bool>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, strum::Display,
+)]
 pub enum TokenScope {
     #[serde(rename = "full")]
+    #[strum(serialize = "full")]
     Full,
     #[serde(rename = "drops:write")]
+    #[strum(serialize = "drops:write")]
     DropsWrite,
+    #[serde(rename = "memory:import")]
+    #[strum(serialize = "memory:import")]
+    MemoryImport,
 }
 
 impl TokenScope {
+    const ALL: [Self; 3] = [Self::Full, Self::DropsWrite, Self::MemoryImport];
+
     #[must_use]
-    pub const fn allows(self, needed: Self) -> bool {
-        matches!(
-            (self, needed),
-            (Self::Full, _) | (Self::DropsWrite, Self::DropsWrite)
-        )
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|scope| scope.to_string() == name)
+    }
+
+    const fn bit(self) -> u8 {
+        match self {
+            Self::Full => 1,
+            Self::DropsWrite => 2,
+            Self::MemoryImport => 4,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TokenScopes(u8);
+
+impl TokenScopes {
+    pub const FULL: Self = Self(TokenScope::Full.bit());
+
+    #[must_use]
+    pub fn of(scopes: &[TokenScope]) -> Option<Self> {
+        let bits = scopes.iter().fold(0, |bits, scope| bits | scope.bit());
+        (bits != 0).then_some(Self(bits))
+    }
+
+    #[must_use]
+    pub const fn allows(self, needed: TokenScope) -> bool {
+        self.0 & (TokenScope::Full.bit() | needed.bit()) != 0
+    }
+
+    #[must_use]
+    pub fn listed(self) -> Vec<TokenScope> {
+        TokenScope::ALL
+            .into_iter()
+            .filter(|scope| self.0 & scope.bit() != 0)
+            .collect()
     }
 }
 
@@ -83,13 +125,10 @@ impl UserToken {
     }
 
     #[must_use]
-    pub fn scope(&self) -> Option<TokenScope> {
+    pub fn scopes(&self) -> Option<TokenScopes> {
         match self {
-            Self::Digest(_) => Some(TokenScope::Full),
-            Self::Scoped(ScopedToken { scopes, .. }) => scopes
-                .iter()
-                .copied()
-                .reduce(|held, scope| if held.allows(scope) { held } else { scope }),
+            Self::Digest(_) => Some(TokenScopes::FULL),
+            Self::Scoped(ScopedToken { scopes, .. }) => TokenScopes::of(scopes),
         }
     }
 }
