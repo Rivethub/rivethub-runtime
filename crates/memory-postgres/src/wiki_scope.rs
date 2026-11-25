@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::PostgresMemory;
 
-pub(crate) const PRIVATE: &str = "private";
+const PRIVATE: &str = "private";
 const KEY_ATTEMPTS: u32 = 9;
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
