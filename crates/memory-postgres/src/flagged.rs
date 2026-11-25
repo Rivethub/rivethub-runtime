@@ -269,6 +269,14 @@ impl FlaggedJobs for PostgresMemory {
         }
         Ok(())
     }
+
+    async fn holds_key(&self, key: &str) -> Result<bool, FlaggedError> {
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM rh_flagged_jobs WHERE job_key = $1)")
+            .bind(key)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(unavailable)
+    }
 }
 
 fn job(row: FlaggedRow) -> Result<FlaggedJob, FlaggedError> {

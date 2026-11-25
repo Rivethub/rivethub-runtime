@@ -1,6 +1,7 @@
 use jiff::Timestamp;
 use std::sync::Arc;
 
+use kernel::flagged::FlaggedJobs;
 use kernel::owner::Owner;
 use kernel::queue::JobQueue;
 use kernel::tenancy::Scope;
@@ -25,6 +26,7 @@ pub(crate) struct TopicPages {
     pub(crate) topics: Arc<dyn TopicStore>,
     pub(crate) pages: Arc<dyn TopicPageStore>,
     pub(crate) decisions: Arc<dyn DecisionStore>,
+    pub(crate) flagged: Arc<dyn FlaggedJobs>,
 }
 
 pub(crate) async fn handle_sync_topic_page(
@@ -37,7 +39,7 @@ pub(crate) async fn handle_sync_topic_page(
     let job = SyncTopicPage::from_payload(payload)?;
     let Some(scopes) = scopes else {
         let failures = sync(deps, &job, SweepOwners::All, cancel).await?;
-        return retry_alone(queue, failures).await;
+        return retry_alone(queue, deps.flagged.as_ref(), failures).await;
     };
     if let Some(id) = job.topic_id {
         let found = Scope::Maintenance
@@ -60,7 +62,7 @@ pub(crate) async fn handle_sync_topic_page(
         }
         .await;
         match swept {
-            Ok(failures) => retry_alone(queue, failures).await?,
+            Ok(failures) => retry_alone(queue, deps.flagged.as_ref(), failures).await?,
             Err(WorkerError::Cancelled) => return Err(WorkerError::Cancelled),
             Err(error) => {
                 tracing::warn!(
@@ -75,13 +77,21 @@ pub(crate) async fn handle_sync_topic_page(
     stalled.map_or(Ok(()), Err)
 }
 
-async fn retry_alone(queue: &dyn JobQueue, failures: Vec<SweepFailure>) -> Result<(), WorkerError> {
+async fn retry_alone(
+    queue: &dyn JobQueue,
+    flagged: &dyn FlaggedJobs,
+    failures: Vec<SweepFailure>,
+) -> Result<(), WorkerError> {
     for SweepFailure { topic, error } in failures {
+        let job = SyncTopicPage::topic(topic).job()?;
+        if let Some(key) = job.key.as_deref()
+            && Scope::Maintenance.run(flagged.holds_key(key)).await?
+        {
+            tracing::warn!(%topic, %error, "topic page sweep left this flagged topic for review");
+            continue;
+        }
         tracing::warn!(%topic, %error, "topic page sweep queued this topic's own sync");
-        queue
-            .enqueue(SyncTopicPage::topic(topic).job()?)
-            .await
-            .map_err(WorkerError::queue)?;
+        queue.enqueue(job).await.map_err(WorkerError::queue)?;
     }
     Ok(())
 }

@@ -103,9 +103,15 @@ where
         .await?;
     fail_due(queue, &mut due, "dismiss me").await?;
     let flagged = only(store).await?;
+    let key = flagged.key.clone().ok_or("the flagged job has a key")?;
     store.dismiss(flagged.id, Timestamp::now()).await?;
     assert_eq!(store.flagged().await?, Vec::new());
+    assert!(
+        store.holds_key(&key).await?,
+        "a dismissed flag keeps its key"
+    );
     store.retry(flagged.id).await?;
+    assert!(!store.holds_key(&key).await?, "a retry releases the key");
     let claimed = claim_embed(queue)
         .await?
         .ok_or("the dismissed job was not retried")?;

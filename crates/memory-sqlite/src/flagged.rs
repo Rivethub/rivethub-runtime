@@ -256,6 +256,20 @@ impl FlaggedJobs for SqliteStore {
         }
         Ok(())
     }
+
+    async fn holds_key(&self, key: &str) -> Result<bool, FlaggedError> {
+        let key = key.to_owned();
+        self.with_conn(move |conn| {
+            conn.query_row(
+                "SELECT EXISTS (SELECT 1 FROM rh_flagged_jobs WHERE job_key = ?1)",
+                [key],
+                |row| row.get(0),
+            )
+            .map_err(SqliteError::query("flagged job key"))
+        })
+        .await
+        .map_err(unavailable)
+    }
 }
 
 fn dead_rows(conn: &mut Connection) -> Result<Vec<DeadRow>, SqliteError> {

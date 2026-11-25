@@ -117,7 +117,12 @@ impl Worker {
                 }),
             },
         )
-        .with_topic_pages(self.store.clone(), self.store.clone(), self.store.clone());
+        .with_topic_pages(
+            self.store.clone(),
+            self.store.clone(),
+            self.store.clone(),
+            self.store.clone(),
+        );
         let mut idle = runner.idle();
         let shutdown = CancellationToken::new();
         let cancel = shutdown.clone();

@@ -464,6 +464,7 @@ async fn build_runners(
             filing: Arc::clone(store) as Arc<dyn FilingStore>,
             pages: Arc::clone(store) as Arc<dyn TopicPageStore>,
             decisions: Arc::clone(store) as Arc<dyn DecisionStore>,
+            flagged: Arc::clone(store) as Arc<dyn kernel::flagged::FlaggedJobs>,
             changes: Arc::clone(store) as Arc<dyn kernel::changes::ChangeFeed>,
             digests: Arc::clone(store) as Arc<dyn kernel::changes::DigestStore>,
             tidy: Arc::clone(store) as Arc<dyn TidyStore>,

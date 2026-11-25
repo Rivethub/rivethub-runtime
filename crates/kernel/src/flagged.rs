@@ -82,6 +82,8 @@ pub trait FlaggedJobs: Send + Sync {
     async fn retry(&self, id: FlaggedId) -> Result<(), FlaggedError>;
 
     async fn dismiss(&self, id: FlaggedId, at: Timestamp) -> Result<(), FlaggedError>;
+
+    async fn holds_key(&self, key: &str) -> Result<bool, FlaggedError>;
 }
 
 #[expect(clippy::expect_used)]
