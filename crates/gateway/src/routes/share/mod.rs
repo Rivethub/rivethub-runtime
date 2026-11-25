@@ -136,6 +136,11 @@ impl From<DeskError> for Refusal {
             DeskError::Choices(_) | DeskError::Marks(_) => {
                 (StatusCode::BAD_REQUEST, RefusalReason::Invalid, None)
             }
+            DeskError::Refused(_) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                RefusalReason::Invalid,
+                None,
+            ),
             DeskError::BadToken(_) => (StatusCode::BAD_REQUEST, RefusalReason::BadToken, None),
             DeskError::BadServer(_) => (StatusCode::BAD_REQUEST, RefusalReason::BadServer, None),
             DeskError::SignedOut(_) => (StatusCode::UNAUTHORIZED, RefusalReason::SignedOut, None),
