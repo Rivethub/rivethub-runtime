@@ -56,6 +56,7 @@ mod wiki_bounded;
 mod wiki_files;
 mod wiki_imports;
 mod wiki_parity;
+mod wiki_redirects;
 mod wiki_routes;
 mod wiki_writer;
 mod worker_pauses;

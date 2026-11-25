@@ -59,11 +59,21 @@ impl TopicPage {
         }
     }
 
-    fn text(&self) -> String {
+    pub(crate) fn text(&self) -> String {
         let mut text = String::new();
         append(&mut text, &self.summary);
         append(&mut text, &self.article);
         text
+    }
+
+    pub fn take_text(&mut self, child: &mut Self, topic: TopicId, heading: &str) {
+        let text = child.text();
+        if text.is_empty() {
+            return;
+        }
+        self.add_to_section(topic, heading, &text);
+        child.summary.clear();
+        child.article.clear();
     }
 
     pub(crate) fn add_to_section(&mut self, topic: TopicId, heading: &str, body: &str) {
@@ -171,6 +181,17 @@ pub trait TopicPageStore: Send + Sync {
     ) -> Result<(), WikiStoreError>;
 
     async fn remove_page(&self, slug: &WikiSlug) -> Result<(), WikiStoreError>;
+
+    async fn fold_section(
+        &self,
+        root: &Topic,
+        topic: &Topic,
+        child: &WikiSlug,
+        into: &WikiSlug,
+        now: Timestamp,
+    ) -> Result<(), WikiStoreError> {
+        super::page_sync::fold_section_steps(self, root, topic, child, into, now).await
+    }
 }
 
 #[derive(Debug, Error)]
@@ -264,7 +285,9 @@ impl PageSync<'_> {
             && let Some(own) = self.topics.page_slug(topic.id).await?
             && own != home
         {
-            self.absorb(&root, &topic, &own, &home).await?;
+            self.pages
+                .fold_section(&root, &topic, &own, &home, self.now)
+                .await?;
         }
         for child in fold.iter().filter(|child| **child != home) {
             self.pages
@@ -341,33 +364,6 @@ impl PageSync<'_> {
         if before != after {
             self.pages.save_topic_page(owner, after, self.now).await?;
         }
-        Ok(())
-    }
-
-    async fn absorb(
-        &self,
-        root: &Topic,
-        topic: &Topic,
-        own: &WikiSlug,
-        home: &WikiSlug,
-    ) -> Result<(), TopicPageError> {
-        let Some(child) = self.pages.topic_page(own).await? else {
-            return Ok(());
-        };
-        let text = child.text();
-        if !text.is_empty() {
-            let before = self.read(home).await?;
-            let mut after = before.clone();
-            after.add_to_section(topic.id, topic.name.as_str(), &text);
-            self.save(root.id, &before, &after).await?;
-            let mut emptied = child.clone();
-            emptied.summary.clear();
-            emptied.article.clear();
-            self.save(topic.id, &child, &emptied).await?;
-        }
-        self.pages
-            .fold_page(own, home, FoldMark::Section, self.now)
-            .await?;
         Ok(())
     }
 

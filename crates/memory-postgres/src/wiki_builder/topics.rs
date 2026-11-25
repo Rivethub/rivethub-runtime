@@ -180,15 +180,6 @@ fn merge_base<'a>(
     Some(base)
 }
 
-pub(super) async fn store_topic(
-    tx: &mut Transaction<'_, Postgres>,
-    page: &WikiPage,
-    git_sha: &str,
-    now: Timestamp,
-) -> Result<(), WikiStoreError> {
-    store(tx, page, page.meta.slug.as_ref(), None, git_sha, now).await
-}
-
 pub(crate) async fn store(
     tx: &mut Transaction<'_, Postgres>,
     page: &WikiPage,

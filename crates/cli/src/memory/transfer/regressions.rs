@@ -416,9 +416,12 @@ async fn sqlite_page_writers_preserve_transferred_fields_on_return_to_postgres(
     let before = carried_page_fields(&pool).await?;
     copy(&pool, &local, "alice", Direction::ToSqlite).await?;
     run_local_page_writers(&local).await?;
-    sqlx::query("DELETE FROM rh_wiki_topics WHERE slug IN ('quill', 'null-archive', 'transfer')")
-        .execute(&pool)
-        .await?;
+    sqlx::raw_sql(
+        "DELETE FROM rh_wiki_redirects WHERE to_slug IN ('quill', 'null-archive', 'transfer');
+         DELETE FROM rh_wiki_topics WHERE slug IN ('quill', 'null-archive', 'transfer')",
+    )
+    .execute(&pool)
+    .await?;
     copy(&pool, &local, "alice", Direction::ToPostgres).await?;
     assert_eq!(carried_page_fields(&pool).await?, before);
     Ok(())
